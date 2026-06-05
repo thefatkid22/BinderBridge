@@ -1,0 +1,15 @@
+services:
+  binderbridge:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      BINDERBRIDGE_DATA: /data
+    volumes:
+      - binderbridge-data:/data
+    restart: unless-stopped
+
+volumes:
+  binderbridge-data:
