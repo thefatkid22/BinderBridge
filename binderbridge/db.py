@@ -31,18 +31,33 @@ from binderbridge.migrations import (
     set_db_schema_version,
 )
 
+SQLITE_BUSY_TIMEOUT_MS = max(1000, config_int(
+    "BINDERBRIDGE_SQLITE_BUSY_TIMEOUT_MS",
+    "SQLITE_BUSY_TIMEOUT_MS",
+    default=30000,
+    section="database",
+    key="busy_timeout_ms",
+))
+
 def now_iso():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 def future_iso(seconds):
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).replace(microsecond=0).isoformat()
 
+def configure_sqlite_connection(connection, enable_wal=False):
+    connection.row_factory = sqlite3.Row
+    connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    connection.execute("PRAGMA foreign_keys = ON")
+    if enable_wal:
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
+    return connection
+
 @contextmanager
 def db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
+    connection = configure_sqlite_connection(sqlite3.connect(DB_PATH, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000))
     try:
         yield connection
         connection.commit()
@@ -54,6 +69,7 @@ def db():
 
 def init_db():
     with db() as conn:
+        configure_sqlite_connection(conn, enable_wal=True)
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -1208,8 +1224,10 @@ def set_setting(key, value):
     execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, str(value)))
 
 __all__ = [
+    'SQLITE_BUSY_TIMEOUT_MS',
     'now_iso',
     'future_iso',
+    'configure_sqlite_connection',
     'db',
     'init_db',
     'migrate_db',

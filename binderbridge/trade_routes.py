@@ -4,6 +4,27 @@ These functions are attached to app.App by app.py after the class is defined.
 Shared helpers are injected by the app facade at import time.
 """
 
+import sqlite3
+from http import HTTPStatus
+
+
+def database_locked(exc):
+    message = str(exc or "").lower()
+    return "database is locked" in message or "database table is locked" in message
+
+
+def render_trade_database_busy(self, user, trade_id):
+    return self.html(
+        render_trade_detail(
+            user,
+            trade_id,
+            notice="The database is busy finishing another update. Wait a moment, then try attaching the evidence again.",
+            status="error",
+        ),
+        HTTPStatus.SERVICE_UNAVAILABLE,
+    )
+
+
 def trade_new(self, method, user, query):
     if method == "GET":
         try:
@@ -157,6 +178,10 @@ def trade_action(self, method, user, path):
             )
         except ValueError as exc:
             return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        except sqlite3.OperationalError as exc:
+            if database_locked(exc):
+                return render_trade_database_busy(self, user, trade_id)
+            raise
         return self.html(render_trade_detail(user, trade_id, notice="Issue report sent to the admins."))
     if len(parts) == 5 and parts[2] == "disputes" and parts[4] == "evidence" and method == "POST":
         try:
@@ -174,6 +199,10 @@ def trade_action(self, method, user, path):
             )
         except ValueError as exc:
             return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        except sqlite3.OperationalError as exc:
+            if database_locked(exc):
+                return render_trade_database_busy(self, user, trade_id)
+            raise
         return self.redirect(f"/trades/{trade_id}")
     if len(parts) == 3 and parts[2] == "feedback" and method == "POST":
         form = self.read_form()

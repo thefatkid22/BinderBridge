@@ -310,6 +310,7 @@ Supported environment variables:
 - `BINDERBRIDGE_BACKUP_INTERVAL_HOURS`: automatic backup interval, default `24`
 - `BINDERBRIDGE_BACKUP_RETENTION_COUNT`: number of automatic backup archives to keep, default `14`
 - `BINDERBRIDGE_BACKUP_RETENTION_DAYS`: maximum automatic backup age in days, default `30`; set to `0` to disable age-based cleanup
+- `BINDERBRIDGE_SQLITE_BUSY_TIMEOUT_MS`: how long SQLite waits for another write to finish before reporting a lock, default `30000`
 - `BINDERBRIDGE_API_PAGE_SIZE_MAX`: maximum API page size, default `250`
 - `BINDERBRIDGE_WEBHOOK_WORKER_ENABLED`: set to `0`, `false`, `no`, or `off` to disable the webhook delivery worker
 - `BINDERBRIDGE_WEBHOOK_TIMEOUT_SECONDS`: outbound webhook request timeout, default `5`

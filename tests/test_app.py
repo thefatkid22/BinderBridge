@@ -102,8 +102,13 @@ class BinderBridgeTest(unittest.TestCase):
         csv_preset_indexes = {item["name"] for item in app.rows("PRAGMA index_list(csv_import_mapping_presets)")}
         dispute_columns = {item["name"] for item in app.rows("PRAGMA table_info(trade_disputes)")}
         evidence_indexes = {item["name"] for item in app.rows("PRAGMA index_list(trade_dispute_evidence)")}
+        with app.db() as conn:
+            busy_timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
 
         self.assertEqual(int(version["value"]), app.CURRENT_SCHEMA_VERSION)
+        self.assertGreaterEqual(busy_timeout, app.SQLITE_BUSY_TIMEOUT_MS)
+        self.assertEqual(journal_mode, "wal")
         self.assertTrue({
             "idx_collection_user_name_sort",
             "idx_collection_user_public_trade_name",

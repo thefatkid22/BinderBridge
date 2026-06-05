@@ -876,6 +876,8 @@ __all__ = [
     "PAGE_SIZE_OPTIONS",
     "now_iso",
     "future_iso",
+    "SQLITE_BUSY_TIMEOUT_MS",
+    "configure_sqlite_connection",
     "db",
     "init_db",
     "migrate_db",
