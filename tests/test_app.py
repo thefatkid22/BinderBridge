@@ -2470,16 +2470,21 @@ Deck
         self.assertIn("Photo of the damaged corner.", trade_html)
         self.assertIn("Attach evidence", trade_html)
         self.assertIn("corner.png", admin_html)
+        self.assertIn("Image preview", admin_html)
+        self.assertIn(f'/trades/{trade_id}/disputes/{dispute_id}/evidence/{evidence["id"]}', admin_html)
 
         second_id = app.add_trade_dispute_evidence(
             dispute_id,
             bob_id,
-            {"filename": "chat.txt", "content": b"Seller confirmed replacement.", "content_type": "text/plain"},
+            {"filename": "chat.txt", "content": b"Seller confirmed <replacement>.", "content_type": "text/plain"},
             "Chat excerpt.",
             trade_id=trade_id,
         )
+        admin_html = app.render_admin_trade_disputes(admin, {"status": ["open"], "q": [str(trade_id)]})
         self.assertTrue(second_id)
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM trade_dispute_evidence WHERE dispute_id = ?", (dispute_id,))["count"], 2)
+        self.assertIn("Text preview", admin_html)
+        self.assertIn("Seller confirmed &lt;replacement&gt;.", admin_html)
         with self.assertRaisesRegex(ValueError, "PNG, JPG"):
             app.add_trade_dispute_evidence(
                 dispute_id,

@@ -167,6 +167,9 @@ def trade_dispute_rows(trade_id):
         (trade_id,),
     )
 
+TRADE_DISPUTE_TEXT_PREVIEW_CHARS = 4000
+
+
 def trade_dispute_evidence_rows(dispute_id):
     return rows(
         """
@@ -189,6 +192,31 @@ def trade_dispute_evidence_rows(dispute_id):
         """,
         (dispute_id,),
     )
+
+def trade_dispute_evidence_text_preview(evidence_id, dispute_id, max_chars=TRADE_DISPUTE_TEXT_PREVIEW_CHARS):
+    found = row(
+        """
+        SELECT content, file_size
+        FROM trade_dispute_evidence
+        WHERE id = ? AND dispute_id = ? AND content_type = 'text/plain'
+        """,
+        (evidence_id, dispute_id),
+    )
+    if not found:
+        return None
+    content = found["content"] or b""
+    if isinstance(content, str):
+        text = content
+    else:
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            text = content.decode("utf-16", errors="replace")
+    text = sanitize_text_input(text, max_length=max_chars + 1).strip()
+    truncated = len(text) > max_chars
+    if truncated:
+        text = text[:max_chars].rstrip()
+    return {"text": text, "truncated": truncated}
 
 def trade_dispute_evidence_for_user(evidence_id, user_id, is_admin=False):
     return row(
@@ -467,6 +495,7 @@ __all__ = [
     'recent_feedback_for_user',
     'trade_dispute_rows',
     'trade_dispute_evidence_rows',
+    'trade_dispute_evidence_text_preview',
     'trade_dispute_evidence_for_user',
     'trade_dispute_admin_where',
     'trade_dispute_admin_count',

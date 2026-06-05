@@ -1091,6 +1091,33 @@ def trade_dispute_evidence_size_label(size):
     return f"{size} bytes"
 
 
+def trade_dispute_evidence_admin_preview(dispute, evidence):
+    content_type = row_value(evidence, "content_type", "")
+    evidence_url = f'/trades/{dispute["trade_id"]}/disputes/{dispute["id"]}/evidence/{evidence["id"]}'
+    if content_type in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+        return f"""
+        <details class="evidence-preview" open>
+            <summary>Image preview</summary>
+            <a class="evidence-image-link" href="{evidence_url}">
+                <img class="evidence-preview-image" src="{evidence_url}" alt="{e(row_value(evidence, "original_filename", "Evidence image"))}">
+            </a>
+        </details>
+        """
+    if content_type == "text/plain":
+        preview = trade_dispute_evidence_text_preview(evidence["id"], dispute["id"])
+        if not preview or not preview["text"]:
+            return ""
+        truncated = '<span class="subtle">Preview truncated.</span>' if preview["truncated"] else ""
+        return f"""
+        <details class="evidence-preview" open>
+            <summary>Text preview</summary>
+            <pre class="evidence-text-preview">{e(preview["text"])}</pre>
+            {truncated}
+        </details>
+        """
+    return ""
+
+
 def render_trade_dispute_evidence_admin_list(item):
     evidence_rows = trade_dispute_evidence_rows(item["id"])
     if not evidence_rows:
@@ -1101,6 +1128,7 @@ def render_trade_dispute_evidence_admin_list(item):
             <a href="/trades/{item["trade_id"]}/disputes/{item["id"]}/evidence/{evidence["id"]}">{e(evidence["original_filename"])}</a>
             <span class="subtle">{e(trade_dispute_evidence_size_label(evidence["file_size"]))} - {e(trade_dispute_user_label(evidence, "uploader"))} - {e(evidence["created_at"][:16].replace("T", " "))}</span>
             {f'<span class="subtle">{e(row_value(evidence, "note", ""))}</span>' if row_value(evidence, "note", "") else ""}
+            {trade_dispute_evidence_admin_preview(item, evidence)}
         </li>
         """
         for evidence in evidence_rows
@@ -1473,4 +1501,4 @@ def render_admin_user_row(admin_user, managed_user):
     """
 
 
-__all__ = ['render_admin', 'render_admin_onboarding_action', 'render_admin_onboarding_item', 'render_admin_onboarding_checklist', 'health_time_label', 'health_status_class', 'render_health_status_counts', 'render_failed_notification_row', 'render_admin_health', 'admin_job_user_label', 'admin_job_time_label', 'admin_job_status_label', 'admin_job_retry_form', 'admin_job_import_target', 'admin_job_import_row', 'admin_job_scryfall_row', 'admin_job_price_row', 'admin_job_notification_row', 'render_admin_jobs', 'admin_audit_log_display_user', 'admin_audit_log_target_label', 'admin_audit_log_time_label', 'render_admin_audit_log_item', 'render_admin_audit_log_table_row', 'trade_dispute_user_label', 'render_trade_dispute_summary_item', 'render_trade_dispute_admin_row', 'render_admin_trade_disputes', 'render_admin_logs', 'render_registration_invite_row', 'render_admin_user_row']
+__all__ = ['render_admin', 'render_admin_onboarding_action', 'render_admin_onboarding_item', 'render_admin_onboarding_checklist', 'health_time_label', 'health_status_class', 'render_health_status_counts', 'render_failed_notification_row', 'render_admin_health', 'admin_job_user_label', 'admin_job_time_label', 'admin_job_status_label', 'admin_job_retry_form', 'admin_job_import_target', 'admin_job_import_row', 'admin_job_scryfall_row', 'admin_job_price_row', 'admin_job_notification_row', 'render_admin_jobs', 'admin_audit_log_display_user', 'admin_audit_log_target_label', 'admin_audit_log_time_label', 'render_admin_audit_log_item', 'render_admin_audit_log_table_row', 'trade_dispute_user_label', 'trade_dispute_evidence_admin_preview', 'render_trade_dispute_summary_item', 'render_trade_dispute_admin_row', 'render_admin_trade_disputes', 'render_admin_logs', 'render_registration_invite_row', 'render_admin_user_row']

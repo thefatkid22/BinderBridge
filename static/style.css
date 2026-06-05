@@ -2480,6 +2480,50 @@ td strong {
     overflow-wrap: anywhere;
 }
 
+.evidence-preview {
+    margin-top: 0.35rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 0.55rem;
+}
+
+.evidence-preview summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 850;
+}
+
+.evidence-image-link {
+    display: inline-block;
+    margin-top: 0.55rem;
+}
+
+.evidence-preview-image {
+    display: block;
+    max-width: min(100%, 360px);
+    max-height: 320px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    object-fit: contain;
+    background: var(--header-bg);
+}
+
+.evidence-text-preview {
+    max-width: min(100%, 520px);
+    max-height: 280px;
+    overflow: auto;
+    margin: 0.55rem 0 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--header-bg);
+    padding: 0.75rem;
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .dispute-evidence-form {
     display: grid;
     grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1fr) auto;
