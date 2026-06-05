@@ -99,6 +99,7 @@ class BinderBridgeTest(unittest.TestCase):
         scryfall_indexes = {item["name"] for item in app.rows("PRAGMA index_list(scryfall_bulk_cards)")}
         passkey_indexes = {item["name"] for item in app.rows("PRAGMA index_list(passkey_credentials)")}
         passkey_challenge_indexes = {item["name"] for item in app.rows("PRAGMA index_list(passkey_challenges)")}
+        csv_preset_indexes = {item["name"] for item in app.rows("PRAGMA index_list(csv_import_mapping_presets)")}
         dispute_columns = {item["name"] for item in app.rows("PRAGMA table_info(trade_disputes)")}
         evidence_indexes = {item["name"] for item in app.rows("PRAGMA index_list(trade_dispute_evidence)")}
 
@@ -113,6 +114,8 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("idx_scryfall_bulk_cards_print_release", scryfall_indexes)
         self.assertIn("idx_passkey_credentials_user", passkey_indexes)
         self.assertIn("idx_passkey_challenges_user", passkey_challenge_indexes)
+        self.assertIn("idx_csv_import_mapping_presets_user", csv_preset_indexes)
+        self.assertIn("idx_csv_import_mapping_presets_shared", csv_preset_indexes)
         self.assertIn("resolution_note", dispute_columns)
         self.assertIn("idx_trade_dispute_evidence_dispute", evidence_indexes)
 
@@ -3195,6 +3198,89 @@ Deck
         self.assertEqual(result["inserted"], 1)
         self.assertEqual(result["updated"], 1)
         self.assertEqual(card["quantity"], 3)
+
+    def test_custom_csv_import_mapping_preset_applies_to_collection_import(self):
+        user_id = app.create_user("mapper", "password123", "Mapper")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        preset = app.save_csv_import_mapping_preset(
+            user_id,
+            "Store export",
+            {
+                "name": "CardTitle",
+                "quantity": "Owned",
+                "trade": "TradeQty",
+                "set_code": "EditionCode",
+                "collector_number": "No",
+                "finish": "FoilFlag",
+                "condition": "Grade",
+            },
+            import_target="collection",
+        )
+        csv_bytes = (
+            "CardTitle,Owned,TradeQty,EditionCode,No,FoilFlag,Grade\n"
+            "Rhystic Study,3,2,WOT,25,foil,Lightly Played\n"
+        ).encode("utf-8")
+        mapping = app.csv_import_mapping_for_user(user_id, preset["id"], import_target="collection")
+
+        preview = app.preview_collection_import_csv(user_id, csv_bytes, source="auto", enrich_scryfall=False, field_mapping=mapping)
+        result = app.import_collection_csv(user_id, csv_bytes, source="auto", enrich_scryfall=False, field_mapping=mapping)
+        card = app.row("SELECT * FROM collection_items WHERE user_id = ?", (user_id,))
+        import_html = app.render_import(user)
+
+        self.assertEqual(preview["inserted"], 1)
+        self.assertEqual(result["inserted"], 1)
+        self.assertEqual(card["card_name"], "Rhystic Study")
+        self.assertEqual(card["quantity"], 3)
+        self.assertEqual(card["quantity_for_trade"], 2)
+        self.assertEqual(card["set_code"], "WOT")
+        self.assertEqual(card["collector_number"], "25")
+        self.assertEqual(card["finish"], "Foil")
+        self.assertEqual(card["condition"], "LP")
+        self.assertIn("Store export", import_html)
+        self.assertIn("CSV mapping presets", import_html)
+
+    def test_admin_shared_csv_mapping_preset_is_visible_and_deletable_by_admin(self):
+        admin_id = app.create_user("adminmap", "password123", "Admin Map", is_admin=True)
+        user_id = app.create_user("regularmap", "password123", "Regular Map", is_admin=False)
+        shared = app.save_csv_import_mapping_preset(
+            admin_id,
+            "Shared deck builder",
+            {"name": "Title", "quantity": "Count", "section": "Board"},
+            import_target="deck",
+            is_shared=True,
+            is_admin=True,
+        )
+
+        visible_to_user = app.csv_import_preset_rows_for_user(user_id, "deck")
+        mapping = app.csv_import_mapping_for_user(user_id, shared["id"], import_target="deck")
+
+        self.assertIn(shared["id"], [preset["id"] for preset in visible_to_user])
+        self.assertEqual(mapping["name"], ["Title"])
+        self.assertEqual(mapping["section"], ["Board"])
+        with self.assertRaises(ValueError):
+            app.delete_csv_import_mapping_preset(user_id, shared["id"], is_admin=False)
+        self.assertEqual(app.delete_csv_import_mapping_preset(admin_id, shared["id"], is_admin=True), 1)
+        self.assertIsNone(app.csv_import_preset_for_user(user_id, shared["id"], import_target="deck"))
+
+    def test_deck_csv_import_mapping_preset_handles_custom_section_column(self):
+        user_id = app.create_user("deckmapper", "password123", "Deck Mapper")
+        mapping = {
+            "name": ["CardTitle"],
+            "quantity": ["Qty"],
+            "section": ["BoardName"],
+        }
+        csv_bytes = (
+            "BoardName,CardTitle,Qty\n"
+            "Main,Sol Ring,1\n"
+            "Maybeboard,Mana Crypt,1\n"
+        ).encode("utf-8")
+
+        section_rows, warnings = app.normalize_csv_rows_by_section(csv_bytes, field_mapping=mapping)
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(section_rows["main"][0]["card_name"], "Sol Ring")
+        self.assertEqual(section_rows["maybeboard"][0]["card_name"], "Mana Crypt")
+        self.assertTrue(app.deck_import_sections_need_review(section_rows))
 
     def test_collection_import_preview_commits_and_undoes_batch(self):
         user_id = app.create_user("previewer", "password123", "Previewer")

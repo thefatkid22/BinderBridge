@@ -105,6 +105,12 @@ def collection_import(self, method, user):
     enrich_scryfall = fields.get("enrich_scryfall", [""])[0] == "1"
     merge_duplicates = fields.get("merge_duplicates", [""])[0] == "1"
     allow_scryfall_finish_mismatch = fields.get("scryfall_finish_override", [""])[0] == "1"
+    field_mapping = csv_import_mapping_for_user(
+        user["id"],
+        fields.get("mapping_preset_id", ["0"])[0],
+        is_admin=bool(user["is_admin"]),
+        import_target="collection",
+    )
     try:
         if intent == "import_now":
             result = import_collection_csv(
@@ -116,6 +122,7 @@ def collection_import(self, method, user):
                 enrich_scryfall=enrich_scryfall,
                 merge=merge_duplicates,
                 allow_scryfall_finish_mismatch=allow_scryfall_finish_mismatch,
+                field_mapping=field_mapping,
             )
         else:
             preview = preview_collection_import_csv(
@@ -127,6 +134,7 @@ def collection_import(self, method, user):
                 enrich_scryfall=enrich_scryfall,
                 merge=merge_duplicates,
                 allow_scryfall_finish_mismatch=allow_scryfall_finish_mismatch,
+                field_mapping=field_mapping,
             )
             return self.html(render_import(user, preview=preview, notice="Preview ready. Review the counts before importing."))
     except ValueError as exc:
@@ -137,6 +145,34 @@ def collection_import(self, method, user):
     if result.get("queued"):
         notice += f" {result['queued']} rows queued for background Scryfall enrichment."
     return self.html(render_import(user, result=result, notice=notice))
+
+def csv_import_mapping_preset_create(self, user):
+    form = self.read_form()
+    try:
+        preset = save_csv_import_mapping_preset(
+            user["id"],
+            form.get("name", [""])[0],
+            csv_import_mapping_from_form(form),
+            import_target=form.get("import_target", ["collection"])[0],
+            is_shared=form.get("is_shared", [""])[0] == "1",
+            is_admin=bool(user["is_admin"]),
+        )
+    except ValueError as exc:
+        return self.html(render_import(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    target_label = "deck" if row_value(preset, "import_target", "collection") == "deck" else "collection"
+    return self.html(render_import(user, notice=f"Saved {target_label} mapping preset."))
+
+def csv_import_mapping_preset_delete(self, user, path):
+    parts = path.strip("/").split("/")
+    try:
+        preset_id = int(parts[2])
+    except (IndexError, ValueError):
+        return self.not_found(user)
+    try:
+        delete_csv_import_mapping_preset(user["id"], preset_id, is_admin=bool(user["is_admin"]))
+    except ValueError as exc:
+        return self.html(render_import(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    return self.html(render_import(user, notice="Deleted mapping preset."))
 
 def import_undo(self, user, path):
     try:
@@ -671,7 +707,7 @@ def want_delete(self, user, path):
     execute("DELETE FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
     self.redirect("/wants")
 
-COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_new', 'collection_item', 'want_new', 'want_edit', 'want_delete')
+COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_new', 'collection_item', 'want_new', 'want_edit', 'want_delete')
 
 __all__ = [
     "COLLECTION_ROUTE_METHODS",

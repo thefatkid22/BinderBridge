@@ -610,6 +610,43 @@ td strong {
     margin-top: 0.35rem;
 }
 
+.csv-mapping-presets {
+    margin-top: 1.25rem;
+}
+
+.csv-mapping-form {
+    margin-top: 0.75rem;
+}
+
+.csv-mapping-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--header-bg);
+    padding: 0.9rem;
+}
+
+.csv-preset-list {
+    margin-top: 0.75rem;
+}
+
+.csv-preset-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--header-bg);
+    padding: 0.85rem;
+}
+
+.csv-preset-row strong,
+.csv-preset-row small {
+    display: block;
+    overflow-wrap: anywhere;
+}
+
 .deck-import-review {
     display: grid;
     gap: 0.85rem;
@@ -3372,6 +3409,8 @@ td strong {
 
     .job-dashboard-card .panel-heading,
     .public-card-row,
+    .csv-mapping-grid,
+    .csv-preset-row,
     .job-row {
         align-items: stretch;
         grid-template-columns: 1fr;

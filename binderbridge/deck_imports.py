@@ -79,16 +79,19 @@ def csv_value_any(csv_row, aliases):
     return ""
 
 
-def csv_row_deck_section(csv_row):
-    section = csv_value_any(csv_row, ("section", "board", "category", "categories", "deck section"))
+def csv_row_deck_section(csv_row, field_mapping=None):
+    section = csv_value(csv_row, "section", field_mapping) if field_mapping else ""
+    if not section:
+        section = csv_value_any(csv_row, ("section", "board", "category", "categories", "deck section"))
     return normalize_deck_import_section(section) or DECK_IMPORT_MAIN_SECTION
 
 
-def normalize_csv_rows_by_section(csv_bytes, default_game="mtg", default_trade_quantity=0):
+def normalize_csv_rows_by_section(csv_bytes, default_game="mtg", default_trade_quantity=0, field_mapping=None):
     text = decode_csv(csv_bytes)
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         raise ValueError("CSV file needs a header row.")
+    field_mapping = normalize_csv_import_mapping(field_mapping)
     section_rows = {}
     warnings = []
     for row_index, csv_row in enumerate(reader, start=2):
@@ -103,12 +106,13 @@ def normalize_csv_rows_by_section(csv_bytes, default_game="mtg", default_trade_q
                 row_buffer.getvalue().encode("utf-8"),
                 default_game=default_game,
                 default_trade_quantity=default_trade_quantity,
+                field_mapping=field_mapping,
             )
         except ValueError:
             warnings.append(f"Row {row_index}: missing card name.")
             continue
         warnings.extend(row_warnings)
-        section = csv_row_deck_section(csv_row)
+        section = csv_row_deck_section(csv_row, field_mapping)
         section_rows.setdefault(section, []).extend(items)
     if not section_rows:
         raise ValueError("No importable collection rows were found.")

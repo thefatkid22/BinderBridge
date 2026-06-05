@@ -122,6 +122,12 @@ def group_deck_import(self, user, group):
         source = "decklist"
     enrich_scryfall = fields.get("enrich_scryfall", [""])[0] == "1"
     merge_duplicates = fields.get("merge_duplicates", [""])[0] == "1"
+    field_mapping = csv_import_mapping_for_user(
+        user["id"],
+        fields.get("mapping_preset_id", ["0"])[0],
+        is_admin=bool(user["is_admin"]),
+        import_target="deck",
+    )
     deck_url = fields.get("deck_url", [""])[0].strip()
     deck_text = fields.get("deck_text", [""])[0].strip()
     upload = files.get("deck_file")
@@ -144,7 +150,12 @@ def group_deck_import(self, user, group):
                 source_url = ""
             else:
                 result_source = source if source in dict(CSV_SOURCE_OPTIONS) else "auto"
-                section_rows, warnings = normalize_csv_rows_by_section(upload["content"], default_game="mtg", default_trade_quantity=0)
+                section_rows, warnings = normalize_csv_rows_by_section(
+                    upload["content"],
+                    default_game="mtg",
+                    default_trade_quantity=0,
+                    field_mapping=field_mapping,
+                )
                 source_url = ""
         else:
             raise ValueError("Paste a deck list, enter a deck-list URL, or choose a CSV/text file.")

@@ -571,7 +571,7 @@ def render_deck_import_review(group, review):
     """
 
 
-def render_deck_import_panel(group, result=None, review=None):
+def render_deck_import_panel(user, group, result=None, review=None):
     preview_html = render_deck_import_preview(group, review) if review and review.get("preview") else ""
     review_html = "" if preview_html else render_deck_import_review(group, review)
     recent_batches = recent_import_batches(group["user_id"], "deck_group", group_id=group["id"])
@@ -587,6 +587,9 @@ def render_deck_import_panel(group, result=None, review=None):
         <form class="form-grid deck-import-form" method="post" action="/groups/{group["id"]}/import" enctype="multipart/form-data">
             <label>Source
                 <select name="source">{option_tags(DECK_IMPORT_SOURCE_OPTIONS, "decklist")}</select>
+            </label>
+            <label>CSV mapping preset
+                <select name="mapping_preset_id">{render_csv_import_mapping_preset_options(user, "deck")}</select>
             </label>
             <label>CSV or deck-list file
                 <input type="file" name="deck_file" accept=".csv,.txt,.dec,text/csv,text/plain">
@@ -652,7 +655,7 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         subnav = render_cards_subnav("groups")
         layout_active = "cards"
         back_label = "Decks & Binders"
-    deck_import_html = render_deck_import_panel(group, import_result, import_review) if group["group_type"] == "deck" else ""
+    deck_import_html = render_deck_import_panel(user, group, import_result, import_review) if group["group_type"] == "deck" else ""
     description = f'<p class="lead">{e(group["description"])}</p>' if group["description"] else ""
     content = f"""
     {subnav}

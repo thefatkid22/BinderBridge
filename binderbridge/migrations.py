@@ -1,7 +1,7 @@
 """Versioned SQLite schema migrations for BinderBridge."""
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def db_schema_version(conn):
@@ -128,9 +128,33 @@ def migrate_dispute_moderation(conn):
     )
 
 
+def migrate_csv_import_mapping_presets(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS csv_import_mapping_presets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            import_target TEXT NOT NULL DEFAULT 'collection',
+            mapping_json TEXT NOT NULL DEFAULT '{}',
+            is_shared INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, import_target, name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_csv_import_mapping_presets_user
+            ON csv_import_mapping_presets(user_id, import_target, name);
+        CREATE INDEX IF NOT EXISTS idx_csv_import_mapping_presets_shared
+            ON csv_import_mapping_presets(is_shared, import_target, name);
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
+    (3, "csv import mapping presets", migrate_csv_import_mapping_presets),
 )
 
 
@@ -151,6 +175,7 @@ __all__ = [
     "set_db_schema_version",
     "migrate_hot_path_indexes",
     "migrate_dispute_moderation",
+    "migrate_csv_import_mapping_presets",
     "SCHEMA_MIGRATIONS",
     "run_schema_migrations",
 ]

@@ -138,6 +138,24 @@ CSV_HEADER_ALIASES = {
     "cardkingdom_sku": ("card kingdom sku", "cardkingdom sku", "cardkingdom_sku"),
     "notes": ("notes", "note"),
 }
+CSV_IMPORT_MAPPING_FIELDS = (
+    ("name", "Card name"),
+    ("quantity", "Quantity"),
+    ("trade", "For trade quantity"),
+    ("game", "Game"),
+    ("set_name", "Set name"),
+    ("set_code", "Set code"),
+    ("collector_number", "Collector number"),
+    ("finish", "Finish / foil"),
+    ("condition", "Condition / quality"),
+    ("language", "Language"),
+    ("scryfall_id", "Scryfall ID"),
+    ("tcgplayer_product_id", "TCGplayer product ID"),
+    ("cardmarket_product_id", "Cardmarket product ID"),
+    ("cardkingdom_sku", "Card Kingdom SKU"),
+    ("notes", "Notes"),
+    ("section", "Deck section"),
+)
 CSV_ALIAS_INDEX = {
 }
 class RequestTooLargeError(ValueError):
@@ -268,11 +286,183 @@ CSV_ALIAS_INDEX = {
 }
 
 
-def csv_value(csv_row, canonical_name):
+def csv_import_mapping_field_keys():
+    return {key for key, _label in CSV_IMPORT_MAPPING_FIELDS}
+
+
+def normalize_csv_import_target(value):
+    target = sanitize_text_input(value, max_length=40).strip().lower()
+    return target if target in ("collection", "deck") else "collection"
+
+
+def normalize_csv_import_mapping(mapping):
+    allowed = csv_import_mapping_field_keys()
+    normalized = {}
+    for key, value in dict(mapping or {}).items():
+        canonical = sanitize_text_input(key, max_length=80).strip().lower()
+        if canonical not in allowed:
+            continue
+        sources = []
+        raw_values = value if isinstance(value, (list, tuple)) else str(value or "").split(",")
+        for raw in raw_values:
+            source = sanitize_text_input(raw, max_length=120).strip()
+            if source and source not in sources:
+                sources.append(source)
+        if sources:
+            normalized[canonical] = sources
+    return normalized
+
+
+def csv_import_mapping_json(mapping):
+    return json.dumps(normalize_csv_import_mapping(mapping), ensure_ascii=True, sort_keys=True)
+
+
+def csv_import_mapping_from_json(value):
+    try:
+        data = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return normalize_csv_import_mapping(data if isinstance(data, dict) else {})
+
+
+def csv_row_value_for_header(csv_row, source_header):
+    normalized_source = normalize_header(source_header)
+    for key, value in csv_row.items():
+        if normalize_header(key) == normalized_source:
+            return sanitize_text_input(value).strip()
+    return ""
+
+
+def csv_value(csv_row, canonical_name, field_mapping=None):
+    for source_header in normalize_csv_import_mapping(field_mapping).get(canonical_name, []):
+        value = csv_row_value_for_header(csv_row, source_header)
+        if value:
+            return value
     for key, value in csv_row.items():
         if CSV_ALIAS_INDEX.get(normalize_header(key)) == canonical_name:
             return sanitize_text_input(value).strip()
     return ""
+
+
+def csv_import_preset_rows_for_user(user_id, import_target="collection", include_shared=True):
+    target = normalize_csv_import_target(import_target)
+    where = ["import_target = ?", "(user_id = ?"]
+    params = [target, int(user_id)]
+    if include_shared:
+        where[-1] += " OR is_shared = 1"
+    where[-1] += ")"
+    return rows(
+        f"""
+        SELECT csv_import_mapping_presets.*, users.display_name AS owner_name, users.username AS owner_username
+        FROM csv_import_mapping_presets
+        LEFT JOIN users ON users.id = csv_import_mapping_presets.user_id
+        WHERE {' AND '.join(where)}
+        ORDER BY is_shared DESC, name COLLATE NOCASE, id
+        """,
+        params,
+    )
+
+
+def csv_import_preset_for_user(user_id, preset_id, is_admin=False, import_target=""):
+    try:
+        clean_id = int(preset_id or 0)
+    except (TypeError, ValueError):
+        return None
+    where = ["id = ?", "(user_id = ? OR is_shared = 1"]
+    params = [clean_id, int(user_id)]
+    if is_admin:
+        where[-1] += " OR 1 = 1"
+    where[-1] += ")"
+    if import_target:
+        where.append("import_target = ?")
+        params.append(normalize_csv_import_target(import_target))
+    return row(
+        f"""
+        SELECT *
+        FROM csv_import_mapping_presets
+        WHERE {' AND '.join(where)}
+        """,
+        params,
+    )
+
+
+def csv_import_mapping_for_user(user_id, preset_id, is_admin=False, import_target=""):
+    preset = csv_import_preset_for_user(user_id, preset_id, is_admin=is_admin, import_target=import_target)
+    return csv_import_mapping_from_json(row_value(preset, "mapping_json", "")) if preset else {}
+
+
+def csv_import_preset_display_name(preset):
+    if not preset:
+        return "None"
+    owner = row_value(preset, "owner_name", "") or row_value(preset, "owner_username", "")
+    suffix = "Shared" if row_value(preset, "is_shared", 0) else "Mine"
+    return f"{preset['name']} ({suffix}{f' - {owner}' if owner and row_value(preset, 'is_shared', 0) else ''})"
+
+
+def save_csv_import_mapping_preset(user_id, name, mapping, import_target="collection", is_shared=False, is_admin=False):
+    clean_name = sanitize_text_input(name, max_length=80).strip()
+    if not clean_name:
+        raise ValueError("Preset name is required.")
+    target = normalize_csv_import_target(import_target)
+    normalized = normalize_csv_import_mapping(mapping)
+    if "name" not in normalized:
+        raise ValueError("Map at least the card name column before saving a preset.")
+    shared = 1 if is_shared and is_admin else 0
+    timestamp = now_iso()
+    try:
+        preset_id = execute(
+            """
+            INSERT INTO csv_import_mapping_presets
+                (user_id, name, import_target, mapping_json, is_shared, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, import_target, name) DO UPDATE SET
+                mapping_json = excluded.mapping_json,
+                is_shared = excluded.is_shared,
+                updated_at = excluded.updated_at
+            """,
+            (
+                int(user_id),
+                clean_name,
+                target,
+                csv_import_mapping_json(normalized),
+                shared,
+                timestamp,
+                timestamp,
+            ),
+        )
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("A preset with that name already exists.") from exc
+    return row(
+        """
+        SELECT *
+        FROM csv_import_mapping_presets
+        WHERE id = ? OR (user_id = ? AND import_target = ? AND name = ?)
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (preset_id, int(user_id), target, clean_name),
+    )
+
+
+def delete_csv_import_mapping_preset(user_id, preset_id, is_admin=False):
+    preset = csv_import_preset_for_user(user_id, preset_id, is_admin=is_admin)
+    if not preset:
+        raise ValueError("Mapping preset was not found.")
+    if int(preset["user_id"]) != int(user_id) and not is_admin:
+        raise ValueError("Mapping preset was not found.")
+    with db() as conn:
+        cursor = conn.execute("DELETE FROM csv_import_mapping_presets WHERE id = ?", (preset["id"],))
+        return cursor.rowcount
+
+
+def csv_import_mapping_from_form(form):
+    mapping = {}
+    for key, _label in CSV_IMPORT_MAPPING_FIELDS:
+        raw_value = form.get(f"map_{key}", [""])[0]
+        sources = normalize_csv_import_mapping({key: raw_value}).get(key, [])
+        if sources:
+            mapping[key] = sources
+    return mapping
 
 
 def decode_csv(csv_bytes):
@@ -389,34 +579,35 @@ def parse_trade_quantity(raw_value, owned_quantity, default_trade_quantity):
     return min(clamp_quantity(text, 0), owned_quantity)
 
 
-def normalize_csv_rows(csv_bytes, default_game="mtg", default_trade_quantity=0):
+def normalize_csv_rows(csv_bytes, default_game="mtg", default_trade_quantity=0, field_mapping=None):
     text = decode_csv(csv_bytes)
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         raise ValueError("CSV file needs a header row.")
+    field_mapping = normalize_csv_import_mapping(field_mapping)
     items = []
     warnings = []
     for row_index, csv_row in enumerate(reader, start=2):
         if row_index - 1 > MAX_CSV_ROWS:
             raise ValueError(f"CSV imports are limited to {MAX_CSV_ROWS} rows per upload.")
-        card_name = csv_value(csv_row, "name")
+        card_name = csv_value(csv_row, "name", field_mapping)
         if not card_name:
             warnings.append(f"Row {row_index}: missing card name.")
             continue
-        quantity = max(1, clamp_quantity(csv_value(csv_row, "quantity"), 1))
+        quantity = max(1, clamp_quantity(csv_value(csv_row, "quantity", field_mapping), 1))
         item = {
-            "game": normalize_game(csv_value(csv_row, "game"), default_game),
+            "game": normalize_game(csv_value(csv_row, "game", field_mapping), default_game),
             "card_name": card_name[:160],
-            "set_name": csv_value(csv_row, "set_name")[:120],
-            "set_code": csv_value(csv_row, "set_code").upper()[:20],
-            "collector_number": csv_value(csv_row, "collector_number").lstrip("#")[:40],
-            "finish": normalize_finish(csv_value(csv_row, "finish")),
-            "condition": normalize_condition(csv_value(csv_row, "condition")),
-            "language": normalize_language(csv_value(csv_row, "language")),
+            "set_name": csv_value(csv_row, "set_name", field_mapping)[:120],
+            "set_code": csv_value(csv_row, "set_code", field_mapping).upper()[:20],
+            "collector_number": csv_value(csv_row, "collector_number", field_mapping).lstrip("#")[:40],
+            "finish": normalize_finish(csv_value(csv_row, "finish", field_mapping)),
+            "condition": normalize_condition(csv_value(csv_row, "condition", field_mapping)),
+            "language": normalize_language(csv_value(csv_row, "language", field_mapping)),
             "quantity": quantity,
-            "quantity_for_trade": parse_trade_quantity(csv_value(csv_row, "trade"), quantity, default_trade_quantity),
-            "notes": csv_value(csv_row, "notes")[:1000],
-            "scryfall_id": csv_value(csv_row, "scryfall_id")[:80],
+            "quantity_for_trade": parse_trade_quantity(csv_value(csv_row, "trade", field_mapping), quantity, default_trade_quantity),
+            "notes": csv_value(csv_row, "notes", field_mapping)[:1000],
+            "scryfall_id": csv_value(csv_row, "scryfall_id", field_mapping)[:80],
             "image_url": "",
             "mana_cost": "",
             "type_line": "",
@@ -427,9 +618,9 @@ def normalize_csv_rows(csv_bytes, default_game="mtg", default_trade_quantity=0):
             "scryfall_uri": "",
             "price_usd": "",
             "price_source": "",
-            "tcgplayer_product_id": csv_value(csv_row, "tcgplayer_product_id")[:80],
-            "cardmarket_product_id": csv_value(csv_row, "cardmarket_product_id")[:80],
-            "cardkingdom_sku": csv_value(csv_row, "cardkingdom_sku")[:80],
+            "tcgplayer_product_id": csv_value(csv_row, "tcgplayer_product_id", field_mapping)[:80],
+            "cardmarket_product_id": csv_value(csv_row, "cardmarket_product_id", field_mapping)[:80],
+            "cardkingdom_sku": csv_value(csv_row, "cardkingdom_sku", field_mapping)[:80],
         }
         items.append(item)
     if not items:
@@ -830,8 +1021,9 @@ def preview_collection_import_csv(
     enrich_scryfall=False,
     merge=True,
     allow_scryfall_finish_mismatch=False,
+    field_mapping=None,
 ):
-    items, warnings = normalize_csv_rows(csv_bytes, default_game, default_trade_quantity)
+    items, warnings = normalize_csv_rows(csv_bytes, default_game, default_trade_quantity, field_mapping=field_mapping)
     preview = collection_import_preview_from_items(
         user_id,
         items,
@@ -949,8 +1141,9 @@ def import_collection_csv(
     enrich_scryfall=False,
     merge=True,
     allow_scryfall_finish_mismatch=False,
+    field_mapping=None,
 ):
-    items, warnings = normalize_csv_rows(csv_bytes, default_game, default_trade_quantity)
+    items, warnings = normalize_csv_rows(csv_bytes, default_game, default_trade_quantity, field_mapping=field_mapping)
     batch_id = create_import_batch(
         user_id,
         "collection_csv",
@@ -1498,8 +1691,13 @@ def add_deck_missing_items_to_wishlist(user_id, deck_group_id, items, selected_k
     }
 
 
-def import_deck_group_csv(user_id, group_id, csv_bytes, source="auto", enrich_scryfall=True, merge=True):
-    section_rows, warnings = normalize_csv_rows_by_section(csv_bytes, default_game="mtg", default_trade_quantity=0)
+def import_deck_group_csv(user_id, group_id, csv_bytes, source="auto", enrich_scryfall=True, merge=True, field_mapping=None):
+    section_rows, warnings = normalize_csv_rows_by_section(
+        csv_bytes,
+        default_game="mtg",
+        default_trade_quantity=0,
+        field_mapping=field_mapping,
+    )
     return import_deck_group_sections(
         user_id,
         group_id,
@@ -1849,6 +2047,10 @@ class App(BaseHTTPRequestHandler):
                 return self.prices_refresh(user)
             if path.startswith("/imports/") and path.endswith("/undo") and method == "POST":
                 return self.import_undo(user, path)
+            if path == "/import/presets" and method == "POST":
+                return self.csv_import_mapping_preset_create(user)
+            if path.startswith("/import/presets/") and path.endswith("/delete") and method == "POST":
+                return self.csv_import_mapping_preset_delete(user, path)
             if path == "/import":
                 return self.collection_import(method, user)
             if path == "/wants":

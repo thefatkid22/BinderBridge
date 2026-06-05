@@ -1435,6 +1435,121 @@ def render_collection_form(
     return render_layout(user, title, content, active="cards", notice=notice, status=status)
 
 
+def render_csv_import_mapping_preset_options(user, import_target="collection", selected_id=0):
+    try:
+        selected_id = int(selected_id or 0)
+    except (TypeError, ValueError):
+        selected_id = 0
+    options = ['<option value="0">Built-in column matching</option>']
+    for preset in csv_import_preset_rows_for_user(user["id"], import_target):
+        selected = " selected" if int(preset["id"]) == selected_id else ""
+        options.append(f'<option value="{preset["id"]}"{selected}>{e(csv_import_preset_display_name(preset))}</option>')
+    return "".join(options)
+
+
+def render_csv_import_mapping_fields():
+    placeholders = {
+        "name": "Card, Title, Card Name",
+        "quantity": "Qty, Count, Owned",
+        "trade": "Trade Qty, For Trade, Available",
+        "game": "Game, TCG",
+        "set_name": "Set, Expansion",
+        "set_code": "Set Code, Edition Code",
+        "collector_number": "Collector #, Number",
+        "finish": "Foil, Finish, Printing",
+        "condition": "Condition, Quality",
+        "language": "Language, Lang",
+        "scryfall_id": "Scryfall ID",
+        "tcgplayer_product_id": "TCGplayer ID",
+        "cardmarket_product_id": "Cardmarket ID",
+        "cardkingdom_sku": "Card Kingdom SKU",
+        "notes": "Notes",
+        "section": "Section, Board, Category",
+    }
+    return "".join(
+        f"""
+        <label>{e(label)}
+            <input name="map_{e(key)}" placeholder="{e(placeholders.get(key, label))}">
+        </label>
+        """
+        for key, label in CSV_IMPORT_MAPPING_FIELDS
+    )
+
+
+def render_csv_import_mapping_preset_row(user, preset):
+    mapping = csv_import_mapping_from_json(preset["mapping_json"])
+    mapped_fields = ", ".join(label for key, label in CSV_IMPORT_MAPPING_FIELDS if key in mapping)
+    owner_or_scope = "Shared" if row_value(preset, "is_shared", 0) else "Personal"
+    can_delete = int(preset["user_id"]) == int(user["id"]) or bool(user["is_admin"])
+    delete_form = ""
+    if can_delete:
+        delete_form = f"""
+        <form method="post" action="/import/presets/{preset["id"]}/delete">
+            <button class="button danger small" type="submit" onclick="return confirm('Delete this mapping preset?')">Delete</button>
+        </form>
+        """
+    return f"""
+    <li class="csv-preset-row">
+        <div>
+            <strong>{e(preset["name"])}</strong>
+            <span class="muted">{e(owner_or_scope)} {e("deck" if preset["import_target"] == "deck" else "collection")} preset</span>
+            <small>{e(mapped_fields or "No mapped fields")}</small>
+        </div>
+        {delete_form}
+    </li>
+    """
+
+
+def render_csv_import_mapping_presets(user):
+    presets = [
+        *csv_import_preset_rows_for_user(user["id"], "collection"),
+        *csv_import_preset_rows_for_user(user["id"], "deck"),
+    ]
+    preset_rows = "".join(render_csv_import_mapping_preset_row(user, preset) for preset in presets)
+    if not preset_rows:
+        preset_rows = '<li class="empty-list">No saved mapping presets yet.</li>'
+    shared_checkbox = ""
+    if user["is_admin"]:
+        shared_checkbox = """
+        <label class="checkbox-line">
+            <input type="checkbox" name="is_shared" value="1">
+            Share with all users
+        </label>
+        """
+    return f"""
+    <section class="panel csv-mapping-presets">
+        <div class="panel-heading">
+            <div>
+                <h2>CSV mapping presets</h2>
+                <p class="muted compact">Save header mappings for collection apps, deck builders, or custom spreadsheets. Separate multiple possible headers with commas.</p>
+            </div>
+        </div>
+        <form class="form-grid csv-mapping-form" method="post" action="/import/presets">
+            <label>Preset name
+                <input required name="name" maxlength="80" placeholder="Local store export">
+            </label>
+            <label>Use for
+                <select name="import_target">
+                    <option value="collection">Collection imports</option>
+                    <option value="deck">Deck CSV imports</option>
+                </select>
+            </label>
+            {shared_checkbox}
+            <div class="csv-mapping-grid span-2">
+                {render_csv_import_mapping_fields()}
+            </div>
+            <div class="form-actions span-2">
+                <button class="button primary" type="submit">Save preset</button>
+            </div>
+        </form>
+        <div class="panel-heading with-gap">
+            <h2>Saved presets</h2>
+        </div>
+        <ul class="stack-list csv-preset-list">{preset_rows}</ul>
+    </section>
+    """
+
+
 def render_import(user, result=None, preview=None, notice=None, status="info"):
     bulk_status = scryfall_bulk_status()
     queue_stats = scryfall_enrichment_stats()
@@ -1499,6 +1614,9 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
             <label>Default game
                 <select name="game">{option_tags(CARD_GAMES, "mtg")}</select>
             </label>
+            <label class="span-2">Mapping preset
+                <select name="mapping_preset_id">{render_csv_import_mapping_preset_options(user, "collection")}</select>
+            </label>
             <label class="span-2">CSV file
                 <input required type="file" name="csv_file" accept=".csv,text/csv">
             </label>
@@ -1555,6 +1673,7 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
             </div>
         </article>
     </section>
+    {render_csv_import_mapping_presets(user)}
     {preview_html}
     {result_html}
     <section class="panel import-history">

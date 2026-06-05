@@ -93,6 +93,8 @@ Open `My Cards -> Import` in the app and upload a CSV export. BinderBridge recog
 
 Uploads default to a preview step that shows how many rows will be inserted, updated, queued, or skipped before anything is written. Applied import batches can be undone from the import history, which removes newly imported rows and restores rows that were merged during the batch.
 
+Users can save custom CSV mapping presets from the import page when a source uses unusual column names. Presets can target collection imports or deck CSV imports, and admins can share presets with every user on the site.
+
 When `Scryfall lookup` is enabled, MTG imports are enriched with canonical card names, set data, type line, oracle text, image URL, Scryfall URL, rarity, colors, and current USD price when available. Imports first use the local Scryfall bulk-data cache and existing SQLite lookup cache so large CSV files do not make one live request per row. Rows that cannot be matched locally are imported immediately and queued for background Scryfall enrichment after the preview is confirmed. CSV price columns are ignored; BinderBridge uses Scryfall as the only pricing source.
 
 BinderBridge refreshes Scryfall's `default_cards` bulk file automatically as part of the background price update process and stores the fields needed for collection enrichment locally.
@@ -338,7 +340,7 @@ Product features:
 - Trade packages for bundling named groups of cards into reusable offers
 - More granular privacy controls such as trusted-user-only visibility, hidden collection values, private share links, and per-group sharing defaults
 - Notification digest options, quiet hours, escalation for stale trade requests, and clearer unread trade reminders
-- Additional import adapters and source profiles for deck-list sites, collection apps, and CSV column mapping presets
+- Additional import adapters and source profiles for deck-list sites and collection apps
 - Collection/deck collaboration tools such as shared binders, shared wishlists, and group-curated trade boxes
 - Trade fulfillment checklist for accepted trades, such as packed, sent, received, and problem reported
 - Address or contact exchange controls for accepted trades with privacy safeguards
@@ -354,7 +356,6 @@ Admin and moderation:
 
 Imports and integrations:
 
-- Custom CSV import mapping presets that users or admins can save and reuse
 - Advanced webhook controls including retry schedules, manual delivery replay, endpoint health summaries, and per-endpoint event history filters
 - In-app API documentation with endpoint examples, scope explanations, webhook signing examples, and sample payloads
 
