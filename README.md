@@ -19,6 +19,7 @@ BinderBridge is a self-hostable trading card collection app for small communitie
 - Versioned SQLite schema migrations with hot-path indexes for collection, browse, wishlist, trade, and Scryfall lookup pages
 - Admin backup and restore tools with scheduled automatic backups, retention settings, and pre-restore safety snapshots
 - Admin maintenance health dashboard for database size, backup status, Scryfall refresh status, queued jobs, email configuration, failed notifications, setup warnings, and needs-attention grouping
+- Admin data retention controls for pruning read notifications, audit logs, completed webhook delivery records, and resolved dispute evidence
 - Admin onboarding checklist for SMTP, registration settings, backups, Scryfall sync, first invites, and first collection import
 - Admin import/job dashboard for CSV imports, Scryfall enrichment, Scryfall price refresh status, failed jobs, retries, and import undo
 - Admin maintenance health actions for retrying recoverable jobs, replaying failed notification emails, checking backup integrity, and surfacing setup warnings
@@ -149,6 +150,12 @@ By default, BinderBridge creates an automatic backup every 24 hours and keeps th
 
 Restoring accepts BinderBridge backup zips or raw SQLite database files. BinderBridge verifies the uploaded database, creates a pre-restore safety backup under `data/backups`, restores with SQLite's backup API, and then runs migrations so older backups can catch up to the current schema.
 
+## Data Retention
+
+Admins can review and run data retention cleanup from `Admin -> Maintenance Health`. Separate retention periods control read notifications, admin audit logs, terminal webhook delivery records, and evidence attached to resolved or dismissed disputes. Set any period to `0` to keep that data forever.
+
+Cleanup is manual and shows the number of currently eligible records before it runs. Unread notifications, pending webhook deliveries, and evidence attached to open disputes are always protected.
+
 ## Registration Invites
 
 Admins can create registration invites from `Admin -> Registration invites`. Invite tokens are stored hashed in the database, expire automatically, and can be revoked before they are accepted.
@@ -277,6 +284,11 @@ interval_hours = 24
 retention_count = 14
 retention_days = 30
 
+[retention]
+notification_days = 90
+admin_log_days = 365
+webhook_days = 90
+
 [webhooks]
 worker_enabled = true
 timeout_seconds = 5
@@ -310,6 +322,9 @@ Supported environment variables:
 - `BINDERBRIDGE_BACKUP_INTERVAL_HOURS`: automatic backup interval, default `24`
 - `BINDERBRIDGE_BACKUP_RETENTION_COUNT`: number of automatic backup archives to keep, default `14`
 - `BINDERBRIDGE_BACKUP_RETENTION_DAYS`: maximum automatic backup age in days, default `30`; set to `0` to disable age-based cleanup
+- `BINDERBRIDGE_NOTIFICATION_RETENTION_DAYS`: default age for read-notification cleanup, default `90`; set to `0` to keep forever
+- `BINDERBRIDGE_ADMIN_LOG_RETENTION_DAYS`: default age for admin audit-log cleanup, default `365`; set to `0` to keep forever
+- `BINDERBRIDGE_WEBHOOK_RETENTION_DAYS`: default age for completed webhook delivery cleanup, default `90`; set to `0` to keep forever
 - `BINDERBRIDGE_SQLITE_BUSY_TIMEOUT_MS`: how long SQLite waits for another write to finish before reporting a lock, default `30000`
 - `BINDERBRIDGE_API_PAGE_SIZE_MAX`: maximum API page size, default `250`
 - `BINDERBRIDGE_WEBHOOK_WORKER_ENABLED`: set to `0`, `false`, `no`, or `off` to disable the webhook delivery worker
@@ -351,8 +366,6 @@ Product features:
 Admin and moderation:
 
 - Additional admin roles such as moderator, invite manager, backup manager, integration manager, and trade dispute reviewer
-- Admin policy settings for one-way trades, fairness thresholds, dispute escalation timing, and evidence retention
-- Data retention controls for pruning old notifications, logs, webhook delivery records, and resolved dispute evidence
 - Collection health dashboard v2 for duplicates, missing Scryfall data, invalid finishes, stale prices, and public/private coverage
 
 Imports and integrations:

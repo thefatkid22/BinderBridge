@@ -13,11 +13,6 @@ def render_admin(user, notice=None, status="info", invite_result=None):
     integration_policy = integration_access_settings()
     api_access_options = option_tags(INTEGRATION_ACCESS_POLICY_OPTIONS, integration_policy["api_policy"])
     webhook_access_options = option_tags(INTEGRATION_ACCESS_POLICY_OPTIONS, integration_policy["webhook_policy"])
-    evidence_retention_help = (
-        "Evidence attachments are kept forever until an admin applies cleanup."
-        if trade_policy["evidence_retention_days"] == 0
-        else f"Resolved or dismissed issue evidence older than {trade_policy['evidence_retention_days']} day(s) can be pruned."
-    )
     invite_only_checked = checked(invite_only_registration_enabled())
     invite_mode_label = "Invite-only" if invite_only_registration_enabled() else "Open registration"
     smtp_configured = smtp_invites_configured()
@@ -97,14 +92,7 @@ def render_admin(user, notice=None, status="info", invite_result=None):
             <label>Dispute escalation after days
                 <input name="dispute_escalation_days" type="number" min="1" step="1" value="{e(trade_policy["dispute_escalation_days"])}">
             </label>
-            <label>Evidence retention days
-                <input name="evidence_retention_days" type="number" min="0" step="1" value="{e(trade_policy["evidence_retention_days"])}">
-            </label>
-            <label class="checkbox-line span-2">
-                <input type="checkbox" name="apply_evidence_retention" value="1">
-                Apply evidence retention cleanup after saving
-            </label>
-            <p class="muted span-2 compact">Set block threshold to 0 to warn only. Unpriced cards count as $0.00. {e(evidence_retention_help)}</p>
+            <p class="muted span-2 compact">Set block threshold to 0 to warn only. Unpriced cards count as $0.00. Evidence retention is managed from Maintenance Health.</p>
             <div class="form-actions span-2">
                 <button class="button primary" type="submit">Save trade policy</button>
             </div>
@@ -510,6 +498,8 @@ def render_admin_health(user, notice=None, status="info"):
     health = maintenance_health_status()
     dashboard = maintenance_job_dashboard(limit=6)
     database = health["database"]
+    retention = health["retention"]
+    retention_eligible = retention["eligible"]
     backups = health["backups"]
     auto_backup = backups["automatic"]
     backup_integrity = backups["integrity"]
@@ -587,6 +577,7 @@ def render_admin_health(user, notice=None, status="info"):
     backup_error = f'<p class="notice error compact">{e(auto_backup["last_error"])}</p>' if auto_backup["last_error"] else ""
     bulk_error = f'<p class="notice error compact">{e(scryfall_bulk.get("error", ""))}</p>' if scryfall_bulk.get("error") else ""
     price_error = f'<p class="notice error compact">{e(scryfall_prices.get("error", ""))}</p>' if scryfall_prices.get("error") else ""
+    retention_last_run = health_time_label(retention["last_run"]) if retention["last_run"] else "Never"
     content = f"""
     <section class="section-heading">
         <div>
@@ -656,6 +647,36 @@ def render_admin_health(user, notice=None, status="info"):
             </div>
             <ul class="stack-list compact-stack">{setup_warning_rows}</ul>
         </article>
+        <form class="panel form-grid compact-form span-2" method="post" action="/admin/health/retention">
+            <div class="span-2 panel-heading">
+                <div>
+                    <h2>Data retention</h2>
+                    <p class="muted compact">Set a value to 0 to keep that data forever. Cleanup only removes read notifications, terminal webhook deliveries, old audit logs, and evidence from resolved or dismissed disputes.</p>
+                </div>
+                <span class="pill">{e(retention_eligible["total"])} eligible</span>
+            </div>
+            <label>Read notifications
+                <input name="notification_days" type="number" min="0" max="36500" step="1" value="{e(retention["notification_days"])}">
+                <span class="subtle">{e(retention_eligible["notifications"])} eligible; unread notifications are protected.</span>
+            </label>
+            <label>Admin audit logs
+                <input name="admin_log_days" type="number" min="0" max="36500" step="1" value="{e(retention["admin_log_days"])}">
+                <span class="subtle">{e(retention_eligible["admin_logs"])} eligible.</span>
+            </label>
+            <label>Webhook delivery records
+                <input name="webhook_days" type="number" min="0" max="36500" step="1" value="{e(retention["webhook_days"])}">
+                <span class="subtle">{e(retention_eligible["webhook_deliveries"])} eligible; pending deliveries are protected.</span>
+            </label>
+            <label>Resolved dispute evidence
+                <input name="evidence_days" type="number" min="0" max="36500" step="1" value="{e(retention["evidence_days"])}">
+                <span class="subtle">{e(retention_eligible["dispute_evidence"])} eligible; open dispute evidence is protected.</span>
+            </label>
+            <p class="muted compact span-2">Retention age is measured from creation time, webhook completion time, or dispute resolution time as appropriate. Last cleanup: {e(retention_last_run)}.</p>
+            <div class="form-actions span-2">
+                <button class="button primary" name="intent" value="save" type="submit">Save retention settings</button>
+                <button class="button danger" name="intent" value="save_run" type="submit" onclick="return confirm('Delete all records currently eligible under these retention settings? This cannot be undone.')">Save and run cleanup</button>
+            </div>
+        </form>
         <article class="{health_card_class('panel', 'ok')}">
             <div class="panel-heading">
                 <h2>Database</h2>

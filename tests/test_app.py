@@ -420,6 +420,12 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("Email configuration", html)
         self.assertIn("Failed notifications", html)
         self.assertIn("Maintenance actions", html)
+        self.assertIn("Data retention", html)
+        self.assertIn('/admin/health/retention', html)
+        self.assertIn('name="notification_days"', html)
+        self.assertIn('name="admin_log_days"', html)
+        self.assertIn('name="webhook_days"', html)
+        self.assertIn('name="evidence_days"', html)
         self.assertIn("Setup warnings", html)
         self.assertIn("health-severity-card severity-error", html)
         self.assertIn("job-row severity-error", html)
@@ -834,7 +840,7 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn('/admin/trade-policy', html)
         self.assertIn('name="one_way_trade_policy"', html)
         self.assertIn('name="dispute_escalation_days"', html)
-        self.assertIn('name="evidence_retention_days"', html)
+        self.assertNotIn('name="evidence_retention_days"', html)
         self.assertEqual(settings["one_way_policy"], "admins")
         self.assertEqual(settings["trusted_threshold"], 4)
         self.assertEqual(settings["fairness"]["warn_percent"], "15")
@@ -2551,6 +2557,111 @@ Deck
         self.assertEqual(keep_forever["deleted"], 0)
         self.assertEqual(pruned["deleted"], 1)
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM trade_dispute_evidence WHERE dispute_id = ?", (dispute_id,))["count"], 0)
+
+    def test_data_retention_controls_prune_only_eligible_old_records(self):
+        admin_id = app.create_user("retentionadmin", "password123", "Retention Admin", is_admin=True)
+        user_id = app.create_user("retentionuser", "password123", "Retention User", is_admin=False)
+        old_at = (datetime.now(timezone.utc) - timedelta(days=60)).replace(microsecond=0).isoformat()
+        recent_at = app.now_iso()
+
+        old_read_notification = app.execute(
+            "INSERT INTO user_notifications (user_id, kind, title, is_read, created_at) VALUES (?, 'admin_notice', 'Old read', 1, ?)",
+            (user_id, old_at),
+        )
+        old_unread_notification = app.execute(
+            "INSERT INTO user_notifications (user_id, kind, title, is_read, created_at) VALUES (?, 'admin_notice', 'Old unread', 0, ?)",
+            (user_id, old_at),
+        )
+        recent_read_notification = app.execute(
+            "INSERT INTO user_notifications (user_id, kind, title, is_read, created_at) VALUES (?, 'admin_notice', 'Recent read', 1, ?)",
+            (user_id, recent_at),
+        )
+        old_log = app.log_admin_action(admin_id, "admin_notes_updated", user_id, "user", "Retention User", "Old log")
+        recent_log = app.log_admin_action(admin_id, "admin_notes_updated", user_id, "user", "Retention User", "Recent log")
+        app.execute("UPDATE admin_audit_log SET created_at = ? WHERE id = ?", (old_at, old_log))
+
+        webhook_id = app.create_webhook_endpoint(user_id, "Retention webhook", "https://example.com/hook")["id"]
+        old_sent_delivery = app.execute(
+            """
+            INSERT INTO webhook_deliveries
+                (webhook_id, user_id, event_type, payload_json, status, created_at, completed_at)
+            VALUES (?, ?, 'notification.created', '{}', 'sent', ?, ?)
+            """,
+            (webhook_id, user_id, old_at, old_at),
+        )
+        old_pending_delivery = app.execute(
+            """
+            INSERT INTO webhook_deliveries
+                (webhook_id, user_id, event_type, payload_json, status, created_at)
+            VALUES (?, ?, 'notification.created', '{}', 'pending', ?)
+            """,
+            (webhook_id, user_id, old_at),
+        )
+        recent_failed_delivery = app.execute(
+            """
+            INSERT INTO webhook_deliveries
+                (webhook_id, user_id, event_type, payload_json, status, created_at, completed_at)
+            VALUES (?, ?, 'notification.created', '{}', 'failed', ?, ?)
+            """,
+            (webhook_id, user_id, recent_at, recent_at),
+        )
+
+        trade_id = factory.create_trade(admin_id, user_id, status="completed")
+        resolved_dispute = app.execute(
+            """
+            INSERT INTO trade_disputes
+                (trade_id, reporter_id, category, status, body, resolved_at, created_at, updated_at)
+            VALUES (?, ?, 'other', 'resolved', 'Resolved issue', ?, ?, ?)
+            """,
+            (trade_id, user_id, old_at, old_at, old_at),
+        )
+        open_dispute = app.execute(
+            """
+            INSERT INTO trade_disputes
+                (trade_id, reporter_id, category, status, body, created_at, updated_at)
+            VALUES (?, ?, 'other', 'open', 'Open issue', ?, ?)
+            """,
+            (trade_id, user_id, old_at, old_at),
+        )
+        resolved_evidence = app.execute(
+            """
+            INSERT INTO trade_dispute_evidence
+                (dispute_id, uploaded_by_user_id, original_filename, content_type, file_size, checksum_sha256, content, created_at)
+            VALUES (?, ?, 'resolved.txt', 'text/plain', 8, 'resolved', ?, ?)
+            """,
+            (resolved_dispute, user_id, b"resolved", old_at),
+        )
+        open_evidence = app.execute(
+            """
+            INSERT INTO trade_dispute_evidence
+                (dispute_id, uploaded_by_user_id, original_filename, content_type, file_size, checksum_sha256, content, created_at)
+            VALUES (?, ?, 'open.txt', 'text/plain', 4, 'open', ?, ?)
+            """,
+            (open_dispute, user_id, b"open", old_at),
+        )
+
+        settings = app.set_data_retention_settings("30", "30", "30", "30")
+        status = app.data_retention_status()
+        result = app.prune_data_retention_records(settings)
+        html = app.render_admin_health(app.row("SELECT * FROM users WHERE id = ?", (admin_id,)))
+
+        self.assertEqual(status["eligible"]["total"], 4)
+        self.assertEqual(result["notifications"], 1)
+        self.assertEqual(result["admin_logs"], 1)
+        self.assertEqual(result["webhook_deliveries"], 1)
+        self.assertEqual(result["dispute_evidence"], 1)
+        self.assertIsNone(app.row("SELECT id FROM user_notifications WHERE id = ?", (old_read_notification,)))
+        self.assertIsNotNone(app.row("SELECT id FROM user_notifications WHERE id = ?", (old_unread_notification,)))
+        self.assertIsNotNone(app.row("SELECT id FROM user_notifications WHERE id = ?", (recent_read_notification,)))
+        self.assertIsNone(app.row("SELECT id FROM admin_audit_log WHERE id = ?", (old_log,)))
+        self.assertIsNotNone(app.row("SELECT id FROM admin_audit_log WHERE id = ?", (recent_log,)))
+        self.assertIsNone(app.row("SELECT id FROM webhook_deliveries WHERE id = ?", (old_sent_delivery,)))
+        self.assertIsNotNone(app.row("SELECT id FROM webhook_deliveries WHERE id = ?", (old_pending_delivery,)))
+        self.assertIsNotNone(app.row("SELECT id FROM webhook_deliveries WHERE id = ?", (recent_failed_delivery,)))
+        self.assertIsNone(app.row("SELECT id FROM trade_dispute_evidence WHERE id = ?", (resolved_evidence,)))
+        self.assertIsNotNone(app.row("SELECT id FROM trade_dispute_evidence WHERE id = ?", (open_evidence,)))
+        self.assertIn("Last cleanup:", html)
+        self.assertIn("0 eligible", html)
 
     def test_admin_trade_issue_queue_updates_status_and_logs_action(self):
         admin_id = app.create_user("admin", "password123", "Admin")

@@ -1,4 +1,4 @@
-"""Backup and restore helpers for BinderBridge."""
+"""Maintenance, backup, restore, and retention helpers for BinderBridge."""
 
 import json
 import secrets
@@ -30,10 +30,18 @@ BACKUP_INTEGRITY_LAST_STATUS_KEY = "backup_integrity_last_status"
 BACKUP_INTEGRITY_LAST_MESSAGE_KEY = "backup_integrity_last_message"
 BACKUP_INTEGRITY_LAST_CHECKED_KEY = "backup_integrity_last_checked"
 BACKUP_INTEGRITY_LAST_FAILED_KEY = "backup_integrity_last_failed"
+DATA_RETENTION_NOTIFICATION_DAYS_KEY = "data_retention_notification_days"
+DATA_RETENTION_ADMIN_LOG_DAYS_KEY = "data_retention_admin_log_days"
+DATA_RETENTION_WEBHOOK_DAYS_KEY = "data_retention_webhook_days"
+DATA_RETENTION_LAST_RUN_KEY = "data_retention_last_run"
+DATA_RETENTION_LAST_RESULT_KEY = "data_retention_last_result"
 DEFAULT_AUTOMATIC_BACKUP_ENABLED = config_bool("BINDERBRIDGE_BACKUP_AUTO_ENABLED", "BACKUP_AUTO_ENABLED", default=True, section="backups", key="auto_enabled")
 DEFAULT_AUTOMATIC_BACKUP_INTERVAL_HOURS = max(1, config_int("BINDERBRIDGE_BACKUP_INTERVAL_HOURS", "BACKUP_INTERVAL_HOURS", default=24, section="backups", key="interval_hours"))
 DEFAULT_AUTOMATIC_BACKUP_RETENTION_COUNT = max(1, config_int("BINDERBRIDGE_BACKUP_RETENTION_COUNT", "BACKUP_RETENTION_COUNT", default=14, section="backups", key="retention_count"))
 DEFAULT_AUTOMATIC_BACKUP_RETENTION_DAYS = max(0, config_int("BINDERBRIDGE_BACKUP_RETENTION_DAYS", "BACKUP_RETENTION_DAYS", default=30, section="backups", key="retention_days"))
+DEFAULT_DATA_RETENTION_NOTIFICATION_DAYS = max(0, config_int("BINDERBRIDGE_NOTIFICATION_RETENTION_DAYS", default=90, section="retention", key="notification_days"))
+DEFAULT_DATA_RETENTION_ADMIN_LOG_DAYS = max(0, config_int("BINDERBRIDGE_ADMIN_LOG_RETENTION_DAYS", default=365, section="retention", key="admin_log_days"))
+DEFAULT_DATA_RETENTION_WEBHOOK_DAYS = max(0, config_int("BINDERBRIDGE_WEBHOOK_RETENTION_DAYS", default=90, section="retention", key="webhook_days"))
 AUTOMATIC_BACKUP_WORKER_CHECK_SECONDS = 60
 
 _automatic_backup_worker_lock = threading.Lock()
@@ -114,6 +122,175 @@ def table_count(table_name):
     return found["count"] if found else 0
 
 
+def normalize_data_retention_days(value, label):
+    try:
+        days = int(str(value or "0").strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a whole number of days.") from exc
+    if days < 0:
+        raise ValueError(f"{label} must be 0 or more.")
+    if days > 36500:
+        raise ValueError(f"{label} must be 36500 or less.")
+    return days
+
+
+def data_retention_setting(key, default):
+    try:
+        return normalize_data_retention_days(get_setting(key, default), "Retention")
+    except ValueError:
+        return default
+
+
+def data_retention_settings():
+    return {
+        "notification_days": data_retention_setting(DATA_RETENTION_NOTIFICATION_DAYS_KEY, DEFAULT_DATA_RETENTION_NOTIFICATION_DAYS),
+        "admin_log_days": data_retention_setting(DATA_RETENTION_ADMIN_LOG_DAYS_KEY, DEFAULT_DATA_RETENTION_ADMIN_LOG_DAYS),
+        "webhook_days": data_retention_setting(DATA_RETENTION_WEBHOOK_DAYS_KEY, DEFAULT_DATA_RETENTION_WEBHOOK_DAYS),
+        "evidence_days": dispute_evidence_retention_days(),
+        "last_run": get_setting(DATA_RETENTION_LAST_RUN_KEY, ""),
+        "last_result": get_setting(DATA_RETENTION_LAST_RESULT_KEY, ""),
+    }
+
+
+def set_data_retention_settings(notification_days, admin_log_days, webhook_days, evidence_days):
+    settings = {
+        "notification_days": normalize_data_retention_days(notification_days, "Read notification retention"),
+        "admin_log_days": normalize_data_retention_days(admin_log_days, "Admin log retention"),
+        "webhook_days": normalize_data_retention_days(webhook_days, "Webhook delivery retention"),
+        "evidence_days": normalize_data_retention_days(evidence_days, "Resolved dispute evidence retention"),
+    }
+    with db() as conn:
+        for key, value in (
+            (DATA_RETENTION_NOTIFICATION_DAYS_KEY, settings["notification_days"]),
+            (DATA_RETENTION_ADMIN_LOG_DAYS_KEY, settings["admin_log_days"]),
+            (DATA_RETENTION_WEBHOOK_DAYS_KEY, settings["webhook_days"]),
+            (DISPUTE_EVIDENCE_RETENTION_DAYS_KEY, settings["evidence_days"]),
+        ):
+            conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, str(value)))
+    return data_retention_settings()
+
+
+def data_retention_cutoff(days, reference_time=None):
+    days = int(days or 0)
+    if days <= 0:
+        return ""
+    reference_time = reference_time or datetime.now(timezone.utc)
+    return (reference_time - timedelta(days=days)).replace(microsecond=0).isoformat()
+
+
+def data_retention_eligible_counts(settings=None, reference_time=None):
+    settings = settings or data_retention_settings()
+    cutoffs = {
+        key: data_retention_cutoff(settings[key], reference_time)
+        for key in ("notification_days", "admin_log_days", "webhook_days", "evidence_days")
+    }
+    counts = {
+        "notifications": 0,
+        "admin_logs": 0,
+        "webhook_deliveries": 0,
+        "dispute_evidence": 0,
+    }
+    if cutoffs["notification_days"]:
+        counts["notifications"] = row(
+            "SELECT COUNT(*) AS count FROM user_notifications WHERE is_read = 1 AND created_at < ?",
+            (cutoffs["notification_days"],),
+        )["count"]
+    if cutoffs["admin_log_days"]:
+        counts["admin_logs"] = row(
+            "SELECT COUNT(*) AS count FROM admin_audit_log WHERE created_at < ?",
+            (cutoffs["admin_log_days"],),
+        )["count"]
+    if cutoffs["webhook_days"]:
+        counts["webhook_deliveries"] = row(
+            """
+            SELECT COUNT(*) AS count
+            FROM webhook_deliveries
+            WHERE status IN ('sent', 'failed')
+                AND COALESCE(NULLIF(completed_at, ''), created_at) < ?
+            """,
+            (cutoffs["webhook_days"],),
+        )["count"]
+    if cutoffs["evidence_days"]:
+        counts["dispute_evidence"] = row(
+            """
+            SELECT COUNT(*) AS count
+            FROM trade_dispute_evidence
+            WHERE dispute_id IN (
+                SELECT id
+                FROM trade_disputes
+                WHERE status IN ('resolved', 'dismissed')
+                    AND COALESCE(NULLIF(resolved_at, ''), NULLIF(updated_at, ''), created_at) < ?
+            )
+            """,
+            (cutoffs["evidence_days"],),
+        )["count"]
+    counts["total"] = sum(counts.values())
+    return counts
+
+
+def data_retention_status(reference_time=None):
+    settings = data_retention_settings()
+    return {
+        **settings,
+        "eligible": data_retention_eligible_counts(settings, reference_time),
+    }
+
+
+def prune_data_retention_records(settings=None, reference_time=None):
+    settings = settings or data_retention_settings()
+    cutoffs = {
+        key: data_retention_cutoff(settings[key], reference_time)
+        for key in ("notification_days", "admin_log_days", "webhook_days", "evidence_days")
+    }
+    deleted = {
+        "notifications": 0,
+        "admin_logs": 0,
+        "webhook_deliveries": 0,
+        "dispute_evidence": 0,
+    }
+    timestamp = now_iso()
+    with db() as conn:
+        if cutoffs["notification_days"]:
+            deleted["notifications"] = conn.execute(
+                "DELETE FROM user_notifications WHERE is_read = 1 AND created_at < ?",
+                (cutoffs["notification_days"],),
+            ).rowcount
+        if cutoffs["admin_log_days"]:
+            deleted["admin_logs"] = conn.execute(
+                "DELETE FROM admin_audit_log WHERE created_at < ?",
+                (cutoffs["admin_log_days"],),
+            ).rowcount
+        if cutoffs["webhook_days"]:
+            deleted["webhook_deliveries"] = conn.execute(
+                """
+                DELETE FROM webhook_deliveries
+                WHERE status IN ('sent', 'failed')
+                    AND COALESCE(NULLIF(completed_at, ''), created_at) < ?
+                """,
+                (cutoffs["webhook_days"],),
+            ).rowcount
+        if cutoffs["evidence_days"]:
+            deleted["dispute_evidence"] = conn.execute(
+                """
+                DELETE FROM trade_dispute_evidence
+                WHERE dispute_id IN (
+                    SELECT id
+                    FROM trade_disputes
+                    WHERE status IN ('resolved', 'dismissed')
+                        AND COALESCE(NULLIF(resolved_at, ''), NULLIF(updated_at, ''), created_at) < ?
+                )
+                """,
+                (cutoffs["evidence_days"],),
+            ).rowcount
+        deleted["total"] = sum(deleted.values())
+        conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (DATA_RETENTION_LAST_RUN_KEY, timestamp))
+        conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+            (DATA_RETENTION_LAST_RESULT_KEY, json.dumps(deleted, ensure_ascii=True, sort_keys=True)),
+        )
+    return {**deleted, "run_at": timestamp}
+
+
 def maintenance_health_status(limit=6):
     db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
     smtp_settings = smtp_email_settings()
@@ -158,6 +335,7 @@ def maintenance_health_status(limit=6):
                 ("Notifications", table_count("user_notifications")),
             ],
         },
+        "retention": data_retention_status(),
         "backups": backup_status(limit=limit),
         "scryfall": {
             "bulk": bulk_status_func() if bulk_status_func else {},
@@ -1138,10 +1316,18 @@ __all__ = [
     "BACKUP_INTEGRITY_LAST_MESSAGE_KEY",
     "BACKUP_INTEGRITY_LAST_CHECKED_KEY",
     "BACKUP_INTEGRITY_LAST_FAILED_KEY",
+    "DATA_RETENTION_NOTIFICATION_DAYS_KEY",
+    "DATA_RETENTION_ADMIN_LOG_DAYS_KEY",
+    "DATA_RETENTION_WEBHOOK_DAYS_KEY",
+    "DATA_RETENTION_LAST_RUN_KEY",
+    "DATA_RETENTION_LAST_RESULT_KEY",
     "DEFAULT_AUTOMATIC_BACKUP_ENABLED",
     "DEFAULT_AUTOMATIC_BACKUP_INTERVAL_HOURS",
     "DEFAULT_AUTOMATIC_BACKUP_RETENTION_COUNT",
     "DEFAULT_AUTOMATIC_BACKUP_RETENTION_DAYS",
+    "DEFAULT_DATA_RETENTION_NOTIFICATION_DAYS",
+    "DEFAULT_DATA_RETENTION_ADMIN_LOG_DAYS",
+    "DEFAULT_DATA_RETENTION_WEBHOOK_DAYS",
     "AUTOMATIC_BACKUP_WORKER_CHECK_SECONDS",
     "JOB_DASHBOARD_RETRY_STATUSES",
     "backup_directory",
@@ -1150,6 +1336,14 @@ __all__ = [
     "backup_status",
     "status_count_rows",
     "table_count",
+    "normalize_data_retention_days",
+    "data_retention_setting",
+    "data_retention_settings",
+    "set_data_retention_settings",
+    "data_retention_cutoff",
+    "data_retention_eligible_counts",
+    "data_retention_status",
+    "prune_data_retention_records",
     "maintenance_health_status",
     "maintenance_job_status_value",
     "maintenance_import_batch_rows",

@@ -121,6 +121,46 @@ def admin_health_scryfall_sync(self, user):
     return self.html(render_admin_health(updated, notice=notice))
 
 
+def admin_health_retention(self, user):
+    if not require_admin(user):
+        return self.not_found(user)
+    form = self.read_form()
+    try:
+        settings = set_data_retention_settings(
+            form.get("notification_days", [""])[0],
+            form.get("admin_log_days", [""])[0],
+            form.get("webhook_days", [""])[0],
+            form.get("evidence_days", [""])[0],
+        )
+        result = prune_data_retention_records(settings) if form.get("intent", ["save"])[0] == "save_run" else None
+    except ValueError as exc:
+        return self.html(render_admin_health(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    details = (
+        f"Read notifications {settings['notification_days']} day(s); admin logs {settings['admin_log_days']} day(s); "
+        f"webhook deliveries {settings['webhook_days']} day(s); resolved dispute evidence {settings['evidence_days']} day(s)."
+    )
+    log_admin_action(
+        user["id"],
+        "data_retention_pruned" if result else "data_retention_updated",
+        None,
+        "maintenance",
+        "Data retention",
+        (
+            f"{details} Deleted {result['notifications']} notification(s), {result['admin_logs']} log(s), "
+            f"{result['webhook_deliveries']} webhook delivery record(s), and {result['dispute_evidence']} evidence attachment(s)."
+            if result
+            else details
+        ),
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    notice = "Data retention settings saved."
+    if result:
+        notice += f" Cleanup removed {result['total']} eligible record{'s' if result['total'] != 1 else ''}."
+    return self.html(render_admin_health(updated, notice=notice))
+
+
 def admin_jobs_page(self, user, notice=None, status="info"):
     if not require_admin(user):
         return self.not_found(user)
@@ -226,20 +266,16 @@ def admin_trade_policy_settings(self, user):
             form.get("fairness_warn_percent", [""])[0],
             form.get("fairness_block_percent", [""])[0],
             form.get("dispute_escalation_days", [""])[0],
-            form.get("evidence_retention_days", [""])[0],
+            dispute_evidence_retention_days(),
         )
-        retention_result = None
-        if form.get("apply_evidence_retention", [""])[0] == "1":
-            retention_result = prune_trade_dispute_evidence()
     except ValueError as exc:
         return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
     fairness = settings["fairness"]
     block_label = f"{fairness['block_percent']}%" if fairness["block_enabled"] else "off"
-    retention_label = "keep forever" if settings["evidence_retention_days"] == 0 else f"{settings['evidence_retention_days']} day(s)"
     details = (
         f"One-way trades: {settings['one_way_policy_label']}; trust threshold {settings['trusted_threshold']}; "
         f"fairness warning {fairness['warn_percent']}%, block {block_label}; "
-        f"dispute escalation {settings['dispute_escalation_days']} day(s); evidence retention {retention_label}."
+        f"dispute escalation {settings['dispute_escalation_days']} day(s)."
     )
     log_admin_action(
         user["id"],
@@ -251,21 +287,8 @@ def admin_trade_policy_settings(self, user):
         admin_request_ip(self),
         admin_user_agent(self),
     )
-    if retention_result:
-        log_admin_action(
-            user["id"],
-            "dispute_evidence_retention_pruned",
-            None,
-            "dispute_evidence",
-            "Evidence retention",
-            f"Deleted {retention_result['deleted']} attachment(s) older than the retention policy.",
-            admin_request_ip(self),
-            admin_user_agent(self),
-        )
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = "Trade policy settings saved."
-    if retention_result:
-        notice += f" Evidence retention removed {retention_result['deleted']} attachment{'s' if retention_result['deleted'] != 1 else ''}."
     return self.html(render_admin(updated, notice=notice))
 
 
@@ -631,6 +654,7 @@ __all__ = [
     "admin_health_replay_notifications",
     "admin_health_check_backups",
     "admin_health_scryfall_sync",
+    "admin_health_retention",
     "admin_jobs_page",
     "admin_jobs_retry_response",
     "admin_disputes_page",

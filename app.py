@@ -2011,6 +2011,8 @@ class App(BaseHTTPRequestHandler):
                 return self.admin_health_check_backups(user)
             if path == "/admin/health/scryfall/sync" and method == "POST":
                 return self.admin_health_scryfall_sync(user)
+            if path == "/admin/health/retention" and method == "POST":
+                return self.admin_health_retention(user)
             if path == "/admin/jobs":
                 return self.admin_jobs_page(user)
             if path == "/admin/logs":

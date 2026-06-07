@@ -103,6 +103,8 @@ ADMIN_AUDIT_ACTION_LABELS = {
     "trade_fairness_updated": "Trade fairness updated",
     "trade_policy_updated": "Trade policy updated",
     "dispute_evidence_retention_pruned": "Dispute evidence pruned",
+    "data_retention_updated": "Data retention updated",
+    "data_retention_pruned": "Data retention cleanup run",
     "registration_mode_updated": "Registration mode updated",
     "invite_created": "Invite created",
     "invite_revoked": "Invite revoked",
