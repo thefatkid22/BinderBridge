@@ -536,7 +536,7 @@ def start_webhook_delivery_worker():
             try:
                 send_pending_webhook_deliveries(limit=WEBHOOK_DELIVERY_BATCH_SIZE)
             except Exception as exc:
-                print(f"Webhook delivery worker error: {exc}")
+                write_log_message(f"Webhook delivery worker error: {exc}")
             time.sleep(WEBHOOK_DELIVERY_INTERVAL_SECONDS)
 
     threading.Thread(target=worker, name="binderbridge-webhooks", daemon=True).start()

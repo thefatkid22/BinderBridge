@@ -243,6 +243,36 @@ def sanitize_text_input(value, max_length=MAX_FORM_VALUE_LENGTH):
     return "".join(cleaned)
 
 
+def safe_log_text(value, encoding=None):
+    text = "" if value is None else str(value)
+    escaped = []
+    for char in text:
+        codepoint = ord(char)
+        if codepoint < 32 or 127 <= codepoint <= 159:
+            escaped.append(f"\\x{codepoint:02x}")
+        else:
+            escaped.append(char)
+    clean_text = "".join(escaped)
+    encoding = encoding or getattr(sys.stderr, "encoding", None) or "utf-8"
+    try:
+        return clean_text.encode(encoding, errors="backslashreplace").decode(encoding, errors="replace")
+    except LookupError:
+        return clean_text.encode("ascii", errors="backslashreplace").decode("ascii")
+
+
+def write_log_message(message, stream=None):
+    stream = stream or sys.stderr
+    safe_message = safe_log_text(message, getattr(stream, "encoding", None))
+    try:
+        stream.write(f"{safe_message}\n")
+        stream.flush()
+    except (AttributeError, UnicodeEncodeError):
+        buffer = getattr(stream, "buffer", None)
+        if buffer is not None:
+            buffer.write(f"{safe_message}\n".encode("ascii", errors="backslashreplace"))
+            buffer.flush()
+
+
 def sanitize_form_values(form):
     sanitized = {}
     for key, values in dict(form or {}).items():
@@ -2341,7 +2371,7 @@ class App(BaseHTTPRequestHandler):
         self.html(render_layout(user, "Error", content, notice="The app hit an unexpected error.", status="error"), HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def log_message(self, format, *args):
-        print(f"{self.address_string()} - {format % args}")
+        write_log_message(f"{self.address_string()} - {format % args}")
 
 from binderbridge import account_routes as _account_routes
 _install_feature_module(_account_routes)
@@ -2419,8 +2449,8 @@ def main():
     start_automatic_backup_worker()
     start_webhook_delivery_worker()
     server = ThreadingHTTPServer((HOST, PORT), App)
-    print(f"{APP_NAME} running at http://{HOST}:{PORT}")
-    print(f"Database: {DB_PATH}")
+    write_log_message(f"{APP_NAME} running at http://{HOST}:{PORT}", stream=sys.stdout)
+    write_log_message(f"Database: {DB_PATH}", stream=sys.stdout)
     server.serve_forever()
 
 

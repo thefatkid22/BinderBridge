@@ -89,6 +89,16 @@ class BinderBridgeTest(unittest.TestCase):
                     os.environ[key] = value
             bb_config.reset_config_cache()
 
+    def test_log_messages_escape_control_and_unencodable_characters(self):
+        buffer = io.BytesIO()
+        stream = io.TextIOWrapper(buffer, encoding="cp1252", errors="strict")
+
+        app.write_log_message("request \x9c path \U0001f600\nnext", stream=stream)
+        stream.flush()
+        output = buffer.getvalue().decode("cp1252")
+
+        self.assertEqual(output.rstrip("\r\n"), "request \\x9c path \\U0001f600\\x0anext")
+
     def test_schema_migrations_record_version_and_create_hot_path_indexes(self):
         app.init_db()
 
