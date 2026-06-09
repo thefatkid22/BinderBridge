@@ -2450,6 +2450,7 @@ def main():
     start_scryfall_price_refresh_worker()
     start_automatic_backup_worker()
     start_webhook_delivery_worker()
+    start_notification_worker()
     server = ThreadingHTTPServer((HOST, PORT), App)
     write_log_message(f"{APP_NAME} running at http://{HOST}:{PORT}", stream=sys.stdout)
     write_log_message(f"Database: {DB_PATH}", stream=sys.stdout)

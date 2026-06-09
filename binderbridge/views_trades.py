@@ -8,6 +8,7 @@ from binderbridge.trade_queries import *
 
 def render_trades(user, notice=None, status="info"):
     trades = trade_rows_for_user(user["id"])
+    unread_trade_count = unread_trade_notification_count(user["id"])
     table = render_trade_table(user, trades) if trades else '<div class="empty-state">No trades yet.</div>'
     content = f"""
     <section class="section-heading">
@@ -16,6 +17,7 @@ def render_trades(user, notice=None, status="info"):
             <h1>Trade offers</h1>
         </div>
         <div class="actions">
+            {f'<a class="button secondary trade-inbox-button" href="/notifications">{e(unread_trade_count)} unread trade update{"s" if unread_trade_count != 1 else ""}</a>' if unread_trade_count else ''}
             <a class="button primary" href="/trades/matches">Find matches</a>
             <a class="button secondary" href="/browse">Browse cards</a>
         </div>
@@ -28,11 +30,14 @@ def render_trades(user, notice=None, status="info"):
 def render_trade_table(user, trades, compact=False):
     body = "".join(
         f"""
-        <tr>
-            <td data-label="Trade"><a href="/trades/{trade["id"]}">Trade #{trade["id"]}</a></td>
+        <tr class="{'trade-needs-attention' if trade['status'] == 'pending' and trade['recipient_id'] == user['id'] else ''}">
+            <td data-label="Trade">
+                <a href="/trades/{trade["id"]}">Trade #{trade["id"]}</a>
+                {f'<span class="pill unread-trade-pill">{e(row_value(trade, "unread_trade_notifications", 0))} unread</span>' if int(row_value(trade, "unread_trade_notifications", 0) or 0) else ''}
+            </td>
             <td data-label="From">{e(trade["proposer_name"])}</td>
             <td data-label="To">{e(trade["recipient_name"])}</td>
-            <td data-label="Status"><span class="status {e(trade["status"])}">{e(TRADE_STATUS_LABELS.get(trade["status"], trade["status"]))}</span></td>
+            <td data-label="Status"><span class="status {e(trade["status"])}">{e(TRADE_STATUS_LABELS.get(trade["status"], trade["status"]))}</span>{'<span class="subtle action-needed-label">Your response needed</span>' if trade['status'] == 'pending' and trade['recipient_id'] == user['id'] else ''}</td>
             <td data-label="Updated">{e(trade["updated_at"][:10])}</td>
         </tr>
         """

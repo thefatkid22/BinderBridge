@@ -208,6 +208,13 @@ def account_profile(self, user):
         email_price_alert_enabled = form.get("email_price_alert_enabled", [""])[0] == "1"
         email_import_complete_enabled = form.get("email_import_complete_enabled", [""])[0] == "1"
         email_admin_notice_enabled = form.get("email_admin_notice_enabled", [""])[0] == "1"
+        email_digest_frequency = form.get("email_digest_frequency", ["immediate"])[0]
+        email_digest_time = form.get("email_digest_time", ["09:00"])[0]
+        email_digest_weekday = form.get("email_digest_weekday", ["0"])[0]
+        notification_timezone = form.get("notification_timezone", ["UTC"])[0]
+        quiet_hours_enabled = form.get("quiet_hours_enabled", [""])[0] == "1"
+        quiet_hours_start = form.get("quiet_hours_start", ["22:00"])[0]
+        quiet_hours_end = form.get("quiet_hours_end", ["07:00"])[0]
     else:
         email_trade_notifications_enabled = bool(row_value(user, "email_trade_notifications_enabled", 0))
         email_trade_offer_enabled = bool(row_value(user, "email_trade_offer_enabled", 1))
@@ -217,6 +224,13 @@ def account_profile(self, user):
         email_price_alert_enabled = bool(row_value(user, "email_price_alert_enabled", 0))
         email_import_complete_enabled = bool(row_value(user, "email_import_complete_enabled", 0))
         email_admin_notice_enabled = bool(row_value(user, "email_admin_notice_enabled", 0))
+        email_digest_frequency = row_value(user, "email_digest_frequency", "immediate")
+        email_digest_time = row_value(user, "email_digest_time", "09:00")
+        email_digest_weekday = row_value(user, "email_digest_weekday", 0)
+        notification_timezone = row_value(user, "notification_timezone", "UTC")
+        quiet_hours_enabled = bool(row_value(user, "quiet_hours_enabled", 0))
+        quiet_hours_start = row_value(user, "quiet_hours_start", "22:00")
+        quiet_hours_end = row_value(user, "quiet_hours_end", "07:00")
     try:
         update_user_profile(
             user["id"],
@@ -243,6 +257,14 @@ def account_profile(self, user):
             email_price_alert_enabled,
             email_import_complete_enabled,
             email_admin_notice_enabled,
+            email_digest_frequency,
+            email_digest_time,
+            email_digest_weekday,
+            notification_timezone,
+            quiet_hours_enabled,
+            quiet_hours_start,
+            quiet_hours_end,
+            form.get("stale_trade_reminder_days", ["3"])[0],
         )
     except ValueError as exc:
         return self.html(render_account(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)

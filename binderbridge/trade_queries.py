@@ -415,14 +415,22 @@ def trade_fairness_entries_for_trade_conn(conn, trade_id):
 def trade_rows_for_user(user_id):
     return rows(
         """
-        SELECT trades.*, proposer.display_name AS proposer_name, recipient.display_name AS recipient_name
+        SELECT trades.*, proposer.display_name AS proposer_name, recipient.display_name AS recipient_name,
+            (
+                SELECT COUNT(*)
+                FROM user_notifications
+                WHERE user_notifications.user_id = ?
+                    AND user_notifications.related_trade_id = trades.id
+                    AND user_notifications.is_read = 0
+                    AND user_notifications.kind IN ('trade_offer', 'trade_counter', 'trade_comment', 'trade_status', 'trade_reminder', 'trade_dispute', 'trade_feedback')
+            ) AS unread_trade_notifications
         FROM trades
         JOIN users proposer ON proposer.id = trades.proposer_id
         JOIN users recipient ON recipient.id = trades.recipient_id
         WHERE trades.proposer_id = ? OR trades.recipient_id = ?
         ORDER BY trades.updated_at DESC
         """,
-        (user_id, user_id),
+        (user_id, user_id, user_id),
     )
 
 

@@ -7,7 +7,15 @@ def render_dashboard(user, notice=None, status="info"):
     summary = get_collection_summary(user["id"])
     pending = rows(
         """
-        SELECT trades.*, proposer.display_name AS proposer_name, recipient.display_name AS recipient_name
+        SELECT trades.*, proposer.display_name AS proposer_name, recipient.display_name AS recipient_name,
+            (
+                SELECT COUNT(*)
+                FROM user_notifications
+                WHERE user_notifications.user_id = ?
+                    AND user_notifications.related_trade_id = trades.id
+                    AND user_notifications.is_read = 0
+                    AND user_notifications.kind IN ('trade_offer', 'trade_counter', 'trade_comment', 'trade_status', 'trade_reminder', 'trade_dispute', 'trade_feedback')
+            ) AS unread_trade_notifications
         FROM trades
         JOIN users proposer ON proposer.id = trades.proposer_id
         JOIN users recipient ON recipient.id = trades.recipient_id
@@ -15,7 +23,7 @@ def render_dashboard(user, notice=None, status="info"):
         ORDER BY trades.updated_at DESC
         LIMIT 5
         """,
-        (user["id"], user["id"]),
+        (user["id"], user["id"], user["id"]),
     )
     recent_for_trade = rows(
         """
@@ -40,9 +48,10 @@ def render_dashboard(user, notice=None, status="info"):
     notifications = notification_rows(user["id"], limit=4)
     notification_html = "".join(
         f"""
-        <li>
-            <strong>{e(item["title"])}</strong>
+        <li class="{'dashboard-notification-unread' if not item['is_read'] else ''}">
+            <strong>{'<span class="unread-dot" aria-label="Unread"></span>' if not item['is_read'] else ''}{e(item["title"])}</strong>
             <span>{e(notification_kind_label(item["kind"]))} - {e(item["created_at"][:16].replace("T", " "))}</span>
+            {f'<a href="{e(item["url"])}">Open</a>' if item["url"] else ''}
         </li>
         """
         for item in notifications
@@ -106,6 +115,7 @@ def notification_kind_label(kind):
         "trade_dispute": "Trade issue",
         "trade_feedback": "Feedback",
         "trade_status": "Trade status",
+        "trade_reminder": "Trade reminder",
     }.get(kind, "Notification")
 
 
@@ -118,6 +128,7 @@ def render_notifications(user, notice=None, status="info"):
             f"""
             <li class="notification-item {'unread' if not item["is_read"] else 'read'}">
                 <div>
+                    {f'<span class="pill unread-indicator">Unread</span>' if not item["is_read"] else ''}
                     <span class="pill">{e(notification_kind_label(item["kind"]))}</span>
                     <span class="subtle">{e(item["created_at"][:16].replace("T", " "))}</span>
                     {f'<span class="pill email-status {e(row_value(item, "email_status", ""))}">Email {e(row_value(item, "email_status", ""))}</span>' if row_value(item, "email_status", "") else ''}

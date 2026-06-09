@@ -46,12 +46,16 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
         dashboard_label = "Dashboard"
         if unread_count:
             dashboard_label += f'<span class="nav-badge">{e(unread_count)}</span>'
+        trade_unread_count = unread_trade_notification_count(user["id"])
+        trades_label = "Trades"
+        if trade_unread_count:
+            trades_label += f'<span class="nav-badge trade-nav-badge">{e(trade_unread_count)}</span>'
         nav_items = [
             ("dashboard", "/", dashboard_label),
             ("cards", "/collection", "My Cards"),
             ("wants", "/wants", "Wishlist"),
             ("browse", "/browse", "Browse"),
-            ("trades", "/trades", "Trades"),
+            ("trades", "/trades", trades_label),
             ("account", "/account", "Account"),
         ]
         if user["is_admin"]:
@@ -581,6 +585,7 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
     notify_trade_status_checked = checked(bool(row_value(user, "notify_trade_status_enabled", 1)))
     notify_import_complete_checked = checked(bool(row_value(user, "notify_import_complete_enabled", 1)))
     notify_admin_notice_checked = checked(bool(row_value(user, "notify_admin_notice_enabled", 1)))
+    stale_trade_reminder_days = row_value(user, "stale_trade_reminder_days", 3)
     trade_email_controls = ""
     if email_delivery_configured():
         trade_email_checked = checked(bool(row_value(user, "email_trade_notifications_enabled", 0)))
@@ -591,6 +596,21 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
         price_alert_email_checked = checked(bool(row_value(user, "email_price_alert_enabled", 0)))
         import_complete_email_checked = checked(bool(row_value(user, "email_import_complete_enabled", 0)))
         admin_notice_email_checked = checked(bool(row_value(user, "email_admin_notice_enabled", 0)))
+        email_digest_frequency = row_value(user, "email_digest_frequency", "immediate") or "immediate"
+        email_digest_time = row_value(user, "email_digest_time", "09:00") or "09:00"
+        email_digest_weekday = int(row_value(user, "email_digest_weekday", 0) or 0)
+        notification_timezone = row_value(user, "notification_timezone", "UTC") or "UTC"
+        quiet_hours_checked = checked(bool(row_value(user, "quiet_hours_enabled", 0)))
+        quiet_hours_start = row_value(user, "quiet_hours_start", "22:00") or "22:00"
+        quiet_hours_end = row_value(user, "quiet_hours_end", "07:00") or "07:00"
+        digest_frequency_options = "".join(
+            f'<option value="{e(value)}"{" selected" if value == email_digest_frequency else ""}>{e(label)}</option>'
+            for value, label in EMAIL_DIGEST_FREQUENCY_LABELS.items()
+        )
+        digest_weekday_options = "".join(
+            f'<option value="{index}"{" selected" if index == email_digest_weekday else ""}>{e(label)}</option>'
+            for index, label in enumerate(EMAIL_DIGEST_WEEKDAY_LABELS)
+        )
         trade_email_controls = f"""
             <div class="span-2 panel-heading with-gap">
                 <h2>Email notifications</h2>
@@ -633,7 +653,35 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
                     </label>
                 </div>
             </fieldset>
-            <p class="muted compact span-2">Emails are sent only while the matching in-app notification is unread.</p>
+            <div class="span-2 panel-heading with-gap">
+                <h2>Delivery schedule</h2>
+            </div>
+            <label>Email delivery
+                <select name="email_digest_frequency">{digest_frequency_options}</select>
+            </label>
+            <label>Digest delivery time
+                <input name="email_digest_time" type="time" value="{e(email_digest_time)}">
+            </label>
+            <label>Weekly digest day
+                <select name="email_digest_weekday">{digest_weekday_options}</select>
+            </label>
+            <label>Timezone
+                <input name="notification_timezone" maxlength="80" list="notification-timezones" value="{e(notification_timezone)}" placeholder="America/Chicago">
+                <datalist id="notification-timezones">
+                    <option value="UTC"><option value="America/New_York"><option value="America/Chicago"><option value="America/Denver"><option value="America/Los_Angeles">
+                </datalist>
+            </label>
+            <label class="checkbox-line span-2">
+                <input type="checkbox" name="quiet_hours_enabled" value="1"{quiet_hours_checked}>
+                Defer notification emails during quiet hours
+            </label>
+            <label>Quiet hours start
+                <input name="quiet_hours_start" type="time" value="{e(quiet_hours_start)}">
+            </label>
+            <label>Quiet hours end
+                <input name="quiet_hours_end" type="time" value="{e(quiet_hours_end)}">
+            </label>
+            <p class="muted compact span-2">In-app alerts appear immediately. Quiet hours and digests only change email delivery, and unread notifications remain queued until their scheduled delivery window.</p>
         """
     content = f"""
     <section class="section-heading">
@@ -706,7 +754,10 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
             <label class="span-2">Minimum change percent
                 <input name="price_alert_threshold_percent" type="number" min="0" step="0.1" value="{e(price_alert_threshold)}">
             </label>
-            <p class="muted compact span-2">Price alerts use the minimum change percent. Watchlist alerts trigger when another user lists a wanted card for trade.</p>
+            <label class="span-2">Remind me about pending trade offers after
+                <input name="stale_trade_reminder_days" type="number" min="0" max="90" step="1" value="{e(stale_trade_reminder_days)}">
+            </label>
+            <p class="muted compact span-2">Price alerts use the minimum change percent. Watchlist alerts trigger when another user lists a wanted card for trade. Set pending trade reminders to 0 to turn them off.</p>
             {trade_email_controls}
             <label class="span-2">Current password
                 <input required name="current_password" type="password" autocomplete="current-password">

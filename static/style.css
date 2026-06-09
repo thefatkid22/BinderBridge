@@ -234,6 +234,33 @@ td strong {
     font-weight: 900;
 }
 
+.trade-nav-badge,
+.unread-trade-pill,
+.unread-indicator {
+    background: var(--warning-bg);
+    border-color: var(--warning-border);
+    color: var(--warning);
+}
+
+.trade-needs-attention {
+    background: var(--warning-bg);
+}
+
+.trade-needs-attention td:first-child {
+    box-shadow: inset 3px 0 0 var(--warning);
+}
+
+.unread-trade-pill,
+.action-needed-label {
+    display: inline-flex;
+    margin-left: 0.45rem;
+}
+
+.action-needed-label {
+    color: var(--warning);
+    font-weight: 800;
+}
+
 .section-tabs {
     display: flex;
     align-items: center;
@@ -2735,6 +2762,28 @@ td strong {
 .notification-item.unread {
     border-color: var(--success-border);
     background: var(--success-bg);
+    box-shadow: inset 4px 0 0 var(--success);
+}
+
+.dashboard-notification-unread {
+    border-left: 3px solid var(--success);
+    padding-left: 0.65rem;
+}
+
+.unread-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 0.45rem;
+    border-radius: 999px;
+    background: var(--success);
+    vertical-align: middle;
+}
+
+.trade-inbox-button {
+    border-color: var(--warning-border);
+    background: var(--warning-bg);
+    color: var(--warning);
 }
 
 .notification-item > div:first-child {

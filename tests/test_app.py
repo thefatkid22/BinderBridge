@@ -922,6 +922,36 @@ class BinderBridgeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already taken"):
             app.update_user_profile(user_id, "liliana", "Gideon Jura", "", "", False)
 
+    def test_update_user_profile_saves_notification_schedule_preferences(self):
+        user_id = app.create_user("schedule", "password123", "Schedule")
+
+        app.update_user_profile(
+            user_id,
+            "schedule",
+            "Schedule",
+            "schedule@example.test",
+            "",
+            False,
+            email_digest_frequency="weekly",
+            email_digest_time="14:30",
+            email_digest_weekday=4,
+            notification_timezone="America/Chicago",
+            quiet_hours_enabled=True,
+            quiet_hours_start="21:30",
+            quiet_hours_end="06:30",
+            stale_trade_reminder_days=5,
+        )
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+
+        self.assertEqual(user["email_digest_frequency"], "weekly")
+        self.assertEqual(user["email_digest_time"], "14:30")
+        self.assertEqual(user["email_digest_weekday"], 4)
+        self.assertEqual(user["notification_timezone"], "America/Chicago")
+        self.assertEqual(user["quiet_hours_enabled"], 1)
+        self.assertEqual(user["quiet_hours_start"], "21:30")
+        self.assertEqual(user["quiet_hours_end"], "06:30")
+        self.assertEqual(user["stale_trade_reminder_days"], 5)
+
     def test_change_password_updates_hash_and_removes_other_sessions(self):
         user_id = app.create_user("nissa", "password123", "Nissa")
         keep_token, _ = app.create_session(user_id)
@@ -966,6 +996,7 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn('name="notify_trade_offer_enabled"', html)
         self.assertIn('name="notify_import_complete_enabled"', html)
         self.assertIn('name="notify_admin_notice_enabled"', html)
+        self.assertIn('name="stale_trade_reminder_days"', html)
         self.assertNotIn("Email notifications", html)
         self.assertNotIn('name="email_trade_notifications_enabled"', html)
         self.assertNotIn('name="email_trade_offer_enabled"', html)
@@ -988,6 +1019,11 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn('name="email_price_alert_enabled"', html)
         self.assertIn('name="email_import_complete_enabled"', html)
         self.assertIn('name="email_admin_notice_enabled"', html)
+        self.assertIn('name="email_digest_frequency"', html)
+        self.assertIn('name="email_digest_time"', html)
+        self.assertIn('name="email_digest_weekday"', html)
+        self.assertIn('name="notification_timezone"', html)
+        self.assertIn('name="quiet_hours_enabled"', html)
         self.assertIn("SMTP configured", html)
 
     def test_api_token_can_authenticate_and_be_revoked(self):
@@ -2991,6 +3027,132 @@ Deck
         self.assertEqual(price["email_status"], "sent")
         self.assertEqual(import_notice["email_status"], "")
         self.assertEqual(admin_notice["email_status"], "sent")
+
+    def test_notification_digest_groups_pending_emails_at_scheduled_time(self):
+        user_id = app.create_user("digestuser", "password123", "Digest User", email="digest@example.test")
+        app.execute(
+            """
+            UPDATE users
+            SET email_trade_notifications_enabled = 1,
+                email_digest_frequency = 'daily',
+                email_digest_time = '09:00',
+                notification_timezone = 'UTC'
+            WHERE id = ?
+            """,
+            (user_id,),
+        )
+        timestamp = app.now_iso()
+        first_id = app.execute(
+            "INSERT INTO user_notifications (user_id, kind, title, email_status, created_at) VALUES (?, 'trade_offer', 'First offer', 'pending', ?)",
+            (user_id, timestamp),
+        )
+        second_id = app.execute(
+            "INSERT INTO user_notifications (user_id, kind, title, email_status, created_at) VALUES (?, 'trade_comment', 'New comment', 'pending', ?)",
+            (user_id, timestamp),
+        )
+        sent = []
+        original_sender = app.send_email_message
+        original_configured = app.email_delivery_configured
+        app.send_email_message = lambda to_email, subject, body: (sent.append((to_email, subject, body)) or True, "Email sent.")
+        app.email_delivery_configured = lambda: True
+        try:
+            result = app.send_pending_trade_notification_emails(
+                limit=1,
+                reference_time=datetime(2026, 6, 8, 10, 0, tzinfo=timezone.utc)
+            )
+        finally:
+            app.send_email_message = original_sender
+            app.email_delivery_configured = original_configured
+
+        self.assertEqual(result["sent"], 2)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("2 unread notifications", sent[0][1])
+        self.assertIn("First offer", sent[0][2])
+        self.assertIn("New comment", sent[0][2])
+        self.assertEqual(app.row("SELECT email_status FROM user_notifications WHERE id = ?", (first_id,))["email_status"], "sent")
+        self.assertEqual(app.row("SELECT email_status FROM user_notifications WHERE id = ?", (second_id,))["email_status"], "sent")
+
+    def test_quiet_hours_defer_immediate_email_until_delivery_window(self):
+        user_id = app.create_user("quietuser", "password123", "Quiet User", email="quiet@example.test")
+        app.execute(
+            """
+            UPDATE users
+            SET email_trade_notifications_enabled = 1,
+                quiet_hours_enabled = 1,
+                quiet_hours_start = '22:00',
+                quiet_hours_end = '07:00',
+                notification_timezone = 'UTC'
+            WHERE id = ?
+            """,
+            (user_id,),
+        )
+        notification_id = app.execute(
+            "INSERT INTO user_notifications (user_id, kind, title, email_status, created_at) VALUES (?, 'trade_offer', 'Quiet offer', 'pending', ?)",
+            (user_id, app.now_iso()),
+        )
+        sent = []
+        original_sender = app.send_email_message
+        original_configured = app.email_delivery_configured
+        app.send_email_message = lambda to_email, subject, body: (sent.append(subject) or True, "Email sent.")
+        app.email_delivery_configured = lambda: True
+        try:
+            quiet_result = app.send_pending_trade_notification_emails(
+                reference_time=datetime(2026, 6, 8, 23, 0, tzinfo=timezone.utc)
+            )
+            daytime_result = app.send_pending_trade_notification_emails(
+                reference_time=datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc)
+            )
+        finally:
+            app.send_email_message = original_sender
+            app.email_delivery_configured = original_configured
+
+        self.assertEqual(quiet_result["deferred"], 1)
+        self.assertEqual(daytime_result["sent"], 1)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(app.row("SELECT email_status FROM user_notifications WHERE id = ?", (notification_id,))["email_status"], "sent")
+
+    def test_weekly_digest_remains_due_after_scheduled_day(self):
+        settings = {
+            "email_digest_frequency": "weekly",
+            "email_digest_time": "09:00",
+            "email_digest_weekday": 4,
+            "notification_timezone": "UTC",
+            "last_notification_digest_at": "",
+        }
+
+        due = app.notification_digest_due(settings, datetime(2026, 6, 13, 10, 0, tzinfo=timezone.utc))
+        settings["last_notification_digest_at"] = "2026-06-12T10:00:00+00:00"
+        already_sent = app.notification_digest_due(settings, datetime(2026, 6, 13, 10, 0, tzinfo=timezone.utc))
+
+        self.assertTrue(due)
+        self.assertFalse(already_sent)
+
+    def test_stale_trade_reminders_are_idempotent_and_highlight_trade_activity(self):
+        proposer_id = app.create_user("staleproposer", "password123", "Stale Proposer")
+        recipient_id = app.create_user("stalerecipient", "password123", "Stale Recipient")
+        old_at = (datetime.now(timezone.utc) - timedelta(days=4)).replace(microsecond=0).isoformat()
+        trade_id = factory.create_trade(proposer_id, recipient_id, created_at=old_at, updated_at=old_at)
+
+        first_created = app.create_stale_trade_reminders()
+        second_created = app.create_stale_trade_reminders()
+        recipient = app.row("SELECT * FROM users WHERE id = ?", (recipient_id,))
+        reminders = app.stale_trade_reminder_rows(recipient_id)
+        trades_html = app.render_trades(recipient)
+        layout_html = app.render_layout(recipient, "Test", "<p>Body</p>", active="trades")
+        unread_trade_count = app.unread_trade_notification_count(recipient_id)
+        app.delete_notification(recipient_id, reminders[0]["id"])
+        after_delete_created = app.create_stale_trade_reminders()
+
+        self.assertEqual(first_created, 1)
+        self.assertEqual(second_created, 0)
+        self.assertEqual(after_delete_created, 0)
+        self.assertEqual(len(reminders), 1)
+        self.assertEqual(reminders[0]["related_trade_id"], trade_id)
+        self.assertIn("needs your response", reminders[0]["title"])
+        self.assertEqual(unread_trade_count, 1)
+        self.assertIn("Your response needed", trades_html)
+        self.assertIn("1 unread", trades_html)
+        self.assertIn("trade-nav-badge", layout_html)
 
     def test_notifications_can_be_deleted_by_owner(self):
         alice_id = app.create_user("alice", "password123", "Alice")

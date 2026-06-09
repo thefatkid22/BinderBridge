@@ -46,6 +46,8 @@ BinderBridge is a self-hostable trading card collection app for small communitie
 - Per-user reputation summaries and feedback after completed trades
 - Notification center for trade offers, comments, counters, and status changes
 - Granular notification preferences for trade offers, comments, counteroffers, price alerts, import completion, admin notices, and optional email delivery
+- Immediate, daily-digest, or weekly-digest email delivery with per-user quiet hours and timezone settings
+- Configurable stale pending-trade reminders with clearer unread trade indicators
 - Scoped API bearer tokens for self-hosted integrations
 - Signed webhook endpoints for notifications, trade events, imports, price updates, and backup failures
 - Watchlist alerts when another user lists a card from your wishlist for trade
@@ -168,7 +170,9 @@ If SMTP is configured, BinderBridge sends the invite email automatically. Withou
 
 Users can configure in-app notification categories from `Account -> Notification preferences`, including trade offers, comments, counteroffers, trade status, price alerts, watchlist alerts, import completion, and admin notices.
 
-If SMTP is configured, email delivery is opt-in per user and can be toggled separately for trade offers, comments, counteroffers, trade status, price alerts, import completion, and admin notices. BinderBridge only attempts email delivery for unread in-app notifications. Delivery status is recorded on each notification, and SMTP failures do not block the action that created the notification. If SMTP is not configured, email notification options are hidden and in-app notifications continue to work normally.
+If SMTP is configured, email delivery is opt-in per user and can be toggled separately for trade offers, comments, counteroffers, trade status, price alerts, import completion, and admin notices. Users can choose immediate delivery, a daily digest, or a weekly digest, set the digest time and timezone, and defer email during quiet hours. BinderBridge only attempts email delivery for unread in-app notifications. Delivery status is recorded on each notification, and SMTP failures do not block the action that created the notification. If SMTP is not configured, email notification options are hidden and in-app notifications continue to work normally.
+
+Users can also choose how many days a pending trade offer may wait before BinderBridge creates a reminder. Set this value to `0` to disable stale-trade reminders. The reminder worker creates at most one reminder per trade update, while unread trade badges in navigation and trade lists make action-required offers easier to spot.
 
 ## API And Webhooks
 
@@ -275,6 +279,9 @@ from_address = BinderBridge <noreply@example.com>
 tls = true
 ssl = false
 
+[notifications]
+worker_interval_seconds = 60
+
 [registration]
 invite_expiry_days = 14
 
@@ -317,6 +324,7 @@ Supported environment variables:
 - `BINDERBRIDGE_SMTP_FROM`: email sender, defaults to the SMTP username or `noreply@localhost`
 - `BINDERBRIDGE_SMTP_TLS`: use STARTTLS, default enabled unless SMTP SSL is enabled
 - `BINDERBRIDGE_SMTP_SSL`: use SMTP over SSL, default disabled
+- `BINDERBRIDGE_NOTIFICATION_WORKER_INTERVAL_SECONDS`: interval for scheduled email and stale-trade reminder processing, default `60`
 - `BINDERBRIDGE_REGISTRATION_INVITE_EXPIRY_DAYS`: invite expiration window, default `14`
 - `BINDERBRIDGE_BACKUP_AUTO_ENABLED`: set to `0`, `false`, `no`, or `off` to pause automatic backups by default
 - `BINDERBRIDGE_BACKUP_INTERVAL_HOURS`: automatic backup interval, default `24`
@@ -355,7 +363,6 @@ Product features:
 - Saved searches and reusable filter presets for collection, wishlist, browse, and trade-building views
 - Trade packages for bundling named groups of cards into reusable offers
 - More granular privacy controls such as trusted-user-only visibility, hidden collection values, private share links, and per-group sharing defaults
-- Notification digest options, quiet hours, escalation for stale trade requests, and clearer unread trade reminders
 - Additional import adapters and source profiles for deck-list sites and collection apps
 - Collection/deck collaboration tools such as shared binders, shared wishlists, and group-curated trade boxes
 - Trade fulfillment checklist for accepted trades, such as packed, sent, received, and problem reported

@@ -64,6 +64,14 @@ def update_user_profile(
     email_price_alert_enabled=False,
     email_import_complete_enabled=False,
     email_admin_notice_enabled=False,
+    email_digest_frequency="immediate",
+    email_digest_time="09:00",
+    email_digest_weekday=0,
+    notification_timezone="UTC",
+    quiet_hours_enabled=False,
+    quiet_hours_start="22:00",
+    quiet_hours_end="07:00",
+    stale_trade_reminder_days=3,
 ):
     username = validate_username(username)
     display_name = sanitize_text_input(display_name, max_length=80).strip()
@@ -73,6 +81,13 @@ def update_user_profile(
     bio = sanitize_text_input(bio, max_length=1000).strip()
     preferred_price_source = normalize_price_basis(preferred_price_source)
     price_alert_threshold_percent = normalize_price_alert_threshold(price_alert_threshold_percent)
+    email_digest_frequency = normalize_email_digest_frequency(email_digest_frequency)
+    email_digest_time = normalize_notification_time(email_digest_time, "Digest delivery time")
+    email_digest_weekday = normalize_email_digest_weekday(email_digest_weekday)
+    notification_timezone = normalize_notification_timezone(notification_timezone)
+    quiet_hours_start = normalize_notification_time(quiet_hours_start, "Quiet hours start")
+    quiet_hours_end = normalize_notification_time(quiet_hours_end, "Quiet hours end")
+    stale_trade_reminder_days = normalize_stale_trade_reminder_days(stale_trade_reminder_days)
     try:
         execute(
             """
@@ -86,7 +101,10 @@ def update_user_profile(
                 email_trade_offer_enabled = ?, email_trade_comment_enabled = ?,
                 email_trade_counter_enabled = ?, email_trade_status_enabled = ?,
                 email_price_alert_enabled = ?, email_import_complete_enabled = ?,
-                email_admin_notice_enabled = ?, updated_at = ?
+                email_admin_notice_enabled = ?, email_digest_frequency = ?,
+                email_digest_time = ?, email_digest_weekday = ?, notification_timezone = ?,
+                quiet_hours_enabled = ?, quiet_hours_start = ?, quiet_hours_end = ?,
+                stale_trade_reminder_days = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -113,6 +131,14 @@ def update_user_profile(
                 1 if email_price_alert_enabled else 0,
                 1 if email_import_complete_enabled else 0,
                 1 if email_admin_notice_enabled else 0,
+                email_digest_frequency,
+                email_digest_time,
+                email_digest_weekday,
+                notification_timezone,
+                1 if quiet_hours_enabled else 0,
+                quiet_hours_start,
+                quiet_hours_end,
+                stale_trade_reminder_days,
                 now_iso(),
                 user_id,
             ),
