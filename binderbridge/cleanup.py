@@ -107,15 +107,19 @@ def item_duplicate_key(item, fields):
     return duplicate_key([normalized_duplicate_value(item, field) for field in fields])
 
 
-def combine_notes(items):
+def combine_text_field(items, field, max_length=1000):
     notes = []
     seen = set()
     for item in items:
-        note = str(row_value(item, "notes", "") or "").strip()
+        note = str(row_value(item, field, "") or "").strip()
         if note and note not in seen:
             notes.append(note)
             seen.add(note)
-    return "\n".join(notes)[:1000]
+    return "\n".join(notes)[:max_length]
+
+
+def combine_notes(items):
+    return combine_text_field(items, "notes")
 
 
 def first_nonblank(items, field):
@@ -369,12 +373,22 @@ def merge_want_duplicate_group(conn, group):
     total_quantity = sum(int(row_value(item, "desired_quantity", 0) or 0) for item in items)
     metadata = {field: first_nonblank(items, field) for field in SCRYFALL_COLLECTION_FIELDS}
     notes = combine_notes(items)
+    preferred_printing_notes = combine_text_field(items, "preferred_printing_notes")
+    priority = max(items, key=lambda item: want_priority_rank(row_value(item, "priority", "normal")))
+    priority = normalize_want_priority(row_value(priority, "priority", "normal"))
+    budgets = [
+        normalize_price_usd(row_value(item, "budget_cap_usd", ""))
+        for item in items
+        if normalize_price_usd(row_value(item, "budget_cap_usd", ""))
+    ]
+    budget_cap_usd = min(budgets, key=price_to_cents) if budgets else ""
     is_public = 1 if any(int(row_value(item, "is_public", 1) or 0) for item in items) else 0
 
     conn.execute(
         """
         UPDATE want_items
-        SET desired_quantity = ?, notes = ?, is_public = ?,
+        SET desired_quantity = ?, priority = ?, budget_cap_usd = ?,
+            preferred_printing_notes = ?, notes = ?, is_public = ?,
             scryfall_id = ?, image_url = ?, mana_cost = ?, type_line = ?, oracle_text = ?,
             rarity = ?, colors = ?, color_identity = ?, scryfall_uri = ?, price_usd = ?,
             price_source = ?, updated_at = ?
@@ -382,6 +396,9 @@ def merge_want_duplicate_group(conn, group):
         """,
         (
             total_quantity,
+            priority,
+            budget_cap_usd,
+            preferred_printing_notes,
             notes,
             is_public,
             metadata["scryfall_id"],

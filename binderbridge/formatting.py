@@ -68,6 +68,21 @@ GROUP_TYPE_OPTIONS = [
     ("wishlist", "Wishlist"),
 ]
 
+WANT_PRIORITY_OPTIONS = [
+    ("urgent", "Urgent"),
+    ("high", "High"),
+    ("normal", "Normal"),
+    ("low", "Low"),
+]
+
+WANT_PRIORITY_LABELS = dict(WANT_PRIORITY_OPTIONS)
+WANT_PRIORITY_RANKS = {
+    "low": 1,
+    "normal": 2,
+    "high": 3,
+    "urgent": 4,
+}
+
 TRADE_STATUS_LABELS = {
     "pending": "Pending",
     "accepted": "Accepted",
@@ -156,6 +171,18 @@ def form_public_flag(form, default=1):
 
 def game_label(value):
     return dict(CARD_GAMES).get(value, value)
+
+def normalize_want_priority(value):
+    clean = str(value or "").strip().lower() or "normal"
+    if clean not in WANT_PRIORITY_RANKS:
+        raise ValueError("Choose a valid wishlist priority.")
+    return clean
+
+def want_priority_label(value):
+    return WANT_PRIORITY_LABELS.get(str(value or "").strip().lower(), "Normal")
+
+def want_priority_rank(value):
+    return WANT_PRIORITY_RANKS.get(str(value or "").strip().lower(), WANT_PRIORITY_RANKS["normal"])
 
 def option_tags(options, current):
     return "".join(f'<option value="{e(value)}"{selected(current, value)}>{e(label)}</option>' for value, label in options)
@@ -559,6 +586,9 @@ __all__ = [
     'COLOR_IDENTITY_OPTIONS',
     'CARD_DATA_FILTER_OPTIONS',
     'GROUP_TYPE_OPTIONS',
+    'WANT_PRIORITY_OPTIONS',
+    'WANT_PRIORITY_LABELS',
+    'WANT_PRIORITY_RANKS',
     'TRADE_STATUS_LABELS',
     'TRADE_DISPUTE_CATEGORY_OPTIONS',
     'TRADE_DISPUTE_STATUS_OPTIONS',
@@ -575,6 +605,9 @@ __all__ = [
     'checked',
     'form_public_flag',
     'game_label',
+    'normalize_want_priority',
+    'want_priority_label',
+    'want_priority_rank',
     'option_tags',
     'simple_option_tags',
     'SUGGESTION_COLUMNS',

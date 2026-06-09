@@ -211,6 +211,8 @@ def init_db():
                 set_code TEXT NOT NULL DEFAULT '',
                 collector_number TEXT NOT NULL DEFAULT '',
                 desired_quantity INTEGER NOT NULL DEFAULT 1,
+                priority TEXT NOT NULL DEFAULT 'normal',
+                budget_cap_usd TEXT NOT NULL DEFAULT '',
                 condition TEXT NOT NULL DEFAULT '',
                 finish TEXT NOT NULL DEFAULT '',
                 language TEXT NOT NULL DEFAULT '',
@@ -225,6 +227,7 @@ def init_db():
                 scryfall_uri TEXT NOT NULL DEFAULT '',
                 price_usd TEXT NOT NULL DEFAULT '',
                 price_source TEXT NOT NULL DEFAULT '',
+                preferred_printing_notes TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 is_public INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
@@ -758,6 +761,8 @@ def migrate_db(conn):
     want_missing_columns = {
         "set_code": "TEXT NOT NULL DEFAULT ''",
         "collector_number": "TEXT NOT NULL DEFAULT ''",
+        "priority": "TEXT NOT NULL DEFAULT 'normal'",
+        "budget_cap_usd": "TEXT NOT NULL DEFAULT ''",
         "condition": "TEXT NOT NULL DEFAULT ''",
         "finish": "TEXT NOT NULL DEFAULT ''",
         "language": "TEXT NOT NULL DEFAULT ''",
@@ -772,6 +777,7 @@ def migrate_db(conn):
         "scryfall_uri": "TEXT NOT NULL DEFAULT ''",
         "price_usd": "TEXT NOT NULL DEFAULT ''",
         "price_source": "TEXT NOT NULL DEFAULT ''",
+        "preferred_printing_notes": "TEXT NOT NULL DEFAULT ''",
         "is_public": "INTEGER NOT NULL DEFAULT 1",
     }
     for name, definition in want_missing_columns.items():

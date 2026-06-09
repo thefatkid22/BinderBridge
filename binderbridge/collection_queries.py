@@ -42,6 +42,8 @@ GROUP_COLLECTION_SORT_SQL = {
 }
 
 WANT_SORT_SQL = {
+    "priority": ("CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 ELSE 3 END",),
+    "budget": ("COALESCE(CAST(NULLIF(budget_cap_usd, '') AS REAL), 999999999)",),
     "name": ("card_name COLLATE NOCASE",),
     "set": ("set_name COLLATE NOCASE", "set_code COLLATE NOCASE", "collector_number COLLATE NOCASE"),
     "game": ("game COLLATE NOCASE",),
@@ -53,6 +55,8 @@ WANT_SORT_SQL = {
 }
 
 GROUP_WANT_SORT_SQL = {
+    "priority": ("CASE want_items.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 ELSE 3 END",),
+    "budget": ("COALESCE(CAST(NULLIF(want_items.budget_cap_usd, '') AS REAL), 999999999)",),
     "name": ("want_items.card_name COLLATE NOCASE",),
     "set": ("want_items.set_name COLLATE NOCASE", "want_items.set_code COLLATE NOCASE", "want_items.collector_number COLLATE NOCASE"),
     "game": ("want_items.game COLLATE NOCASE",),

@@ -15,9 +15,12 @@ def default_want_item():
         "set_code": "",
         "collector_number": "",
         "desired_quantity": 1,
+        "priority": "normal",
+        "budget_cap_usd": "",
         "condition": "",
         "finish": "",
         "language": "",
+        "preferred_printing_notes": "",
         "notes": "",
         "lookup_on_save": "1",
         "scryfall_finish_override": "",
@@ -62,6 +65,9 @@ def prepare_want_draft(draft=None):
     item.setdefault("condition", "")
     item.setdefault("finish", "")
     item.setdefault("language", "")
+    item.setdefault("priority", "normal")
+    item.setdefault("budget_cap_usd", "")
+    item.setdefault("preferred_printing_notes", "")
     item.setdefault("price_source", "scryfall" if item.get("price_usd") and (item.get("scryfall_id") or item.get("scryfall_uri")) else "")
     item.setdefault("lookup_on_save", "1")
     return item
@@ -73,6 +79,12 @@ def validate_want_form(form):
     set_name = sanitize_text_input(form.get("set_name", [""])[0], max_length=120).strip()
     set_code = sanitize_text_input(form.get("set_code", [""])[0], max_length=20).strip().upper()
     collector_number = sanitize_text_input(form.get("collector_number", [""])[0], max_length=40).strip()
+    priority = normalize_want_priority(form.get("priority", ["normal"])[0])
+    raw_budget_cap = sanitize_text_input(form.get("budget_cap_usd", [""])[0], max_length=24).strip()
+    budget_cap_usd = normalize_price_usd(raw_budget_cap)
+    if raw_budget_cap and not budget_cap_usd:
+        raise ValueError("Budget cap must be a valid non-negative dollar amount.")
+    preferred_printing_notes = sanitize_text_input(form.get("preferred_printing_notes", [""])[0], max_length=1000).strip()
     notes = sanitize_text_input(form.get("notes", [""])[0], max_length=1000).strip()
     desired_quantity = max(1, clamp_quantity(form.get("desired_quantity", ["1"])[0], 1))
     if not card_name:
@@ -86,9 +98,12 @@ def validate_want_form(form):
         "set_code": set_code,
         "collector_number": collector_number,
         "desired_quantity": desired_quantity,
+        "priority": priority,
+        "budget_cap_usd": budget_cap_usd,
         "condition": normalize_want_preference_values(form.get("condition", []), CONDITION_OPTIONS, normalize_condition),
         "finish": normalize_want_preference_values(form.get("finish", []), FINISH_OPTIONS, normalize_finish),
         "language": normalize_want_preference_values(form.get("language", []), LANGUAGE_OPTIONS, normalize_language),
+        "preferred_printing_notes": preferred_printing_notes,
         "notes": notes,
         "is_public": form_public_flag(form),
         "lookup_on_save": "1" if form.get("lookup_on_save", [""])[0] == "1" else "",
@@ -107,10 +122,10 @@ def insert_want_item(user_id, data):
         """
         INSERT INTO want_items
             (user_id, game, card_name, set_name, set_code, collector_number, desired_quantity,
-             condition, finish, language,
+             priority, budget_cap_usd, condition, finish, language,
              scryfall_id, image_url, mana_cost, type_line, oracle_text, rarity, colors, color_identity,
-             scryfall_uri, price_usd, price_source, notes, is_public, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             scryfall_uri, price_usd, price_source, preferred_printing_notes, notes, is_public, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -120,6 +135,8 @@ def insert_want_item(user_id, data):
             data.get("set_code", ""),
             data.get("collector_number", ""),
             data.get("desired_quantity", 1),
+            normalize_want_priority(data.get("priority", "normal")),
+            normalize_price_usd(data.get("budget_cap_usd", "")),
             data.get("condition", ""),
             data.get("finish", ""),
             data.get("language", ""),
@@ -134,6 +151,7 @@ def insert_want_item(user_id, data):
             data.get("scryfall_uri", ""),
             normalize_price_usd(data.get("price_usd", "")),
             data.get("price_source", ""),
+            data.get("preferred_printing_notes", ""),
             data.get("notes", ""),
             1 if data.get("is_public", 1) else 0,
             now_iso(),
@@ -148,10 +166,10 @@ def update_want_item(user_id, want_id, data):
             """
             UPDATE want_items
             SET game = ?, card_name = ?, set_name = ?, set_code = ?, collector_number = ?,
-                desired_quantity = ?, condition = ?, finish = ?, language = ?,
+                desired_quantity = ?, priority = ?, budget_cap_usd = ?, condition = ?, finish = ?, language = ?,
                 scryfall_id = ?, image_url = ?, mana_cost = ?, type_line = ?, oracle_text = ?,
                 rarity = ?, colors = ?, color_identity = ?, scryfall_uri = ?, price_usd = ?,
-                price_source = ?, notes = ?, is_public = ?, updated_at = ?
+                price_source = ?, preferred_printing_notes = ?, notes = ?, is_public = ?, updated_at = ?
             WHERE id = ? AND user_id = ?
             """,
             (
@@ -161,6 +179,8 @@ def update_want_item(user_id, want_id, data):
                 data.get("set_code", ""),
                 data.get("collector_number", ""),
                 data.get("desired_quantity", 1),
+                normalize_want_priority(data.get("priority", "normal")),
+                normalize_price_usd(data.get("budget_cap_usd", "")),
                 data.get("condition", ""),
                 data.get("finish", ""),
                 data.get("language", ""),
@@ -175,6 +195,7 @@ def update_want_item(user_id, want_id, data):
                 data.get("scryfall_uri", ""),
                 normalize_price_usd(data.get("price_usd", "")),
                 data.get("price_source", ""),
+                data.get("preferred_printing_notes", ""),
                 data.get("notes", ""),
                 1 if data.get("is_public", 1) else 0,
                 now_iso(),
@@ -239,10 +260,19 @@ def trade_match_entry_from_row(row_data):
         "price_usd": normalize_price_usd(row_value(row_data, "price_usd", "")),
         "image_url": row_value(row_data, "image_url", ""),
         "type_line": row_value(row_data, "type_line", ""),
+        "priority": row_value(row_data, "want_priority", "normal"),
+        "budget_cap_usd": normalize_price_usd(row_value(row_data, "want_budget_cap_usd", "")),
+        "preferred_printing_notes": row_value(row_data, "want_preferred_printing_notes", ""),
         "quantity": quantity,
     }
     entry["value_cents"] = price_to_cents(entry["price_usd"]) * quantity
     entry["unpriced"] = 0 if entry["price_usd"] else quantity
+    entry["priority_rank"] = want_priority_rank(entry["priority"])
+    entry["within_budget"] = bool(
+        entry["budget_cap_usd"]
+        and entry["price_usd"]
+        and price_to_cents(entry["price_usd"]) <= price_to_cents(entry["budget_cap_usd"])
+    )
     return entry
 
 
@@ -261,7 +291,13 @@ def add_trade_match_entry(match, side, row_data):
 def sorted_trade_match_entries(entries):
     return sorted(
         entries,
-        key=lambda item: (-int(item["value_cents"] or 0), item["card_name"].lower(), item["set_name"].lower()),
+        key=lambda item: (
+            -int(item["priority_rank"] or 0),
+            0 if item["within_budget"] else 1,
+            -int(item["value_cents"] or 0),
+            item["card_name"].lower(),
+            item["set_name"].lower(),
+        ),
     )
 
 
@@ -275,6 +311,8 @@ def finalize_trade_match(match):
     match["they_have_value_cents"] = sum(item["value_cents"] for item in they_have)
     match["they_want_value_cents"] = sum(item["value_cents"] for item in they_want)
     match["unpriced_count"] = sum(item["unpriced"] for item in they_have) + sum(item["unpriced"] for item in they_want)
+    match["highest_priority_rank"] = max((item["priority_rank"] for item in they_have + they_want), default=0)
+    match["within_budget_count"] = sum(item["quantity"] for item in they_have + they_want if item["within_budget"])
     offered = [(item, item["quantity"]) for item in they_want]
     requested = [(item, item["quantity"]) for item in they_have]
     match["balance"] = trade_balance_details(offered, requested)
@@ -321,6 +359,8 @@ def trade_matchmaking_results(user_id):
     return sorted(
         finalized,
         key=lambda item: (
+            -item["highest_priority_rank"],
+            -item["within_budget_count"],
             -item["mutual_quantity"],
             abs(item["balance"]["difference"]),
             -item["they_have_value_cents"] - item["they_want_value_cents"],
@@ -353,6 +393,8 @@ def render_trade_match_card_list(title, entries, empty_text):
             <div>
                 <strong>{e(entry["card_name"])}</strong>
                 <span>{e(entry["set_name"] or "Any set")} - {e(entry["condition"] or "Condition n/a")} - {e(entry["finish"] or "Finish n/a")}</span>
+                <span>{e(want_priority_label(entry["priority"]))} priority{f' - within ${e(entry["budget_cap_usd"])} budget' if entry["within_budget"] else ''}</span>
+                {f'<span>{e(entry["preferred_printing_notes"])}</span>' if entry["preferred_printing_notes"] else ''}
             </div>
             <span>{e(money(entry["value_cents"]))}</span>
         </li>
@@ -567,9 +609,18 @@ def render_want_form(
         <label>Desired qty
             <input required type="number" min="1" name="desired_quantity" value="{e(draft["desired_quantity"])}">
         </label>
+        <label>Priority
+            <select name="priority">{option_tags(WANT_PRIORITY_OPTIONS, draft["priority"])}</select>
+        </label>
+        <label>Per-copy budget cap
+            <input name="budget_cap_usd" inputmode="decimal" maxlength="24" placeholder="Optional" value="{e(draft["budget_cap_usd"])}">
+        </label>
         {condition_checks}
         {finish_checks}
         {language_checks}
+        <label class="span-2">Preferred-printing notes
+            <textarea name="preferred_printing_notes" rows="3" maxlength="1000" placeholder="Preferred art, border, frame, promo, or other printing details">{e(draft["preferred_printing_notes"])}</textarea>
+        </label>
         <label class="span-2">Notes
             <textarea name="notes" rows="3" maxlength="1000">{e(draft["notes"])}</textarea>
         </label>
@@ -643,12 +694,25 @@ def render_want_card(
     if want["rarity"]:
         metadata.append(want["rarity"].title())
     preference_html = render_preference_summary(want)
+    priority = row_value(want, "priority", "normal")
+    budget_cap = normalize_price_usd(row_value(want, "budget_cap_usd", ""))
+    budget_badge = f'<span class="pill want-budget">Up to ${e(budget_cap)} each</span>' if budget_cap else ""
+    preferred_printing = row_value(want, "preferred_printing_notes", "")
+    preferred_printing_html = f'<p class="want-printing-note"><strong>Preferred printing:</strong> {e(preferred_printing)}</p>' if preferred_printing else ""
     trade_html = ""
     if availability["total_quantity"]:
+        if budget_cap:
+            if availability["within_budget_quantity"]:
+                budget_match_summary = f'<span class="muted compact">{e(availability["within_budget_quantity"])} currently fit the ${e(budget_cap)} per-copy budget.</span>'
+            else:
+                budget_match_summary = f'<span class="muted compact">Current priced matches exceed the ${e(budget_cap)} per-copy budget.</span>'
+        else:
+            budget_match_summary = ""
         member_links = "".join(
             f"""
             <a class="match-chip" href="/members/{match["owner_id"]}">
                 {e(match["display_name"])} <span>{e(match["total_quantity"])}</span>
+                {f'<small>{e(match["within_budget_quantity"])} in budget</small>' if budget_cap and match["within_budget_quantity"] else ''}
             </a>
             """
             for match in availability["matches"]
@@ -659,6 +723,7 @@ def render_want_card(
         <div class="want-availability available">
             <span class="status accepted">Available for trade</span>
             <strong>{e(availability["total_quantity"])} copies from {e(availability["user_count"])} users</strong>
+            {budget_match_summary}
             <div class="match-chip-row">{member_links}{more_text}</div>
         </div>
         """
@@ -682,11 +747,14 @@ def render_want_card(
                 </div>
                 <div class="want-card-badges">
                     {visibility_badge(want)}
+                    <span class="pill want-priority priority-{e(priority)}">{e(want_priority_label(priority))}</span>
+                    {budget_badge}
                     <span class="want-qty">Want {e(want["desired_quantity"])}</span>
                 </div>
             </div>
             <p class="want-type">{e(want["type_line"] or "Any printing")}</p>
             {preference_html}
+            {preferred_printing_html}
             {notes}
             <div class="want-links">{scryfall_link}</div>
         </div>
@@ -718,11 +786,12 @@ def render_wants(
 ):
     query = query or {}
     draft = prepare_want_draft(draft)
-    current_sort, current_dir = sort_state(query, WANT_SORT_OPTIONS)
+    current_sort, current_dir = sort_state(query, WANT_SORT_OPTIONS, default="priority")
     order_clause = sort_order_clause(
         query,
         WANT_SORT_OPTIONS,
         WANT_SORT_SQL,
+        default="priority",
         fallback=("card_name COLLATE NOCASE", "set_name COLLATE NOCASE", "collector_number COLLATE NOCASE"),
     )
     wants = want_rows_for_user(user["id"], order_clause)

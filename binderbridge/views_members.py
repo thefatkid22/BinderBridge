@@ -194,6 +194,8 @@ def render_public_trade_card(member, item):
 
 def render_public_want_profile_item(want):
     scryfall_link = f'<a href="{e(want["scryfall_uri"])}" target="_blank" rel="noreferrer">Scryfall</a>' if want["scryfall_uri"] else ""
+    budget_cap = normalize_price_usd(row_value(want, "budget_cap_usd", ""))
+    printing_note = row_value(want, "preferred_printing_notes", "")
     preference_parts = [
         want["set_name"] or "Any set",
         want["condition"] or "Any condition",
@@ -205,7 +207,9 @@ def render_public_want_profile_item(want):
         <div>
             <strong>{e(want["card_name"])}</strong>
             <span>{e(game_label(want["game"]))} - wants {e(want["desired_quantity"])}</span>
+            <span class="subtle">{e(want_priority_label(row_value(want, "priority", "normal")))} priority{f' - up to ${e(budget_cap)} each' if budget_cap else ''}</span>
             <span class="subtle">{e(" - ".join(part for part in preference_parts if part))}</span>
+            {f'<span class="subtle"><strong>Preferred printing:</strong> {e(printing_note)}</span>' if printing_note else ''}
             {scryfall_link}
         </div>
         {price_pill(want)}

@@ -12,6 +12,9 @@ def trade_matchmaking_candidate_rows(user_id):
             users.display_name,
             want_items.id AS want_id,
             want_items.desired_quantity,
+            want_items.priority AS want_priority,
+            want_items.budget_cap_usd AS want_budget_cap_usd,
+            want_items.preferred_printing_notes AS want_preferred_printing_notes,
             collection_items.id AS collection_item_id,
             collection_items.card_name,
             collection_items.set_name,
@@ -44,7 +47,15 @@ def trade_matchmaking_candidate_rows(user_id):
             AND (want_items.condition = '' OR instr(',' || want_items.condition || ',', ',' || COALESCE(collection_items.condition, '') || ',') > 0)
             AND (want_items.finish = '' OR instr(',' || want_items.finish || ',', ',' || COALESCE(collection_items.finish, '') || ',') > 0)
             AND (want_items.language = '' OR instr(',' || want_items.language || ',', ',' || COALESCE(collection_items.language, '') || ',') > 0)
-        ORDER BY users.display_name COLLATE NOCASE, collection_items.card_name COLLATE NOCASE
+        ORDER BY
+            CASE want_items.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'normal' THEN 2 WHEN 'low' THEN 1 ELSE 2 END DESC,
+            CASE
+                WHEN want_items.budget_cap_usd != '' AND collection_items.price_usd != ''
+                    AND CAST(collection_items.price_usd AS REAL) <= CAST(want_items.budget_cap_usd AS REAL)
+                THEN 0 ELSE 1
+            END,
+            users.display_name COLLATE NOCASE,
+            collection_items.card_name COLLATE NOCASE
         """,
         (user_id, user_id),
     )
@@ -56,6 +67,9 @@ def trade_matchmaking_candidate_rows(user_id):
             users.display_name,
             want_items.id AS want_id,
             want_items.desired_quantity,
+            want_items.priority AS want_priority,
+            want_items.budget_cap_usd AS want_budget_cap_usd,
+            want_items.preferred_printing_notes AS want_preferred_printing_notes,
             collection_items.id AS collection_item_id,
             collection_items.card_name,
             collection_items.set_name,
@@ -87,7 +101,15 @@ def trade_matchmaking_candidate_rows(user_id):
             AND (want_items.condition = '' OR instr(',' || want_items.condition || ',', ',' || COALESCE(collection_items.condition, '') || ',') > 0)
             AND (want_items.finish = '' OR instr(',' || want_items.finish || ',', ',' || COALESCE(collection_items.finish, '') || ',') > 0)
             AND (want_items.language = '' OR instr(',' || want_items.language || ',', ',' || COALESCE(collection_items.language, '') || ',') > 0)
-        ORDER BY users.display_name COLLATE NOCASE, collection_items.card_name COLLATE NOCASE
+        ORDER BY
+            CASE want_items.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'normal' THEN 2 WHEN 'low' THEN 1 ELSE 2 END DESC,
+            CASE
+                WHEN want_items.budget_cap_usd != '' AND collection_items.price_usd != ''
+                    AND CAST(collection_items.price_usd AS REAL) <= CAST(want_items.budget_cap_usd AS REAL)
+                THEN 0 ELSE 1
+            END,
+            users.display_name COLLATE NOCASE,
+            collection_items.card_name COLLATE NOCASE
         """,
         (user_id, user_id),
     )

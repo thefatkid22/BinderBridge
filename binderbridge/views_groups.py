@@ -237,13 +237,17 @@ def render_group_want_items(group, wants, sort_bar=""):
             if row_value(want, "language", ""):
                 preferences.append(row_value(want, "language"))
             preference_text = f"Prefers {', '.join(preferences)}" if preferences else "Any condition, finish, or language"
+            budget_cap = normalize_price_usd(row_value(want, "budget_cap_usd", ""))
+            budget_text = f" - up to ${budget_cap} each" if budget_cap else ""
+            printing_note = f'<span class="subtle"><strong>Preferred printing:</strong> {e(row_value(want, "preferred_printing_notes", ""))}</span>' if row_value(want, "preferred_printing_notes", "") else ""
             rows.append(f"""
             <li class="group-item">
                 <div>
                     <strong>{e(want["card_name"])}</strong>
                     <span>{e(want["set_name"] or "Any set")} - want {e(want["desired_quantity"])}</span>
                     <span class="subtle">{e(want["type_line"] or "Any printing")}{price_pill(want)}</span>
-                    <span class="subtle">{e(preference_text)}</span>
+                    <span class="subtle">{e(want_priority_label(row_value(want, "priority", "normal")))} priority{e(budget_text)} - {e(preference_text)}</span>
+                    {printing_note}
                 </div>
                 <form method="post" action="/groups/{group["id"]}/items/{want["group_item_id"]}/delete">
                     <button class="button ghost small" type="submit">Remove</button>
@@ -746,6 +750,8 @@ def render_public_group_want_items(wants):
                 <strong>{e(want["card_name"])}</strong>
                 <span>{e(want["set_name"] or "Any set")} - want {e(want["desired_quantity"])}</span>
                 <span class="subtle">{e(want["type_line"] or "Any printing")}{price_pill(want)}</span>
+                <span class="subtle">{e(want_priority_label(row_value(want, "priority", "normal")))} priority{f' - up to ${e(normalize_price_usd(row_value(want, "budget_cap_usd", "")))} each' if normalize_price_usd(row_value(want, "budget_cap_usd", "")) else ''}</span>
+                {f'<span class="subtle"><strong>Preferred printing:</strong> {e(row_value(want, "preferred_printing_notes", ""))}</span>' if row_value(want, "preferred_printing_notes", "") else ''}
             </div>
         </li>
         """

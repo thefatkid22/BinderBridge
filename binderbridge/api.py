@@ -731,9 +731,9 @@ COLLECTION_API_FIELDS = (
 )
 WANT_API_FIELDS = (
     "id", "game", "card_name", "set_name", "set_code", "collector_number", "desired_quantity",
-    "condition", "finish", "language", "scryfall_id", "image_url", "mana_cost", "type_line",
+    "priority", "budget_cap_usd", "condition", "finish", "language", "scryfall_id", "image_url", "mana_cost", "type_line",
     "oracle_text", "rarity", "colors", "color_identity", "scryfall_uri", "price_usd", "price_source",
-    "notes", "is_public", "created_at", "updated_at",
+    "preferred_printing_notes", "notes", "is_public", "created_at", "updated_at",
 )
 
 

@@ -112,6 +112,8 @@ CARD_SORT_OPTIONS = (
 )
 
 WANT_SORT_OPTIONS = (
+    ("priority", "Priority"),
+    ("budget", "Budget cap"),
     ("name", "Name"),
     ("set", "Set"),
     ("game", "Game"),

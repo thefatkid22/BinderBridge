@@ -4331,6 +4331,60 @@ Deck
         self.assertEqual(want["set_code"], "WOT")
         self.assertEqual(want["type_line"], "Enchantment")
 
+    def test_wishlist_priority_budget_and_printing_notes_round_trip(self):
+        wanter_id = factory.create_user("priority-wanter", display_name="Priority Wanter")
+        trader_id = factory.create_user("priority-trader", display_name="Priority Trader")
+        user = app.row("SELECT * FROM users WHERE id = ?", (wanter_id,))
+        data = app.validate_want_form({
+            "card_name": ["Rhystic Study"],
+            "game": ["mtg"],
+            "desired_quantity": ["2"],
+            "priority": ["urgent"],
+            "budget_cap_usd": ["$5.50"],
+            "preferred_printing_notes": ["Retro frame or storybook art"],
+        })
+        want_id = app.insert_want_item(wanter_id, data)
+        factory.create_want_item(wanter_id, "Low Priority Card", priority="low")
+        factory.create_collection_item(
+            trader_id,
+            "Rhystic Study",
+            set_name="Budget Printing",
+            price_usd="4.00",
+            quantity_for_trade=1,
+        )
+        factory.create_collection_item(
+            trader_id,
+            "Rhystic Study",
+            set_name="Expensive Printing",
+            price_usd="8.00",
+            quantity_for_trade=1,
+        )
+
+        want = app.row("SELECT * FROM want_items WHERE id = ?", (want_id,))
+        availability = app.want_trade_matches(wanter_id, want)
+        html = app.render_wants(user)
+        api_data = app.api_want_item_dict(want)
+
+        self.assertEqual(want["priority"], "urgent")
+        self.assertEqual(want["budget_cap_usd"], "5.50")
+        self.assertEqual(want["preferred_printing_notes"], "Retro frame or storybook art")
+        self.assertEqual(availability["total_quantity"], 2)
+        self.assertEqual(availability["within_budget_quantity"], 1)
+        self.assertEqual(availability["matches"][0]["within_budget_quantity"], 1)
+        self.assertIn("Urgent", html)
+        self.assertIn("Up to $5.50 each", html)
+        self.assertIn("1 currently fit the $5.50 per-copy budget.", html)
+        self.assertIn("Retro frame or storybook art", html)
+        self.assertLess(html.index("Rhystic Study"), html.index("Low Priority Card"))
+        self.assertEqual(api_data["priority"], "urgent")
+        self.assertEqual(api_data["budget_cap_usd"], "5.50")
+        self.assertIn("priority", app.WANT_EXPORT_FIELDS)
+        self.assertIn("preferred_printing_notes", app.WANT_EXPORT_FIELDS)
+        with self.assertRaisesRegex(ValueError, "valid wishlist priority"):
+            app.validate_want_form({"card_name": ["Bad Priority"], "priority": ["now"]})
+        with self.assertRaisesRegex(ValueError, "valid non-negative dollar amount"):
+            app.validate_want_form({"card_name": ["Bad Budget"], "budget_cap_usd": ["free"]})
+
     def test_want_edit_form_and_update_supports_preferences(self):
         user_id = app.create_user("editor", "password123", "Editor")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
@@ -4351,9 +4405,12 @@ Deck
             "set_code": ["PIP"],
             "collector_number": ["233"],
             "desired_quantity": ["3"],
+            "priority": ["high"],
+            "budget_cap_usd": ["4.25"],
             "condition": ["LP", "NM"],
             "finish": ["Foil", "Regular"],
             "language": ["Japanese", "English"],
+            "preferred_printing_notes": ["Pip-Boy showcase art"],
             "notes": ["Prefer the Fallout printing"],
             "lookup_on_save": [""],
         })
@@ -4372,14 +4429,20 @@ Deck
         self.assertIn('name="condition" value="LP" checked', html)
         self.assertIn('name="finish" value="Regular" checked', html)
         self.assertIn('name="finish" value="Foil" checked', html)
+        self.assertIn('name="priority"', html)
+        self.assertIn('name="budget_cap_usd"', html)
+        self.assertIn('name="preferred_printing_notes"', html)
         self.assertEqual(updated, 1)
         self.assertEqual(saved["set_name"], "Fallout")
         self.assertEqual(saved["set_code"], "PIP")
         self.assertEqual(saved["collector_number"], "233")
         self.assertEqual(saved["desired_quantity"], 3)
+        self.assertEqual(saved["priority"], "high")
+        self.assertEqual(saved["budget_cap_usd"], "4.25")
         self.assertEqual(saved["condition"], "NM,LP")
         self.assertEqual(saved["finish"], "Regular,Foil")
         self.assertEqual(saved["language"], "English,Japanese")
+        self.assertEqual(saved["preferred_printing_notes"], "Pip-Boy showcase art")
         self.assertEqual(saved["notes"], "Prefer the Fallout printing")
 
     def test_want_trade_matches_honor_condition_finish_and_language_preferences(self):
@@ -5476,9 +5539,11 @@ Deck
             """
             INSERT INTO want_items
                 (user_id, game, card_name, set_name, set_code, collector_number, desired_quantity,
-                 condition, finish, language, scryfall_id, notes, is_public, created_at, updated_at)
+                 priority, budget_cap_usd, condition, finish, language, scryfall_id,
+                 preferred_printing_notes, notes, is_public, created_at, updated_at)
             VALUES (?, 'mtg', 'Counterspell', 'Dominaria Remastered', 'DMR', '45', 1,
-                    'NM,LP', 'Regular,Foil', 'English', 'scryfall-counter', 'first want', 0, ?, ?)
+                    'high', '2.00', 'NM,LP', 'Regular,Foil', 'English', 'scryfall-counter',
+                    'retro frame', 'first want', 0, ?, ?)
             """,
             (user_id, timestamp, timestamp),
         )
@@ -5486,9 +5551,11 @@ Deck
             """
             INSERT INTO want_items
                 (user_id, game, card_name, set_name, set_code, collector_number, desired_quantity,
-                 condition, finish, language, scryfall_id, price_usd, notes, is_public, created_at, updated_at)
+                 priority, budget_cap_usd, condition, finish, language, scryfall_id, price_usd,
+                 preferred_printing_notes, notes, is_public, created_at, updated_at)
             VALUES (?, 'mtg', 'Counterspell', 'Dominaria Remastered', 'DMR', '45', 2,
-                    'NM,LP', 'Regular,Foil', 'English', 'scryfall-counter', '0.75', 'second want', 1, ?, ?)
+                    'urgent', '1.50', 'NM,LP', 'Regular,Foil', 'English', 'scryfall-counter', '0.75',
+                    'old border', 'second want', 1, ?, ?)
             """,
             (user_id, timestamp, timestamp),
         )
@@ -5508,7 +5575,11 @@ Deck
         self.assertEqual(wants[0]["id"], first_want_id)
         self.assertEqual(wants[0]["desired_quantity"], 3)
         self.assertEqual(wants[0]["price_usd"], "0.75")
+        self.assertEqual(wants[0]["priority"], "urgent")
+        self.assertEqual(wants[0]["budget_cap_usd"], "1.50")
         self.assertEqual(wants[0]["is_public"], 1)
+        self.assertIn("retro frame", wants[0]["preferred_printing_notes"])
+        self.assertIn("old border", wants[0]["preferred_printing_notes"])
         self.assertIn("first want", wants[0]["notes"])
         self.assertIn("second want", wants[0]["notes"])
         self.assertEqual(len(group_rows), 1)

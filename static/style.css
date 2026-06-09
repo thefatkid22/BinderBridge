@@ -1430,6 +1430,34 @@ td strong {
     justify-content: flex-end;
 }
 
+.want-priority.priority-urgent {
+    border: 1px solid var(--danger-border);
+    background: var(--danger-bg);
+    color: var(--danger);
+}
+
+.want-priority.priority-high {
+    border: 1px solid var(--warning-border);
+    background: var(--warning-bg);
+    color: var(--warning);
+}
+
+.want-priority.priority-low {
+    opacity: 0.78;
+}
+
+.want-budget {
+    border: 1px solid var(--line);
+    background: var(--field);
+}
+
+.want-printing-note {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+}
+
 .want-title-row p,
 .want-type,
 .want-preferences {
@@ -1548,6 +1576,11 @@ td strong {
 
 .match-chip span {
     color: var(--primary-dark);
+}
+
+.match-chip small {
+    color: var(--muted);
+    font-size: 0.72rem;
 }
 
 .form-grid {

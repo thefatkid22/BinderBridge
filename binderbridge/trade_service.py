@@ -298,11 +298,21 @@ def trade_recommendation_match_rows(owner_id, want_user_id, viewer_id, selected_
         SELECT
             collection_items.*,
             COUNT(want_items.id) AS matched_want_count,
-            MAX(want_items.desired_quantity) AS matched_desired_quantity
+            MAX(want_items.desired_quantity) AS matched_desired_quantity,
+            MAX(CASE want_items.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'normal' THEN 2 WHEN 'low' THEN 1 ELSE 2 END) AS matched_want_priority_rank,
+            MAX(
+                CASE
+                    WHEN want_items.budget_cap_usd != '' AND collection_items.price_usd != ''
+                        AND CAST(collection_items.price_usd AS REAL) <= CAST(want_items.budget_cap_usd AS REAL)
+                    THEN 1 ELSE 0
+                END
+            ) AS matched_within_budget
         FROM collection_items
         JOIN want_items ON {' AND '.join(where)}
         GROUP BY collection_items.id
         ORDER BY
+            matched_want_priority_rank DESC,
+            matched_within_budget DESC,
             matched_want_count DESC,
             COALESCE(CAST(NULLIF(collection_items.price_usd, '') AS REAL), 0) DESC,
             collection_items.card_name COLLATE NOCASE,
