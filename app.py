@@ -129,6 +129,7 @@ CSV_HEADER_ALIASES = {
     "collector_number": ("collector number", "collector no", "collector #", "number", "collector"),
     "finish": ("finish", "foil", "printing", "version"),
     "condition": ("condition", "quality"),
+    "condition_notes": ("condition notes", "condition details", "condition description"),
     "language": ("language", "lang"),
     "scryfall_id": ("scryfall id", "scryfall_id"),
     "price_usd": ("price", "price usd", "usd", "market price"),
@@ -148,6 +149,7 @@ CSV_IMPORT_MAPPING_FIELDS = (
     ("collector_number", "Collector number"),
     ("finish", "Finish / foil"),
     ("condition", "Condition / quality"),
+    ("condition_notes", "Condition details"),
     ("language", "Language"),
     ("scryfall_id", "Scryfall ID"),
     ("tcgplayer_product_id", "TCGplayer product ID"),
@@ -633,6 +635,7 @@ def normalize_csv_rows(csv_bytes, default_game="mtg", default_trade_quantity=0, 
             "collector_number": csv_value(csv_row, "collector_number", field_mapping).lstrip("#")[:40],
             "finish": normalize_finish(csv_value(csv_row, "finish", field_mapping)),
             "condition": normalize_condition(csv_value(csv_row, "condition", field_mapping)),
+            "condition_notes": csv_value(csv_row, "condition_notes", field_mapping)[:1000],
             "language": normalize_language(csv_value(csv_row, "language", field_mapping)),
             "quantity": quantity,
             "quantity_for_trade": parse_trade_quantity(csv_value(csv_row, "trade", field_mapping), quantity, default_trade_quantity),
@@ -784,6 +787,7 @@ IMPORT_BATCH_COLLECTION_FIELDS = (
     "collector_number",
     "finish",
     "condition",
+    "condition_notes",
     "language",
     "quantity",
     "quantity_for_trade",
@@ -2074,6 +2078,8 @@ class App(BaseHTTPRequestHandler):
                 return self.collection_delete_all(user)
             if path == "/collection/new":
                 return self.collection_new(method, user)
+            if path.startswith("/collection/photos/") and method == "GET":
+                return self.collection_photo(user, path)
             if path.startswith("/collection/"):
                 return self.collection_item(method, user, path)
             if path == "/import/scryfall-sync" and method == "POST":
@@ -2264,6 +2270,15 @@ class App(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Content-Disposition", f'attachment; filename="{safe_download_filename(filename)}"')
+        self.send_security_headers()
+        self.end_headers()
+        self.wfile.write(data)
+
+    def inline_binary(self, data, content_type, filename, status=HTTPStatus.OK):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'inline; filename="{safe_download_filename(filename)}"')
         self.send_security_headers()
         self.end_headers()
         self.wfile.write(data)

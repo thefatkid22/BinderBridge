@@ -326,11 +326,15 @@ def render_trade_selection_list(selected_items, empty_text):
         if unit_price:
             source = price_source_label(trade_item_price_source(item))
             price_line = f'<span class="trade-item-price">{e(money(total))} value - {e(source)}</span>'
+        condition_notes = row_value(item, "condition_notes", "")
+        photo_gallery = render_collection_photo_gallery(item["id"], compact=True)
         items.append(
             f"""
         <li>
             <strong>{e(quantity)} x {e(item["card_name"])}</strong>
             <span>{e(item["set_name"] or "Any set")} - {e(item["condition"] or "Condition n/a")} - {e(item["finish"] or "Finish n/a")}</span>
+            {f'<span class="condition-detail"><strong>Condition details:</strong> {e(condition_notes)}</span>' if condition_notes else ''}
+            {photo_gallery}
             {price_line}
         </li>
         """
@@ -1359,6 +1363,22 @@ def render_trade_detail(user, trade_id, notice=None, status="info"):
     return render_layout(user, f"Trade #{trade_id}", content, active="trades", notice=notice, status=status)
 
 
+def render_trade_item_photo_gallery(trade_id, trade_item_id):
+    photos = trade_item_photo_rows(trade_item_id)
+    if not photos:
+        return ""
+    rendered = "".join(
+        f"""
+        <a class="trade-card-photo" href="/trades/{trade_id}/photos/{photo["id"]}" target="_blank" rel="noreferrer">
+            <img src="/trades/{trade_id}/photos/{photo["id"]}" alt="{e(photo["caption"] or photo["original_filename"])}">
+            {f'<span>{e(photo["caption"])}</span>' if photo["caption"] else ''}
+        </a>
+        """
+        for photo in photos
+    )
+    return f'<div class="card-photo-gallery compact-gallery">{rendered}</div>'
+
+
 def render_trade_items(items):
     if not items:
         return '<div class="empty-state compact-empty">No cards selected.</div>'
@@ -1368,11 +1388,15 @@ def render_trade_items(items):
         price_line = ""
         if unit_price:
             price_line = f'<span class="trade-item-price">{e(money(price_to_cents(unit_price) * item["quantity"]))} value - {e(price_source_label(trade_item_price_source(item)))}</span>'
+        condition_notes = row_value(item, "condition_notes", "")
+        photo_gallery = render_trade_item_photo_gallery(item["trade_id"], item["id"])
         rendered.append(
             f"""
         <li>
             <strong>{e(item["quantity"])} x {e(item["card_name"])}</strong>
             <span>{e(item["set_name"] or "Any set")} - {e(item["condition"] or "Condition n/a")} - {e(item["finish"] or "Finish n/a")}</span>
+            {f'<span class="condition-detail"><strong>Condition details:</strong> {e(condition_notes)}</span>' if condition_notes else ''}
+            {photo_gallery}
             {price_line}
         </li>
         """
@@ -1380,4 +1404,4 @@ def render_trade_items(items):
     return "<ul class=\"trade-item-list\">" + "".join(rendered) + "</ul>"
 
 
-__all__ = ['render_trades', 'render_trade_table', 'trade_picker_query_inputs', 'trade_quantity_map', 'trade_selected_quantities_from_form', 'trade_price_basis_for', 'price_for_item_basis', 'apply_trade_price_basis', 'trade_selected_items', 'trade_item_price_usd', 'trade_item_price_source', 'trade_entry_value_cents', 'trade_entries_value_cents', 'trade_entries_unpriced_count', 'trade_value_gap_percent', 'trade_balance_details', 'trade_fairness_assessment', 'render_trade_fairness_notice', 'validate_trade_fairness_for_send', 'validate_trade_fairness_for_creation', 'render_trade_value_panel', 'render_trade_selected_hidden_inputs', 'render_trade_selection_list', 'render_trade_live_summary', 'render_counter_context_panel', 'render_trade_review', 'render_trade_picker_section', 'render_new_trade', 'trade_picker_table', 'render_trade_links', 'render_trade_comments', 'render_trade_feedback', 'render_trade_disputes', 'render_trade_detail', 'render_trade_items']
+__all__ = ['render_trades', 'render_trade_table', 'trade_picker_query_inputs', 'trade_quantity_map', 'trade_selected_quantities_from_form', 'trade_price_basis_for', 'price_for_item_basis', 'apply_trade_price_basis', 'trade_selected_items', 'trade_item_price_usd', 'trade_item_price_source', 'trade_entry_value_cents', 'trade_entries_value_cents', 'trade_entries_unpriced_count', 'trade_value_gap_percent', 'trade_balance_details', 'trade_fairness_assessment', 'render_trade_fairness_notice', 'validate_trade_fairness_for_send', 'validate_trade_fairness_for_creation', 'render_trade_value_panel', 'render_trade_selected_hidden_inputs', 'render_trade_selection_list', 'render_trade_live_summary', 'render_counter_context_panel', 'render_trade_review', 'render_trade_picker_section', 'render_new_trade', 'trade_picker_table', 'render_trade_links', 'render_trade_comments', 'render_trade_feedback', 'render_trade_disputes', 'render_trade_detail', 'render_trade_item_photo_gallery', 'render_trade_items']

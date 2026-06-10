@@ -150,6 +150,12 @@ def trade_action(self, method, user, path):
         except (ValueError, IndexError):
             return self.not_found(user)
         return self.trade_dispute_evidence_download(user, trade_id, dispute_id, evidence_id)
+    if len(parts) == 4 and parts[2] == "photos" and method == "GET":
+        try:
+            photo_id = int(parts[3])
+        except (ValueError, IndexError):
+            return self.not_found(user)
+        return self.trade_item_photo_download(user, trade_id, photo_id)
     trade = row("SELECT * FROM trades WHERE id = ? AND (proposer_id = ? OR recipient_id = ?)", (trade_id, user["id"], user["id"]))
     if not trade:
         return self.not_found(user)
@@ -258,7 +264,13 @@ def trade_dispute_evidence_download(self, user, trade_id, dispute_id, evidence_i
         return self.not_found(user)
     return self.binary(evidence["content"], evidence["content_type"], evidence["original_filename"])
 
-TRADE_ROUTE_METHODS = ('trade_new', 'notification_action', 'trade_action', 'trade_dispute_evidence_download')
+def trade_item_photo_download(self, user, trade_id, photo_id):
+    photo = trade_item_photo_for_user(photo_id, user["id"])
+    if not photo or int(photo["trade_id"]) != int(trade_id):
+        return self.not_found(user)
+    return self.inline_binary(photo["content"], photo["content_type"], photo["original_filename"])
+
+TRADE_ROUTE_METHODS = ('trade_new', 'notification_action', 'trade_action', 'trade_dispute_evidence_download', 'trade_item_photo_download')
 
 __all__ = [
     "TRADE_ROUTE_METHODS",

@@ -6,6 +6,9 @@ import json
 import re
 from datetime import datetime, timezone
 
+from binderbridge.collection_service import collection_item_photo_rows
+from binderbridge.trade_queries import trade_item_photo_rows
+
 
 COLLECTION_EXPORT_FIELDS = [
     "game",
@@ -17,6 +20,7 @@ COLLECTION_EXPORT_FIELDS = [
     "collector_number",
     "finish",
     "condition",
+    "condition_notes",
     "language",
     "scryfall_id",
     "type_line",
@@ -247,10 +251,14 @@ def account_trade_exports(user_id):
     exported = []
     for trade in trades:
         data = record_dict(trade)
-        data["items"] = [
-            record_dict(item)
-            for item in rows("SELECT * FROM trade_items WHERE trade_id = ? ORDER BY side, card_name", (trade["id"],))
-        ]
+        data["items"] = []
+        for item in rows("SELECT * FROM trade_items WHERE trade_id = ? ORDER BY side, card_name", (trade["id"],)):
+            item_data = record_dict(item)
+            item_data["photos"] = [
+                record_dict(photo)
+                for photo in trade_item_photo_rows(item["id"])
+            ]
+            data["items"].append(item_data)
         data["comments"] = [
             record_dict(comment)
             for comment in rows("SELECT * FROM trade_comments WHERE trade_id = ? ORDER BY created_at, id", (trade["id"],))
@@ -272,12 +280,20 @@ def export_account_data(user_id):
     if not user:
         raise ValueError("Account not found.")
     account = {field: row_value(user, field, "") for field in ACCOUNT_EXPORT_USER_FIELDS}
+    collection = []
+    for item in export_collection_rows(user_id):
+        item_data = record_dict(item)
+        item_data["photos"] = [
+            record_dict(photo)
+            for photo in collection_item_photo_rows(item["id"])
+        ]
+        collection.append(item_data)
     return {
         "format": "binderbridge-account-export",
         "format_version": 1,
         "exported_at": now_iso(),
         "account": account,
-        "collection": [record_dict(item) for item in export_collection_rows(user_id)],
+        "collection": collection,
         "wants": [record_dict(item) for item in export_wants_rows(user_id)],
         "groups": account_group_exports(user_id),
         "trades": account_trade_exports(user_id),

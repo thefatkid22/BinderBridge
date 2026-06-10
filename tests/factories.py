@@ -63,6 +63,7 @@ def create_collection_item(user_id, card_name="Sol Ring", **overrides):
         "collector_number": "",
         "finish": "Regular",
         "condition": "NM",
+        "condition_notes": "",
         "language": "English",
         "quantity": 1,
         "quantity_for_trade": 0,

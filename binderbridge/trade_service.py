@@ -23,6 +23,7 @@ def validate_collection_form(form):
     collector_number = sanitize_text_input(form.get("collector_number", [""])[0], max_length=40).strip()
     finish = form.get("finish", ["Regular"])[0].strip() or "Regular"
     condition = form.get("condition", ["NM"])[0].strip() or "NM"
+    condition_notes = sanitize_text_input(form.get("condition_notes", [""])[0], max_length=1000).strip()
     language = form.get("language", ["English"])[0].strip() or "English"
     notes = sanitize_text_input(form.get("notes", [""])[0], max_length=1000).strip()
     if not str(form.get("quantity", ["1"])[0] or "").strip().lstrip("+-").isdigit():
@@ -47,6 +48,7 @@ def validate_collection_form(form):
         "collector_number": collector_number,
         "finish": finish,
         "condition": condition,
+        "condition_notes": condition_notes,
         "language": language,
         "quantity": quantity,
         "quantity_for_trade": quantity_for_trade,
@@ -832,11 +834,11 @@ def cancel_trade_offer(trade_id, user_id):
 
 
 def insert_trade_item_record(conn, trade_id, owner_id, item, quantity, side):
-    conn.execute(
+    cursor = conn.execute(
         """
         INSERT INTO trade_items
-            (trade_id, owner_id, collection_item_id, card_name, set_name, quantity, condition, finish, price_usd, price_source, side)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (trade_id, owner_id, collection_item_id, card_name, set_name, quantity, condition, condition_notes, finish, price_usd, price_source, side)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             trade_id,
@@ -846,12 +848,15 @@ def insert_trade_item_record(conn, trade_id, owner_id, item, quantity, side):
             item["set_name"],
             quantity,
             item["condition"],
+            row_value(item, "condition_notes", ""),
             item["finish"],
             trade_item_price_usd(item),
             trade_item_price_source(item),
             side,
         ),
     )
+    copy_collection_item_photos_to_trade_item_conn(conn, item["id"], cursor.lastrowid)
+    return cursor.lastrowid
 
 
 def add_trade_item(trade_id, owner_id, item, quantity, side):
@@ -926,6 +931,49 @@ def create_trade_offer(proposer_id, recipient_id, proposer_note, offered, reques
     return trade_id
 
 
+def copy_trade_item_photos_to_collection_item_conn(conn, trade_item_id, collection_item_id):
+    existing_checksums = {
+        item["checksum_sha256"]
+        for item in conn.execute(
+            "SELECT checksum_sha256 FROM collection_item_photos WHERE collection_item_id = ?",
+            (collection_item_id,),
+        ).fetchall()
+    }
+    remaining = max(0, CARD_PHOTO_MAX_COUNT - len(existing_checksums))
+    if not remaining:
+        return 0
+    copied = 0
+    photos = conn.execute(
+        "SELECT * FROM trade_item_photos WHERE trade_item_id = ? ORDER BY created_at, id",
+        (trade_item_id,),
+    ).fetchall()
+    for photo in photos:
+        if photo["checksum_sha256"] in existing_checksums:
+            continue
+        conn.execute(
+            """
+            INSERT INTO collection_item_photos
+                (collection_item_id, original_filename, content_type, file_size, checksum_sha256, caption, content, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                collection_item_id,
+                photo["original_filename"],
+                photo["content_type"],
+                photo["file_size"],
+                photo["checksum_sha256"],
+                photo["caption"],
+                photo["content"],
+                now_iso(),
+            ),
+        )
+        existing_checksums.add(photo["checksum_sha256"])
+        copied += 1
+        if copied >= remaining:
+            break
+    return copied
+
+
 def complete_trade(trade_id, completed_by_user_id=None):
     with db() as conn:
         trade = conn.execute("SELECT * FROM trades WHERE id = ? AND status = 'accepted'", (trade_id,)).fetchone()
@@ -993,6 +1041,7 @@ def complete_trade(trade_id, completed_by_user_id=None):
                     """
                     UPDATE collection_items
                     SET quantity = quantity + ?,
+                        condition_notes = COALESCE(NULLIF(condition_notes, ''), ?),
                         price_usd = COALESCE(NULLIF(price_usd, ''), ?),
                         price_source = COALESCE(NULLIF(price_source, ''), ?),
                         tcgplayer_product_id = COALESCE(NULLIF(tcgplayer_product_id, ''), ?),
@@ -1003,6 +1052,7 @@ def complete_trade(trade_id, completed_by_user_id=None):
                     """,
                     (
                         trade_item["quantity"],
+                        row_value(trade_item, "condition_notes", ""),
                         row_value(source, "price_usd", ""),
                         "scryfall" if row_value(source, "price_usd", "") else "",
                         row_value(source, "tcgplayer_product_id", ""),
@@ -1012,17 +1062,18 @@ def complete_trade(trade_id, completed_by_user_id=None):
                         existing["id"],
                     ),
                 )
+                copy_trade_item_photos_to_collection_item_conn(conn, trade_item["id"], existing["id"])
                 new_price = old_price or row_value(source, "price_usd", "")
                 record_price_history_for_item(existing["id"], recipient_id, existing, old_price, new_price, conn=conn)
             else:
                 cursor = conn.execute(
                     """
                     INSERT INTO collection_items
-                        (user_id, game, card_name, set_name, set_code, collector_number, finish, condition, language,
+                        (user_id, game, card_name, set_name, set_code, collector_number, finish, condition, condition_notes, language,
                          quantity, quantity_for_trade, scryfall_id, image_url, mana_cost, type_line, oracle_text,
                          rarity, colors, color_identity, scryfall_uri, price_usd, price_source, tcgplayer_product_id,
                          cardmarket_product_id, cardkingdom_sku, notes, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         recipient_id,
@@ -1033,6 +1084,7 @@ def complete_trade(trade_id, completed_by_user_id=None):
                         source["collector_number"],
                         source["finish"],
                         source["condition"],
+                        row_value(trade_item, "condition_notes", ""),
                         source["language"],
                         trade_item["quantity"],
                         source["scryfall_id"],
@@ -1054,6 +1106,7 @@ def complete_trade(trade_id, completed_by_user_id=None):
                         now_iso(),
                     ),
                 )
+                copy_trade_item_photos_to_collection_item_conn(conn, trade_item["id"], cursor.lastrowid)
                 new_item = dict(source)
                 new_item["id"] = cursor.lastrowid
                 record_price_history_for_item(cursor.lastrowid, recipient_id, new_item, "", row_value(source, "price_usd", ""), conn=conn)
@@ -1112,6 +1165,8 @@ __all__ = [
     "trade_dispute_rows",
     "trade_dispute_evidence_rows",
     "trade_dispute_evidence_for_user",
+    "trade_item_photo_rows",
+    "trade_item_photo_for_user",
     "create_trade_dispute",
     "prune_trade_dispute_evidence",
     "trade_dispute_filter_value",
@@ -1130,5 +1185,6 @@ __all__ = [
     "insert_trade_item_record",
     "add_trade_item",
     "create_trade_offer",
+    "copy_trade_item_photos_to_collection_item_conn",
     "complete_trade",
 ]

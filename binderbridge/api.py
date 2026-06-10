@@ -11,7 +11,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from binderbridge.collection_service import collection_item_photo_count
 from binderbridge.config import config_bool, config_float, config_int
+from binderbridge.trade_queries import trade_item_photo_rows
 
 
 API_TOKEN_PREFIX = "bbapi_"
@@ -725,7 +727,7 @@ def api_row_dict(item, fields):
 
 COLLECTION_API_FIELDS = (
     "id", "game", "card_name", "set_name", "set_code", "collector_number", "finish", "condition",
-    "language", "quantity", "quantity_for_trade", "scryfall_id", "image_url", "mana_cost", "type_line",
+    "condition_notes", "language", "quantity", "quantity_for_trade", "scryfall_id", "image_url", "mana_cost", "type_line",
     "oracle_text", "rarity", "colors", "color_identity", "scryfall_uri", "price_usd", "price_source",
     "price_refreshed_at", "price_status", "notes", "is_public", "created_at", "updated_at",
 )
@@ -741,6 +743,7 @@ def api_collection_item_dict(item):
     data = api_row_dict(item, COLLECTION_API_FIELDS)
     for key in ("id", "quantity", "quantity_for_trade", "is_public"):
         data[key] = int(data[key] or 0)
+    data["photo_count"] = collection_item_photo_count(data["id"])
     return data
 
 
@@ -1165,7 +1168,9 @@ def api_trade_dict(trade):
                 "set_name": row_value(item, "set_name", ""),
                 "quantity": int(item["quantity"]),
                 "condition": row_value(item, "condition", ""),
+                "condition_notes": row_value(item, "condition_notes", ""),
                 "finish": row_value(item, "finish", ""),
+                "photo_count": len(trade_item_photo_rows(item["id"])),
                 "price_usd": row_value(item, "price_usd", ""),
                 "price_source": row_value(item, "price_source", ""),
             }

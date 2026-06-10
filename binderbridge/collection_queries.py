@@ -310,7 +310,8 @@ def collection_count(where, params):
 def collection_page_rows(where, params, order_clause, limit, offset):
     return rows(
         f"""
-        SELECT *
+        SELECT collection_items.*,
+            (SELECT COUNT(*) FROM collection_item_photos WHERE collection_item_photos.collection_item_id = collection_items.id) AS photo_count
         FROM collection_items
         WHERE {' AND '.join(where)}
         ORDER BY {order_clause}
@@ -339,7 +340,8 @@ def browse_page_rows(where, params, order_clause, limit, offset):
             collection_items.*,
             users.id AS owner_id,
             users.username AS owner_username,
-            users.display_name AS owner_name
+            users.display_name AS owner_name,
+            (SELECT COUNT(*) FROM collection_item_photos WHERE collection_item_photos.collection_item_id = collection_items.id) AS photo_count
         FROM collection_items
         JOIN users ON users.id = collection_items.user_id
         WHERE {' AND '.join(where)}
@@ -360,7 +362,8 @@ def trade_picker_count(where, params):
 def trade_picker_rows(where, params, order_clause, limit, offset):
     return rows(
         f"""
-        SELECT *
+        SELECT collection_items.*,
+            (SELECT COUNT(*) FROM collection_item_photos WHERE collection_item_photos.collection_item_id = collection_items.id) AS photo_count
         FROM collection_items
         WHERE {' AND '.join(where)}
         ORDER BY {order_clause}

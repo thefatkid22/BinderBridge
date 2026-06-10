@@ -1203,7 +1203,7 @@ def render_browse_row(item):
         <td data-label="Set">{e(item["set_name"] or "-")}</td>
         <td data-label="Code">{e(item["set_code"] or "-")}</td>
         <td data-label="Available">{e(item["quantity_for_trade"])}</td>
-        <td data-label="Quality"><span class="pill">{e(item["condition"])}</span> <span class="pill">{e(item["finish"])}</span>{price} {visibility_badge(item)} <span class="subtle">{e(item["language"])}</span></td>
+        <td data-label="Quality"><span class="pill">{e(item["condition"])}</span> <span class="pill">{e(item["finish"])}</span>{price} {visibility_badge(item)} {f'<span class="pill">{e(row_value(item, "photo_count", 0))} photo{"s" if int(row_value(item, "photo_count", 0) or 0) != 1 else ""}</span>' if int(row_value(item, "photo_count", 0) or 0) else ''}<span class="subtle">{e(item["language"])}</span>{f'<span class="subtle condition-detail">{e(row_value(item, "condition_notes", ""))}</span>' if row_value(item, "condition_notes", "") else ''}</td>
         <td class="table-actions" data-label="Trade">
             {trade_form}
         </td>
@@ -1265,7 +1265,7 @@ def render_collection_row(
         <td data-label="Code">{e(item["set_code"] or "-")}</td>
         <td data-label="Qty">{e(item["quantity"])}</td>
         <td data-label="Trade">{e(item["quantity_for_trade"])}</td>
-        <td data-label="Details"><span class="pill">{e(item["condition"])}</span> <span class="pill">{e(item["finish"])}</span>{price} {visibility_badge(item)} <span class="subtle">{e(item["language"])}</span></td>
+        <td data-label="Details"><span class="pill">{e(item["condition"])}</span> <span class="pill">{e(item["finish"])}</span>{price} {visibility_badge(item)} {f'<span class="pill">{e(row_value(item, "photo_count", 0))} photo{"s" if int(row_value(item, "photo_count", 0) or 0) != 1 else ""}</span>' if int(row_value(item, "photo_count", 0) or 0) else ''}<span class="subtle">{e(item["language"])}</span>{f'<span class="subtle condition-detail">{e(row_value(item, "condition_notes", ""))}</span>' if row_value(item, "condition_notes", "") else ''}</td>
         {action}
     </tr>
     """
@@ -1309,6 +1309,63 @@ def render_price_history_panel(user_id, item_id):
     """
 
 
+def card_photo_size_label(size):
+    size = max(0, int(size or 0))
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} bytes"
+
+
+def render_collection_photo_gallery(collection_item_id, compact=False, editable=False):
+    photos = collection_item_photo_rows(collection_item_id)
+    if not photos:
+        return "" if compact else '<p class="muted compact">No condition photos attached.</p>'
+    gallery_class = "card-photo-gallery compact-gallery" if compact else "card-photo-gallery"
+    items = "".join(
+        f"""
+        <article class="card-photo">
+            <a href="/collection/photos/{photo["id"]}" target="_blank" rel="noreferrer">
+                <img src="/collection/photos/{photo["id"]}" alt="{e(photo["caption"] or photo["original_filename"])}">
+            </a>
+            <div>
+                {f'<strong>{e(photo["caption"])}</strong>' if photo["caption"] else ''}
+                <span>{e(card_photo_size_label(photo["file_size"]))}</span>
+            </div>
+            {f'<form method="post" action="/collection/{collection_item_id}/photos/{photo["id"]}/delete" data-confirm="Delete this card photo?"><button class="button danger small" type="submit">Delete</button></form>' if editable else ''}
+        </article>
+        """
+        for photo in photos
+    )
+    return f'<div class="{gallery_class}">{items}</div>'
+
+
+def render_collection_photo_panel(item):
+    item_id = item["id"]
+    return f"""
+    <section class="panel card-photo-panel">
+        <div class="panel-heading">
+            <div>
+                <h2>Condition photos</h2>
+                <p class="muted compact">Photos are visible wherever this public card appears and are snapshotted into new trade offers.</p>
+            </div>
+            <span class="pill">{e(collection_item_photo_count(item_id))}/{e(CARD_PHOTO_MAX_COUNT)}</span>
+        </div>
+        {render_collection_photo_gallery(item_id, editable=True)}
+        <form class="card-photo-upload" method="post" action="/collection/{item_id}/photos" enctype="multipart/form-data">
+            <label>Photo
+                <input required type="file" name="card_photo" accept="image/png,image/jpeg,image/gif,image/webp">
+            </label>
+            <label>Caption
+                <input name="caption" maxlength="300" placeholder="Front, back, corner wear, crease...">
+            </label>
+            <button class="button secondary" type="submit">Add photo</button>
+        </form>
+    </section>
+    """
+
+
 def render_collection_form(
     user,
     item=None,
@@ -1334,6 +1391,7 @@ def render_collection_form(
             "collector_number": "",
             "finish": "Regular",
             "condition": "NM",
+            "condition_notes": "",
             "language": "English",
             "quantity": 1,
             "quantity_for_trade": 0,
@@ -1353,6 +1411,7 @@ def render_collection_form(
     for field in PRICE_PROVIDER_ID_FIELDS.values():
         item.setdefault(field, "")
     item.setdefault("price_source", "scryfall" if item.get("price_usd") and (item.get("scryfall_id") or item.get("scryfall_uri")) else "")
+    item.setdefault("condition_notes", "")
     item.setdefault("lookup_on_save", "1")
     item.setdefault("scryfall_finish_override", "")
     item.setdefault("is_public", 1)
@@ -1368,6 +1427,7 @@ def render_collection_form(
         title=scryfall_picker_title,
     )
     price_history_panel = render_price_history_panel(user["id"], item["id"]) if is_edit else ""
+    photo_panel = render_collection_photo_panel(item) if is_edit else ""
     content = f"""
     {render_cards_subnav("collection")}
     <section class="section-heading">
@@ -1402,6 +1462,9 @@ def render_collection_form(
         <label>Condition
             <select name="condition">{simple_option_tags(CONDITION_OPTIONS, item["condition"])}</select>
         </label>
+        <label class="span-2">Condition details
+            <textarea name="condition_notes" rows="3" maxlength="1000" placeholder="Describe whitening, scratches, bends, signatures, altered art, or other notable details">{e(item["condition_notes"])}</textarea>
+        </label>
         <label>Language
             <select name="language">{simple_option_tags(LANGUAGE_OPTIONS, item["language"])}</select>
         </label>
@@ -1432,6 +1495,7 @@ def render_collection_form(
             <button class="button primary" name="intent" value="save" type="submit">Save card</button>
         </div>
     </form>
+    {photo_panel}
     {price_history_panel}
     """
     return render_layout(user, title, content, active="cards", notice=notice, status=status)
@@ -1460,6 +1524,7 @@ def render_csv_import_mapping_fields():
         "collector_number": "Collector #, Number",
         "finish": "Foil, Finish, Printing",
         "condition": "Condition, Quality",
+        "condition_notes": "Condition Notes, Condition Details",
         "language": "Language, Lang",
         "scryfall_id": "Scryfall ID",
         "tcgplayer_product_id": "TCGplayer ID",
@@ -1688,4 +1753,4 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
     return render_layout(user, "Import", content, active="cards", notice=notice, status=status)
 
 
-__all__ = ['query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_stat_coverage_row', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_collection_row', 'render_price_history_panel', 'render_collection_form', 'render_import']
+__all__ = ['query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_stat_coverage_row', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_collection_row', 'render_price_history_panel', 'card_photo_size_label', 'render_collection_photo_gallery', 'render_collection_photo_panel', 'render_collection_form', 'render_import']

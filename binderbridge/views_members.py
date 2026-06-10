@@ -168,6 +168,8 @@ def render_public_trade_card(member, item):
                 <strong>{e(item["card_name"])}</strong>
                 {type_line}
                 <span class="subtle">{e(game_label(item["game"]))} - {e(item["set_name"] or "Any set")} {e("(" + item["set_code"] + ")" if item["set_code"] else "")} {e("#" + item["collector_number"] if item["collector_number"] else "")}</span>
+                {f'<span class="subtle condition-detail"><strong>Condition details:</strong> {e(row_value(item, "condition_notes", ""))}</span>' if row_value(item, "condition_notes", "") else ''}
+                {render_collection_photo_gallery(item["id"], compact=True)}
                 {scryfall_link}
             </div>
         </div>

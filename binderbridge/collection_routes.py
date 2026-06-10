@@ -355,7 +355,7 @@ def collection_new(self, method, user):
 
 def collection_item(self, method, user, path):
     parts = path.strip("/").split("/")
-    if len(parts) != 3:
+    if len(parts) < 3:
         return self.not_found(user)
     try:
         item_id = int(parts[1])
@@ -365,6 +365,28 @@ def collection_item(self, method, user, path):
     if not item:
         return self.not_found(user)
     action = parts[2]
+    if action == "photos" and len(parts) == 3 and method == "POST":
+        form, files = self.read_multipart_form()
+        try:
+            add_collection_item_photo(
+                user["id"],
+                item_id,
+                files.get("card_photo"),
+                form.get("caption", [""])[0],
+            )
+        except ValueError as exc:
+            return self.html(render_collection_form(user, item, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_collection_form(user, item, notice="Card photo added."))
+    if action == "photos" and len(parts) == 5 and parts[4] == "delete" and method == "POST":
+        try:
+            photo_id = int(parts[3])
+        except ValueError:
+            return self.not_found(user)
+        if not delete_collection_item_photo(user["id"], item_id, photo_id):
+            return self.not_found(user)
+        return self.redirect(f"/collection/{item_id}/edit")
+    if len(parts) != 3:
+        return self.not_found(user)
     if action == "edit":
         if method == "GET":
             return self.html(render_collection_form(user, item))
@@ -466,6 +488,16 @@ def collection_item(self, method, user, path):
         execute("DELETE FROM collection_items WHERE id = ? AND user_id = ?", (item_id, user["id"]))
         return self.redirect("/collection")
     return self.not_found(user)
+
+def collection_photo(self, user, path):
+    try:
+        photo_id = int(path.strip("/").split("/")[2])
+    except (ValueError, IndexError):
+        return self.not_found(user)
+    photo = collection_item_photo_for_user(photo_id, user["id"])
+    if not photo:
+        return self.not_found(user)
+    return self.inline_binary(photo["content"], photo["content_type"], photo["original_filename"])
 
 def want_new(self, user):
     form = self.read_form()
@@ -707,7 +739,7 @@ def want_delete(self, user, path):
     execute("DELETE FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
     self.redirect("/wants")
 
-COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_new', 'collection_item', 'want_new', 'want_edit', 'want_delete')
+COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_delete')
 
 __all__ = [
     "COLLECTION_ROUTE_METHODS",

@@ -1847,6 +1847,13 @@ Deck
         form = app.sanitize_form_values({"na\x00me": ["one\x01", "two"], "": ["skip"]})
         self.assertEqual(form["name"], ["one", "two"])
         self.assertNotIn("", form)
+        collection_data = app.validate_collection_form({
+            "card_name": ["Safe Card"],
+            "quantity": ["1"],
+            "quantity_for_trade": ["0"],
+            "condition_notes": ["Edge wear\x00 and a small crease."],
+        })
+        self.assertEqual(collection_data["condition_notes"], "Edge wear and a small crease.")
 
     def test_safe_local_redirect_rejects_external_or_wrong_paths(self):
         self.assertEqual(
@@ -4162,6 +4169,107 @@ Deck
         self.assertIn('value="choose_scryfall_card"', html)
         self.assertIn("Show variations", html)
 
+    def test_collection_condition_details_and_photo_gallery(self):
+        owner_id = factory.create_user("photo-owner", display_name="Photo Owner")
+        viewer_id = factory.create_user("photo-viewer", display_name="Photo Viewer")
+        owner = app.row("SELECT * FROM users WHERE id = ?", (owner_id,))
+        item_id = factory.create_collection_item(
+            owner_id,
+            "Black Lotus",
+            condition="HP",
+            condition_notes="Small crease near the lower-left corner.",
+            quantity_for_trade=1,
+            is_public=1,
+        )
+        photo_id = app.add_collection_item_photo(
+            owner_id,
+            item_id,
+            {
+                "filename": "front.png",
+                "content_type": "image/png",
+                "content": b"\x89PNG\r\n\x1a\ncondition-photo",
+            },
+            "Front and lower-left corner",
+        )
+        item = app.row("SELECT * FROM collection_items WHERE id = ?", (item_id,))
+        html = app.render_collection_form(owner, item)
+        public_photo = app.collection_item_photo_for_user(photo_id, viewer_id)
+        api_data = app.api_collection_item_dict(item)
+        account_export = app.export_account_data(owner_id)
+
+        self.assertEqual(item["condition_notes"], "Small crease near the lower-left corner.")
+        self.assertIn("Condition details", html)
+        self.assertIn("Small crease near the lower-left corner.", html)
+        self.assertIn("Front and lower-left corner", html)
+        self.assertIn(f"/collection/photos/{photo_id}", html)
+        self.assertIsNotNone(public_photo)
+        self.assertEqual(api_data["photo_count"], 1)
+        self.assertEqual(account_export["collection"][0]["photos"][0]["caption"], "Front and lower-left corner")
+        self.assertNotIn("content", account_export["collection"][0]["photos"][0])
+
+        app.execute("UPDATE collection_items SET is_public = 0 WHERE id = ?", (item_id,))
+        self.assertIsNone(app.collection_item_photo_for_user(photo_id, viewer_id))
+        self.assertIsNotNone(app.collection_item_photo_for_user(photo_id, owner_id))
+        with self.assertRaisesRegex(ValueError, "PNG, JPG, GIF, or WebP"):
+            app.add_collection_item_photo(
+                owner_id,
+                item_id,
+                {"filename": "notes.txt", "content_type": "text/plain", "content": b"not an image"},
+            )
+
+    def test_trade_offer_snapshots_condition_details_and_photos(self):
+        alice_id = factory.create_user("photo-alice", display_name="Photo Alice")
+        bob_id = factory.create_user("photo-bob", display_name="Photo Bob")
+        bob = app.row("SELECT * FROM users WHERE id = ?", (bob_id,))
+        alice_card_id = factory.create_collection_item(
+            alice_id,
+            "Mox Pearl",
+            condition="LP",
+            condition_notes="Light edge whitening visible on the back.",
+            quantity=1,
+            quantity_for_trade=1,
+        )
+        bob_card_id = factory.create_collection_item(
+            bob_id,
+            "Sol Ring",
+            quantity=1,
+            quantity_for_trade=1,
+        )
+        original_photo_id = app.add_collection_item_photo(
+            alice_id,
+            alice_card_id,
+            {
+                "filename": "back.webp",
+                "content_type": "image/webp",
+                "content": b"RIFF\x04\x00\x00\x00WEBPphoto",
+            },
+            "Back edge whitening",
+        )
+        alice_card = app.row("SELECT * FROM collection_items WHERE id = ?", (alice_card_id,))
+        bob_card = app.row("SELECT * FROM collection_items WHERE id = ?", (bob_card_id,))
+
+        trade_id = app.create_trade_offer(alice_id, bob_id, "", [(alice_card, 1)], [(bob_card, 1)])
+        trade_item = app.row(
+            "SELECT * FROM trade_items WHERE trade_id = ? AND collection_item_id = ?",
+            (trade_id, alice_card_id),
+        )
+        snapshot_photos = app.trade_item_photo_rows(trade_item["id"])
+        app.delete_collection_item_photo(alice_id, alice_card_id, original_photo_id)
+        app.execute("UPDATE collection_items SET condition_notes = 'Changed later' WHERE id = ?", (alice_card_id,))
+        detail_html = app.render_trade_detail(bob, trade_id)
+
+        self.assertEqual(trade_item["condition_notes"], "Light edge whitening visible on the back.")
+        self.assertEqual(len(snapshot_photos), 1)
+        self.assertIn("Light edge whitening visible on the back.", detail_html)
+        self.assertIn("Back edge whitening", detail_html)
+        self.assertIn(f"/trades/{trade_id}/photos/{snapshot_photos[0]['id']}", detail_html)
+
+        app.execute("UPDATE trades SET status = 'accepted' WHERE id = ?", (trade_id,))
+        app.complete_trade(trade_id, completed_by_user_id=bob_id)
+        received = app.row("SELECT * FROM collection_items WHERE user_id = ? AND card_name = 'Mox Pearl'", (bob_id,))
+        self.assertEqual(received["condition_notes"], "Light edge whitening visible on the back.")
+        self.assertEqual(app.collection_item_photo_count(received["id"]), 1)
+
     def test_want_form_renders_scryfall_result_picker(self):
         user_id = app.create_user("wishlist", "password123", "Wishlist")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
@@ -5437,6 +5545,17 @@ Deck
             """,
             (alice_id, timestamp, timestamp),
         )
+        app.execute("UPDATE collection_items SET condition_notes = 'Second copy has light whitening.' WHERE id = ?", (second_card_id,))
+        app.add_collection_item_photo(
+            alice_id,
+            second_card_id,
+            {
+                "filename": "duplicate.png",
+                "content_type": "image/png",
+                "content": b"\x89PNG\r\n\x1a\nduplicate-photo",
+            },
+            "Duplicate row photo",
+        )
         app.execute(
             """
             INSERT INTO collection_items
@@ -5509,6 +5628,7 @@ Deck
         jobs = app.rows("SELECT * FROM scryfall_enrichment_jobs WHERE user_id = ?", (alice_id,))
         sources = app.rows("SELECT * FROM card_price_sources WHERE collection_item_id = ?", (first_card_id,))
         refresh_jobs = app.rows("SELECT * FROM price_refresh_jobs WHERE user_id = ?", (alice_id,))
+        photos = app.collection_item_photo_rows(first_card_id)
 
         self.assertEqual(result, {"groups": 1, "merged": 1})
         self.assertIn("/cleanup/collection", html)
@@ -5519,6 +5639,7 @@ Deck
         self.assertEqual(cards[0]["quantity_for_trade"], 5)
         self.assertEqual(cards[0]["scryfall_id"], "scryfall-sol")
         self.assertEqual(cards[0]["is_public"], 1)
+        self.assertEqual(cards[0]["condition_notes"], "Second copy has light whitening.")
         self.assertIn("first copy", cards[0]["notes"])
         self.assertIn("second copy", cards[0]["notes"])
         self.assertEqual(len(group_rows), 1)
@@ -5531,6 +5652,8 @@ Deck
         self.assertEqual(len(sources), 1)
         self.assertEqual(len(refresh_jobs), 1)
         self.assertEqual(refresh_jobs[0]["collection_item_id"], first_card_id)
+        self.assertEqual(len(photos), 1)
+        self.assertEqual(photos[0]["caption"], "Duplicate row photo")
 
     def test_want_duplicate_cleanup_merges_rows_and_group_links(self):
         user_id = app.create_user("wishlist", "password123", "Wishlist")

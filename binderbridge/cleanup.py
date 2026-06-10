@@ -280,6 +280,7 @@ def merge_collection_duplicate_group(conn, group):
     price_source = first_nonblank(items, "price_source")
     price_refreshed_at = first_nonblank(items, "price_refreshed_at")
     price_status = first_nonblank(items, "price_status")
+    condition_notes = combine_text_field(items, "condition_notes")
     notes = combine_notes(items)
     is_public = 1 if any(int(row_value(item, "is_public", 1) or 0) for item in items) else 0
     timestamp = now_iso()
@@ -287,7 +288,7 @@ def merge_collection_duplicate_group(conn, group):
     conn.execute(
         """
         UPDATE collection_items
-        SET quantity = ?, quantity_for_trade = ?, notes = ?, is_public = ?,
+        SET quantity = ?, quantity_for_trade = ?, condition_notes = ?, notes = ?, is_public = ?,
             scryfall_id = ?, image_url = ?, mana_cost = ?, type_line = ?, oracle_text = ?,
             rarity = ?, colors = ?, color_identity = ?, scryfall_uri = ?, price_usd = ?,
             price_source = ?, tcgplayer_product_id = ?, cardmarket_product_id = ?,
@@ -297,6 +298,7 @@ def merge_collection_duplicate_group(conn, group):
         (
             total_quantity,
             total_trade,
+            condition_notes,
             notes,
             is_public,
             metadata["scryfall_id"],
@@ -330,6 +332,7 @@ def merge_collection_duplicate_group(conn, group):
         move_collection_single_reference(conn, "scryfall_enrichment_jobs", keep_id, duplicate_id)
         move_collection_unique_rows(conn, "card_price_sources", keep_id, duplicate_id, "provider")
         move_collection_unique_rows(conn, "price_refresh_jobs", keep_id, duplicate_id, "provider")
+        move_collection_unique_rows(conn, "collection_item_photos", keep_id, duplicate_id, "checksum_sha256")
         conn.execute("DELETE FROM collection_items WHERE id = ?", (duplicate_id,))
     return len(duplicate_ids)
 

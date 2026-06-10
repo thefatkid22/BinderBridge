@@ -177,6 +177,7 @@ def init_db():
                 collector_number TEXT NOT NULL DEFAULT '',
                 finish TEXT NOT NULL DEFAULT 'Regular',
                 condition TEXT NOT NULL DEFAULT 'NM',
+                condition_notes TEXT NOT NULL DEFAULT '',
                 language TEXT NOT NULL DEFAULT 'English',
                 quantity INTEGER NOT NULL DEFAULT 1,
                 quantity_for_trade INTEGER NOT NULL DEFAULT 0,
@@ -201,6 +202,21 @@ def init_db():
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS collection_item_photos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collection_item_id INTEGER NOT NULL REFERENCES collection_items(id) ON DELETE CASCADE,
+                original_filename TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                checksum_sha256 TEXT NOT NULL,
+                caption TEXT NOT NULL DEFAULT '',
+                content BLOB NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_collection_item_photos_item
+                ON collection_item_photos(collection_item_id, created_at, id);
 
             CREATE TABLE IF NOT EXISTS want_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -302,11 +318,27 @@ def init_db():
                 set_name TEXT NOT NULL DEFAULT '',
                 quantity INTEGER NOT NULL DEFAULT 1,
                 condition TEXT NOT NULL DEFAULT '',
+                condition_notes TEXT NOT NULL DEFAULT '',
                 finish TEXT NOT NULL DEFAULT '',
                 price_usd TEXT NOT NULL DEFAULT '',
                 price_source TEXT NOT NULL DEFAULT '',
                 side TEXT NOT NULL CHECK (side IN ('offered', 'requested'))
             );
+
+            CREATE TABLE IF NOT EXISTS trade_item_photos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_item_id INTEGER NOT NULL REFERENCES trade_items(id) ON DELETE CASCADE,
+                original_filename TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                checksum_sha256 TEXT NOT NULL,
+                caption TEXT NOT NULL DEFAULT '',
+                content BLOB NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_trade_item_photos_item
+                ON trade_item_photos(trade_item_id, created_at, id);
 
             CREATE TABLE IF NOT EXISTS trade_comments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -718,6 +750,7 @@ def migrate_db(conn):
     collection_columns = {column["name"] for column in conn.execute("PRAGMA table_info(collection_items)").fetchall()}
     missing_columns = {
         "set_code": "TEXT NOT NULL DEFAULT ''",
+        "condition_notes": "TEXT NOT NULL DEFAULT ''",
         "scryfall_id": "TEXT NOT NULL DEFAULT ''",
         "image_url": "TEXT NOT NULL DEFAULT ''",
         "mana_cost": "TEXT NOT NULL DEFAULT ''",
@@ -821,6 +854,7 @@ def migrate_db(conn):
 
     trade_item_columns = {column["name"] for column in conn.execute("PRAGMA table_info(trade_items)").fetchall()}
     trade_item_missing_columns = {
+        "condition_notes": "TEXT NOT NULL DEFAULT ''",
         "price_usd": "TEXT NOT NULL DEFAULT ''",
         "price_source": "TEXT NOT NULL DEFAULT ''",
     }
@@ -832,6 +866,36 @@ def migrate_db(conn):
 
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS collection_item_photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            collection_item_id INTEGER NOT NULL REFERENCES collection_items(id) ON DELETE CASCADE,
+            original_filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            checksum_sha256 TEXT NOT NULL,
+            caption TEXT NOT NULL DEFAULT '',
+            content BLOB NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_collection_item_photos_item
+            ON collection_item_photos(collection_item_id, created_at, id);
+
+        CREATE TABLE IF NOT EXISTS trade_item_photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_item_id INTEGER NOT NULL REFERENCES trade_items(id) ON DELETE CASCADE,
+            original_filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            checksum_sha256 TEXT NOT NULL,
+            caption TEXT NOT NULL DEFAULT '',
+            content BLOB NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_trade_item_photos_item
+            ON trade_item_photos(trade_item_id, created_at, id);
+
         CREATE TABLE IF NOT EXISTS trade_comments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             trade_id INTEGER NOT NULL REFERENCES trades(id) ON DELETE CASCADE,

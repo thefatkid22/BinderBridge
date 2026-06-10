@@ -184,6 +184,8 @@ def render_group_collection_items(group, items, sort_bar=""):
                     <div>
                         <strong>{e(item["group_quantity"])} x {e(item["card_name"])}</strong>
                         <span>{e(item["set_name"] or "Any set")} - {e(item["condition"])} - {e(item["finish"])}</span>
+                        {f'<span class="subtle condition-detail">{e(row_value(item, "condition_notes", ""))}</span>' if row_value(item, "condition_notes", "") else ''}
+                        {render_collection_photo_gallery(item["id"], compact=True)}
                         <span class="subtle">{e(item["quantity"])} owned{price_pill(item)}</span>
                     </div>
                 </div>
@@ -730,6 +732,8 @@ def render_public_group_collection_items(items):
                 <div>
                     <strong>{e(item["group_quantity"])} x {e(item["card_name"])}</strong>
                     <span>{e(item["set_name"] or "Any set")} - {e(item["condition"])} - {e(item["finish"])}</span>
+                    {f'<span class="subtle condition-detail">{e(row_value(item, "condition_notes", ""))}</span>' if row_value(item, "condition_notes", "") else ''}
+                    {render_collection_photo_gallery(item["id"], compact=True)}
                     <span class="subtle">{e(game_label(item["game"]))}{price_pill(item)}</span>
                 </div>
             </div>

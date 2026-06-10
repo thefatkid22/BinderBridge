@@ -463,6 +463,33 @@ def trade_item_rows(trade_id, side):
     )
 
 
+def trade_item_photo_rows(trade_item_id):
+    return rows(
+        """
+        SELECT id, trade_item_id, original_filename, content_type, file_size,
+            checksum_sha256, caption, created_at
+        FROM trade_item_photos
+        WHERE trade_item_id = ?
+        ORDER BY created_at, id
+        """,
+        (trade_item_id,),
+    )
+
+
+def trade_item_photo_for_user(photo_id, user_id):
+    return row(
+        """
+        SELECT trade_item_photos.*, trade_items.trade_id
+        FROM trade_item_photos
+        JOIN trade_items ON trade_items.id = trade_item_photos.trade_item_id
+        JOIN trades ON trades.id = trade_items.trade_id
+        WHERE trade_item_photos.id = ?
+            AND (trades.proposer_id = ? OR trades.recipient_id = ?)
+        """,
+        (photo_id, user_id, user_id),
+    )
+
+
 def trade_selected_item_rows(owner_id, item_ids, viewer_id=None):
     if not item_ids:
         return []
@@ -516,6 +543,8 @@ __all__ = [
     'trade_rows_for_user',
     'trade_detail_for_user',
     'trade_item_rows',
+    'trade_item_photo_rows',
+    'trade_item_photo_for_user',
     'trade_selected_item_rows',
     'counter_render_source_trade',
 ]
