@@ -167,7 +167,7 @@ def change_user_password(user_id, current_password, new_password, confirm_passwo
 
 
 def require_admin(user):
-    return bool(user and user["is_admin"] and not user["is_banned"])
+    return require_capability(user, CAP_ACCESS_ADMIN)
 
 
 def admin_user_list():
@@ -180,17 +180,30 @@ def admin_user_list():
             (SELECT COUNT(*) FROM trades WHERE proposer_id = users.id OR recipient_id = users.id) AS trade_count,
             (SELECT COUNT(*) FROM trades WHERE status = 'completed' AND (proposer_id = users.id OR recipient_id = users.id)) AS completed_trade_count
         FROM users
-        ORDER BY is_banned DESC, is_admin DESC, display_name COLLATE NOCASE
+        ORDER BY is_banned DESC,
+            CASE role
+                WHEN 'owner' THEN 50 WHEN 'admin' THEN 40 WHEN 'moderator' THEN 35
+                WHEN 'organizer' THEN 30 WHEN 'member' THEN 20 ELSE 10
+            END DESC,
+            display_name COLLATE NOCASE
         """
     )
+
+
+def require_user_management(actor_user_id, target, capability):
+    actor = row("SELECT * FROM users WHERE id = ?", (actor_user_id,))
+    if actor and target and int(actor["id"]) == int(target["id"]):
+        raise ValueError("You cannot manage your own account from the staff panel.")
+    if not user_can_manage_target(actor, target, capability):
+        raise ValueError("Your role cannot manage that account.")
+    return actor
 
 
 def admin_set_user_ban(admin_user_id, target_user_id, should_ban, reason=""):
     target = row("SELECT * FROM users WHERE id = ?", (target_user_id,))
     if not target:
         raise ValueError("User not found.")
-    if target["id"] == admin_user_id:
-        raise ValueError("You cannot ban your own account.")
+    require_user_management(admin_user_id, target, CAP_MODERATE_USERS)
     execute(
         """
         UPDATE users
@@ -215,8 +228,7 @@ def admin_reset_user_password(admin_user_id, target_user_id, new_password, confi
     target = row("SELECT * FROM users WHERE id = ?", (target_user_id,))
     if not target:
         raise ValueError("User not found.")
-    if target["id"] == admin_user_id:
-        raise ValueError("Use the Account page to change your own password.")
+    require_user_management(admin_user_id, target, CAP_MANAGE_USERS)
     if len(new_password) < 8:
         raise ValueError("New password must be at least 8 characters.")
     if new_password != confirm_password:
@@ -239,8 +251,7 @@ def admin_reset_user_two_factor(admin_user_id, target_user_id):
     target = row("SELECT * FROM users WHERE id = ?", (target_user_id,))
     if not target:
         raise ValueError("User not found.")
-    if target["id"] == admin_user_id:
-        raise ValueError("Use the Account page to manage your own two-factor authentication.")
+    require_user_management(admin_user_id, target, CAP_MANAGE_USERS)
     with db() as conn:
         conn.execute(
             """
@@ -263,23 +274,34 @@ def admin_reset_user_two_factor(admin_user_id, target_user_id):
         )
 
 
-def admin_set_user_role(admin_user_id, target_user_id, is_admin):
+def admin_set_user_role(admin_user_id, target_user_id, role):
+    actor = row("SELECT * FROM users WHERE id = ?", (admin_user_id,))
     target = row("SELECT * FROM users WHERE id = ?", (target_user_id,))
     if not target:
         raise ValueError("User not found.")
-    if target["id"] == admin_user_id and not is_admin:
-        raise ValueError("You cannot remove your own admin access.")
-    if not is_admin:
-        admin_count = row("SELECT COUNT(*) AS count FROM users WHERE is_admin = 1")["count"]
-        if admin_count <= 1 and target["is_admin"]:
-            raise ValueError("At least one admin account is required.")
-    execute("UPDATE users SET is_admin = ?, updated_at = ? WHERE id = ?", (1 if is_admin else 0, now_iso(), target_user_id))
+    if isinstance(role, bool):
+        role = ROLE_ADMIN if role else ROLE_MEMBER
+    role = str(role or "").strip().lower().replace("-", "_")
+    if role not in ROLE_LABELS:
+        raise ValueError("Choose a valid user role.")
+    if not user_can_assign_role(actor, target, role):
+        raise ValueError("Your role cannot assign that role to this account.")
+    if user_role(target) == ROLE_OWNER and role != ROLE_OWNER:
+        owner_count = row("SELECT COUNT(*) AS count FROM users WHERE role = 'owner'")["count"]
+        if owner_count <= 1:
+            raise ValueError("At least one owner account is required.")
+    previous_role = user_role(target)
+    execute(
+        "UPDATE users SET role = ?, is_admin = ?, updated_at = ? WHERE id = ?",
+        (role, role_sync_is_admin(role), now_iso(), target_user_id),
+    )
     log_admin_action(
         admin_user_id,
-        "admin_granted" if is_admin else "admin_removed",
+        "admin_granted" if role == ROLE_ADMIN else "admin_removed" if previous_role == ROLE_ADMIN else "user_role_updated",
         target_user_id,
         "user",
         admin_audit_user_label(target),
+        f"Role changed from {role_label(previous_role)} to {role_label(role)}.",
     )
 
 
@@ -287,6 +309,8 @@ def admin_update_notes(target_user_id, notes, admin_user_id=None):
     target = row("SELECT * FROM users WHERE id = ?", (target_user_id,))
     if not target:
         raise ValueError("User not found.")
+    if admin_user_id:
+        require_user_management(admin_user_id, target, CAP_MODERATE_USERS)
     execute("UPDATE users SET admin_notes = ?, updated_at = ? WHERE id = ?", (sanitize_text_input(notes, max_length=2000).strip(), now_iso(), target_user_id))
     if admin_user_id:
         log_admin_action(
@@ -523,6 +547,7 @@ __all__ = [
     "update_user_profile",
     "change_user_password",
     "require_admin",
+    "require_user_management",
     "admin_user_list",
     "admin_set_user_ban",
     "admin_reset_user_password",

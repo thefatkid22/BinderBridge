@@ -16,25 +16,25 @@ def admin_user_agent(self):
 
 
 def admin_page(self, user, notice=None, status="info"):
-    if not require_admin(user):
+    if not require_capability(user, CAP_ACCESS_ADMIN):
         return self.not_found(user)
     return self.html(render_admin(user, notice=notice, status=status))
 
 
 def admin_logs_page(self, user, query):
-    if not require_admin(user):
+    if not require_capability(user, CAP_VIEW_AUDIT_LOG):
         return self.not_found(user)
     return self.html(render_admin_logs(user, query))
 
 
 def admin_health_page(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     return self.html(render_admin_health(user))
 
 
 def admin_health_retry_jobs(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     result = retry_recoverable_maintenance_jobs()
     if result["scryfall_jobs"]:
@@ -59,7 +59,7 @@ def admin_health_retry_jobs(self, user):
 
 
 def admin_health_replay_notifications(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     try:
         result = replay_failed_notification_emails(limit=50)
@@ -81,7 +81,7 @@ def admin_health_replay_notifications(self, user):
 
 
 def admin_health_check_backups(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_BACKUPS):
         return self.not_found(user)
     result = run_backup_integrity_check()
     log_admin_action(
@@ -100,7 +100,7 @@ def admin_health_check_backups(self, user):
 
 
 def admin_health_scryfall_sync(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     form = self.read_form()
     started = start_scryfall_bulk_sync()
@@ -122,7 +122,7 @@ def admin_health_scryfall_sync(self, user):
 
 
 def admin_health_retention(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -162,7 +162,7 @@ def admin_health_retention(self, user):
 
 
 def admin_jobs_page(self, user, notice=None, status="info"):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     return self.html(render_admin_jobs(user, notice=notice, status=status))
 
@@ -176,13 +176,13 @@ def admin_jobs_retry_response(self, user, form, notice, status="info", http_stat
 
 
 def admin_disputes_page(self, user, query):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MODERATE_DISPUTES):
         return self.not_found(user)
     return self.html(render_admin_trade_disputes(user, query))
 
 
 def admin_dispute_update(self, user, path):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MODERATE_DISPUTES):
         return self.not_found(user)
     parts = path.strip("/").split("/")
     try:
@@ -207,7 +207,7 @@ def admin_dispute_update(self, user, path):
 
 
 def admin_trust_settings(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -229,7 +229,7 @@ def admin_trust_settings(self, user):
 
 
 def admin_trade_fairness_settings(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -256,7 +256,7 @@ def admin_trade_fairness_settings(self, user):
 
 
 def admin_trade_policy_settings(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -293,7 +293,7 @@ def admin_trade_policy_settings(self, user):
 
 
 def admin_integration_policy_settings(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -322,7 +322,7 @@ def admin_integration_policy_settings(self, user):
 
 
 def admin_registration_settings(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
         return self.not_found(user)
     form = self.read_form()
     enabled = form.get("invite_only_registration", [""])[0] == "1"
@@ -343,7 +343,7 @@ def admin_registration_settings(self, user):
 
 
 def admin_invite_create(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_INVITES):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -360,7 +360,7 @@ def admin_invite_create(self, user):
 
 
 def admin_invite_revoke(self, user, path):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_INVITES):
         return self.not_found(user)
     parts = path.strip("/").split("/")
     try:
@@ -376,7 +376,7 @@ def admin_invite_revoke(self, user, path):
 
 
 def admin_backup_create(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_BACKUPS):
         return self.not_found(user)
     try:
         archive_path = create_backup_archive(user["id"])
@@ -396,7 +396,7 @@ def admin_backup_create(self, user):
 
 
 def admin_backup_settings(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_BACKUPS):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -428,7 +428,7 @@ def admin_backup_settings(self, user):
 
 
 def admin_backup_run(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_BACKUPS):
         return self.not_found(user)
     result = run_automatic_backup_once(force=True)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
@@ -452,7 +452,7 @@ def admin_backup_run(self, user):
 
 
 def admin_backup_restore(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_BACKUPS):
         return self.not_found(user)
     fields, files = self.read_multipart_form()
     confirmation = fields.get("confirmation", [""])[0].strip()
@@ -471,7 +471,7 @@ def admin_backup_restore(self, user):
 
 
 def admin_job_retry_scryfall(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -493,7 +493,7 @@ def admin_job_retry_scryfall(self, user):
 
 
 def admin_job_retry_price(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -515,7 +515,7 @@ def admin_job_retry_price(self, user):
 
 
 def admin_job_retry_scryfall_prices(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     result = retry_scryfall_price_refresh_async()
     log_admin_action(
@@ -533,7 +533,7 @@ def admin_job_retry_scryfall_prices(self, user):
 
 
 def admin_job_retry_notification(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     form = self.read_form()
     try:
@@ -556,7 +556,7 @@ def admin_job_retry_notification(self, user):
 
 
 def admin_job_undo_import(self, user, path):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     parts = path.strip("/").split("/")
     try:
@@ -583,7 +583,7 @@ def admin_job_undo_import(self, user, path):
 
 
 def admin_user_action(self, user, path):
-    if not require_admin(user):
+    if not require_capability(user, CAP_ACCESS_ADMIN):
         return self.not_found(user)
     parts = path.strip("/").split("/")
     if len(parts) != 4:
@@ -596,6 +596,8 @@ def admin_user_action(self, user, path):
     form = self.read_form()
     try:
         if action == "ban":
+            if not require_capability(user, CAP_MODERATE_USERS):
+                return self.not_found(user)
             requested = form.get("action", ["ban"])[0]
             if requested == "unban":
                 admin_set_user_ban(user["id"], target_user_id, False)
@@ -604,6 +606,8 @@ def admin_user_action(self, user, path):
                 admin_set_user_ban(user["id"], target_user_id, True, form.get("reason", [""])[0])
                 notice = "User banned and active sessions cleared."
         elif action == "password":
+            if not require_capability(user, CAP_MANAGE_USERS):
+                return self.not_found(user)
             admin_reset_user_password(
                 user["id"],
                 target_user_id,
@@ -612,22 +616,27 @@ def admin_user_action(self, user, path):
             )
             notice = "Password reset and active sessions cleared."
         elif action == "2fa":
+            if not require_capability(user, CAP_MANAGE_USERS):
+                return self.not_found(user)
             admin_reset_user_two_factor(user["id"], target_user_id)
             notice = "Two-factor authentication reset and active sessions cleared."
         elif action == "role":
-            requested = form.get("action", [""])[0]
-            if requested == "make_admin":
-                admin_set_user_role(user["id"], target_user_id, True)
-                notice = "Admin access granted."
-            elif requested == "remove_admin":
-                admin_set_user_role(user["id"], target_user_id, False)
-                notice = "Admin access removed."
-            else:
+            if not require_capability(user, CAP_MANAGE_ROLES):
                 return self.not_found(user)
+            requested = form.get("role", [""])[0]
+            if not requested:
+                legacy_action = form.get("action", [""])[0]
+                requested = ROLE_ADMIN if legacy_action == "make_admin" else ROLE_MEMBER if legacy_action == "remove_admin" else ""
+            admin_set_user_role(user["id"], target_user_id, requested)
+            notice = f"Role changed to {role_label(requested)}."
         elif action == "notes":
+            if not require_capability(user, CAP_MODERATE_USERS):
+                return self.not_found(user)
             admin_update_notes(target_user_id, form.get("admin_notes", [""])[0], user["id"])
             notice = "Admin notes saved."
         elif action == "trust":
+            if not require_capability(user, CAP_MODERATE_USERS):
+                return self.not_found(user)
             requested = form.get("action", [""])[0]
             admin_set_user_trust(target_user_id, requested, user["id"])
             if requested == "trust":

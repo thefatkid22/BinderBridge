@@ -127,7 +127,7 @@ def user_can_use_api(user):
 
 
 def user_can_use_webhooks(user):
-    return user_matches_integration_policy(user, webhook_access_policy())
+    return user_can_write_content(user) and user_matches_integration_policy(user, webhook_access_policy())
 
 
 def integration_access_error(feature):
@@ -160,6 +160,8 @@ def create_api_token(user_id, name, scopes=None, expires_at=""):
         raise ValueError(integration_access_error("API"))
     clean_name = sanitize_text_input(name, max_length=80).strip() or "API token"
     clean_scopes = normalize_api_token_scopes(scopes or ["read"])
+    if not user_can_write_content(user):
+        clean_scopes = ["read"]
     expires_at = sanitize_text_input(expires_at, max_length=40).strip()
     token = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
     timestamp = now_iso()
@@ -217,7 +219,7 @@ def get_user_by_api_token(token):
         return None, None
     found = row(
         """
-        SELECT api_tokens.*, users.username, users.display_name, users.email, users.is_admin, users.is_banned
+        SELECT api_tokens.*, users.username, users.display_name, users.email, users.role, users.is_admin, users.is_banned
         FROM api_tokens
         JOIN users ON users.id = api_tokens.user_id
         WHERE api_tokens.token_hash = ?
@@ -548,6 +550,7 @@ def start_webhook_delivery_worker():
 def render_api_access_panel(user):
     api_allowed = user_can_use_api(user)
     webhook_allowed = user_can_use_webhooks(user)
+    write_scope_disabled = " disabled" if not user_can_write_content(user) else ""
     if not api_allowed and not webhook_allowed:
         return ""
     api_section = ""
@@ -571,7 +574,7 @@ def render_api_access_panel(user):
                             Read
                         </label>
                         <label class="checkbox-line preference-option">
-                            <input type="checkbox" name="scope" value="write">
+                            <input type="checkbox" name="scope" value="write"{write_scope_disabled}>
                             Write
                         </label>
                     </div>
@@ -1241,6 +1244,8 @@ def api_dispatch(self, method, path, query):
     user, token_row, error = self.api_authenticate(required_scope)
     if error:
         return None
+    if required_scope == "write" and not user_can_write_content(user):
+        return self.api_error("This account is read-only.", HTTPStatus.FORBIDDEN)
     if required_scope == "write" and not rate_limit_allowed("api_write", f"user:{user['id']}"):
         return self.api_error("Too many API write requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
     try:
@@ -1251,6 +1256,7 @@ def api_dispatch(self, method, path, query):
                     "username": user["username"],
                     "display_name": user["display_name"],
                     "email": user["email"],
+                    "role": user_role(user),
                     "is_admin": bool(user["is_admin"]),
                 }
             })

@@ -1137,7 +1137,7 @@ def run_backup_integrity_check(limit=None):
 
 
 def notify_admins_backup_failure(message):
-    admins = rows("SELECT id FROM users WHERE is_admin = 1 AND is_banned = 0")
+    admins = rows("SELECT id FROM users WHERE role IN ('owner', 'admin') AND is_banned = 0")
     for admin in admins:
         create_notification(
             admin["id"],

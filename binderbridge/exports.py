@@ -85,6 +85,7 @@ ACCOUNT_EXPORT_USER_FIELDS = [
     "display_name",
     "bio",
     "public_email",
+    "role",
     "preferred_price_source",
     "price_alerts_enabled",
     "price_alert_threshold_percent",

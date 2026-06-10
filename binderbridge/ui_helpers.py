@@ -742,6 +742,10 @@ def admin_set_user_trust(target_user_id, action, admin_user_id=None):
     target = row("SELECT * FROM users WHERE id = ?", (target_user_id,))
     if not target:
         raise ValueError("User not found.")
+    if admin_user_id:
+        actor = row("SELECT * FROM users WHERE id = ?", (admin_user_id,))
+        if not user_can_manage_target(actor, target, CAP_MODERATE_USERS):
+            raise ValueError("Your role cannot manage that account.")
     if action == "trust":
         override = 1
         audit_action = "trust_granted"

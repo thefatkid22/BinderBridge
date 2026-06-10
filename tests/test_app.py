@@ -110,6 +110,7 @@ class BinderBridgeTest(unittest.TestCase):
         passkey_indexes = {item["name"] for item in app.rows("PRAGMA index_list(passkey_credentials)")}
         passkey_challenge_indexes = {item["name"] for item in app.rows("PRAGMA index_list(passkey_challenges)")}
         csv_preset_indexes = {item["name"] for item in app.rows("PRAGMA index_list(csv_import_mapping_presets)")}
+        user_indexes = {item["name"] for item in app.rows("PRAGMA index_list(users)")}
         dispute_columns = {item["name"] for item in app.rows("PRAGMA table_info(trade_disputes)")}
         evidence_indexes = {item["name"] for item in app.rows("PRAGMA index_list(trade_dispute_evidence)")}
         with app.db() as conn:
@@ -131,6 +132,7 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("idx_passkey_challenges_user", passkey_challenge_indexes)
         self.assertIn("idx_csv_import_mapping_presets_user", csv_preset_indexes)
         self.assertIn("idx_csv_import_mapping_presets_shared", csv_preset_indexes)
+        self.assertIn("idx_users_role_status", user_indexes)
         self.assertIn("resolution_note", dispute_columns)
         self.assertIn("idx_trade_dispute_evidence_dispute", evidence_indexes)
 
@@ -296,6 +298,90 @@ class BinderBridgeTest(unittest.TestCase):
 
         self.assertEqual(first["is_admin"], 1)
         self.assertEqual(second["is_admin"], 0)
+        self.assertEqual(first["role"], "owner")
+        self.assertEqual(second["role"], "member")
+
+    def test_role_hierarchy_and_capabilities(self):
+        owner = factory.user_row("role-owner", display_name="Role Owner")
+        admin = factory.user_row("role-admin", display_name="Role Admin", role="admin")
+        moderator = factory.user_row("role-mod", display_name="Role Moderator", role="moderator")
+        organizer = factory.user_row("role-organizer", display_name="Role Organizer", role="organizer")
+        member = factory.user_row("role-member", display_name="Role Member")
+        read_only = factory.user_row("role-reader", display_name="Role Reader", role="read_only")
+
+        self.assertTrue(app.user_has_capability(owner, app.CAP_MANAGE_ROLES))
+        self.assertTrue(app.user_has_capability(admin, app.CAP_MANAGE_SETTINGS))
+        self.assertTrue(app.user_has_capability(moderator, app.CAP_MODERATE_DISPUTES))
+        self.assertFalse(app.user_has_capability(moderator, app.CAP_MANAGE_BACKUPS))
+        self.assertTrue(app.user_has_capability(organizer, app.CAP_MANAGE_INVITES))
+        self.assertFalse(app.user_has_capability(organizer, app.CAP_MODERATE_USERS))
+        self.assertTrue(app.user_can_write_content(member))
+        self.assertFalse(app.user_can_write_content(read_only))
+        self.assertFalse(app.user_can_mutate_path(read_only, "/collection/new"))
+        self.assertTrue(app.user_can_mutate_path(read_only, "/account/password"))
+        self.assertTrue(app.user_can_assign_role(owner, admin, app.ROLE_MODERATOR))
+        self.assertFalse(app.user_can_assign_role(admin, owner, app.ROLE_MEMBER))
+
+    def test_staff_dashboards_match_moderator_and_organizer_roles(self):
+        factory.create_user("staff-owner", display_name="Staff Owner")
+        moderator = factory.user_row("staff-mod", display_name="Staff Moderator", role="moderator")
+        organizer = factory.user_row("staff-organizer", display_name="Staff Organizer", role="organizer")
+
+        moderator_html = app.render_admin(moderator)
+        organizer_html = app.render_admin(organizer)
+        moderator_layout = app.render_layout(moderator, "Test", "")
+
+        self.assertIn("Moderator control panel", moderator_html)
+        self.assertIn("Trade issue queue", moderator_html)
+        self.assertIn("Activity log", moderator_html)
+        self.assertNotIn("Create invite", moderator_html)
+        self.assertIn("Organizer control panel", organizer_html)
+        self.assertIn("Create invite", organizer_html)
+        self.assertNotIn("Trade issue queue", organizer_html)
+        self.assertIn('href="/admin"', moderator_layout)
+
+    def test_moderator_can_manage_members_but_not_higher_roles(self):
+        owner_id = factory.create_user("mod-owner", display_name="Mod Owner")
+        moderator_id = factory.create_user("mod-user", display_name="Mod User", role="moderator")
+        member_id = factory.create_user("mod-member", display_name="Mod Member")
+
+        app.admin_set_user_ban(moderator_id, member_id, True, "community rules")
+        self.assertEqual(app.row("SELECT is_banned FROM users WHERE id = ?", (member_id,))["is_banned"], 1)
+        with self.assertRaisesRegex(ValueError, "cannot manage"):
+            app.admin_set_user_ban(moderator_id, owner_id, True, "no")
+
+    def test_moderator_receives_and_can_resolve_trade_disputes(self):
+        factory.create_user("dispute-owner", display_name="Dispute Owner")
+        moderator_id = factory.create_user("dispute-mod", display_name="Dispute Moderator", role="moderator")
+        alice_id = factory.create_user("dispute-alice", display_name="Dispute Alice")
+        bob_id = factory.create_user("dispute-bob", display_name="Dispute Bob")
+        trade_id = factory.create_trade(alice_id, bob_id, status="completed")
+
+        dispute_id = app.create_trade_dispute(trade_id, alice_id, "condition", "Card condition differs.")
+        app.update_trade_dispute_admin(dispute_id, moderator_id, "resolved", "Reviewed by moderator.", resolution_note="Issue resolved locally.")
+
+        notification = app.row(
+            "SELECT * FROM user_notifications WHERE user_id = ? AND kind = 'trade_dispute'",
+            (moderator_id,),
+        )
+        dispute = app.row("SELECT * FROM trade_disputes WHERE id = ?", (dispute_id,))
+        self.assertIsNotNone(notification)
+        self.assertEqual(dispute["status"], "resolved")
+        self.assertEqual(dispute["resolved_by_user_id"], moderator_id)
+
+    def test_read_only_role_is_preserved_for_api_authentication(self):
+        factory.create_user("api-owner", display_name="API Owner")
+        reader_id = factory.create_user("api-reader", display_name="API Reader", role="read_only")
+        app.set_integration_access_settings("all", "all")
+        token_result = app.create_api_token(reader_id, "Read token", ["write"])
+        token = token_result["token"]
+
+        authenticated, _token_row = app.get_user_by_api_token(token)
+
+        self.assertEqual(app.user_role(authenticated), app.ROLE_READ_ONLY)
+        self.assertFalse(app.user_can_write_content(authenticated))
+        self.assertEqual(token_result["scopes"], ["read"])
+        self.assertFalse(app.user_can_use_webhooks(authenticated))
 
     def test_admin_panel_renders_user_controls_for_admin(self):
         admin_id = app.create_user("admin", "password123", "Admin")
@@ -328,7 +414,8 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn('name="webhook_access_policy"', html)
         self.assertIn("Reset password", html)
         self.assertIn("Ban", html)
-        self.assertIn("Make admin", html)
+        self.assertIn("Change role", html)
+        self.assertIn(">Moderator</option>", html)
         self.assertIn("Trust user", html)
         self.assertIn("Registration", html)
         self.assertIn("Invite links", html)
@@ -807,19 +894,19 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("Invite-only registration enabled.", filtered)
         self.assertNotIn("binderbridge-backup-test.zip", filtered)
 
-    def test_admin_role_requires_at_least_one_admin(self):
-        admin_id = app.create_user("admin", "password123", "Admin")
+    def test_owner_can_assign_roles_and_admin_cannot_manage_owner(self):
+        owner_id = app.create_user("admin", "password123", "Admin")
         target_id = app.create_user("target", "password123", "Target")
 
-        app.admin_set_user_role(admin_id, target_id, True)
-        app.admin_set_user_role(target_id, admin_id, False)
-        former_admin = app.row("SELECT * FROM users WHERE id = ?", (admin_id,))
+        app.admin_set_user_role(owner_id, target_id, "admin")
         target = app.row("SELECT * FROM users WHERE id = ?", (target_id,))
 
-        self.assertEqual(former_admin["is_admin"], 0)
+        self.assertEqual(target["role"], "admin")
         self.assertEqual(target["is_admin"], 1)
-        with self.assertRaisesRegex(ValueError, "At least one admin"):
-            app.admin_set_user_role(admin_id, target_id, False)
+        with self.assertRaisesRegex(ValueError, "cannot assign"):
+            app.admin_set_user_role(target_id, owner_id, "member")
+        with self.assertRaisesRegex(ValueError, "valid user role"):
+            app.admin_set_user_role(owner_id, target_id, "super-admin")
 
     def test_admin_trusted_trade_threshold_setting(self):
         self.assertEqual(app.trusted_trade_threshold(), 5)

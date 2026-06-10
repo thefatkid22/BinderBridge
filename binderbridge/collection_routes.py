@@ -208,14 +208,14 @@ def import_undo(self, user, path):
     return self.html(render_import(user, notice=notice))
 
 def import_scryfall_sync(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     started = start_scryfall_bulk_sync()
     notice = "Local Scryfall data sync started. Imports will use it as soon as it finishes." if started else "Local Scryfall data sync is already running."
     return self.html(render_import(user, notice=notice))
 
 def prices_refresh(self, user):
-    if not require_admin(user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
     result = refresh_all_scryfall_prices(sync_bulk=False, notify_users=True)
     notice = (

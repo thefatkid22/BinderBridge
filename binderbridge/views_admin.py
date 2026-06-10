@@ -3,7 +3,76 @@
 This module is wired by binderbridge.views; shared app helpers are injected at runtime.
 """
 
+def render_staff_admin(user, notice=None, status="info", invite_result=None):
+    can_moderate = user_has_capability(user, CAP_MODERATE_USERS)
+    can_disputes = user_has_capability(user, CAP_MODERATE_DISPUTES)
+    can_logs = user_has_capability(user, CAP_VIEW_AUDIT_LOG)
+    can_invites = user_has_capability(user, CAP_MANAGE_INVITES)
+    action_links = "".join(
+        link
+        for enabled, link in (
+            (can_disputes, '<a class="button secondary" href="/admin/disputes">Trade issue queue</a>'),
+            (can_logs, '<a class="button secondary" href="/admin/logs">Activity log</a>'),
+        )
+        if enabled
+    )
+    invite_panel = ""
+    if can_invites:
+        invite_rows = "".join(render_registration_invite_row(invite) for invite in registration_invite_rows())
+        invite_rows = invite_rows or '<li class="muted">No invites yet.</li>'
+        result_panel = ""
+        if invite_result:
+            result_panel = f"""
+            <div class="invite-result span-2">
+                <strong>Invite link</strong>
+                <input readonly value="{e(invite_result["link"])}" onclick="this.select()">
+            </div>
+            """
+        invite_panel = f"""
+        <article class="panel invite-settings">
+            <form class="form-grid compact-form" method="post" action="/admin/invites">
+                <div class="span-2 panel-heading"><h2>Create invite</h2><span class="pill">{e(role_label(user))}</span></div>
+                <label class="span-2">Recipient email
+                    <input required name="email" type="email" maxlength="254" autocomplete="email">
+                </label>
+                <div class="form-actions span-2"><button class="button primary" type="submit">Create invite</button></div>
+                {result_panel}
+            </form>
+            <div class="panel-heading with-gap"><h2>Recent invites</h2></div>
+            <ul class="stack-list compact-stack">{invite_rows}</ul>
+        </article>
+        """
+    user_panel = ""
+    if can_moderate:
+        user_rows = "".join(render_admin_user_row(user, managed_user) for managed_user in admin_user_list())
+        user_panel = f"""
+        <section class="panel flush">
+            <div class="table-wrap">
+                <table class="admin-table responsive-card-table">
+                    <thead><tr><th>User</th><th>Status</th><th>Activity</th><th>Controls</th></tr></thead>
+                    <tbody>{user_rows}</tbody>
+                </table>
+            </div>
+        </section>
+        """
+    content = f"""
+    <section class="section-heading">
+        <div>
+            <p class="eyebrow">Staff</p>
+            <h1>{e(role_label(user))} control panel</h1>
+            <p class="muted">Your tools are limited to the responsibilities assigned to this role.</p>
+        </div>
+        <div class="actions">{action_links}</div>
+    </section>
+    {invite_panel}
+    {user_panel}
+    """
+    return render_layout(user, "Staff", content, active="admin", notice=notice, status=status)
+
+
 def render_admin(user, notice=None, status="info", invite_result=None):
+    if user_role(user) not in (ROLE_OWNER, ROLE_ADMIN):
+        return render_staff_admin(user, notice=notice, status=status, invite_result=invite_result)
     users = admin_user_list()
     user_rows = "".join(render_admin_user_row(user, managed_user) for managed_user in users)
     trade_policy = trade_policy_settings()
@@ -1440,7 +1509,9 @@ def render_registration_invite_row(invite):
 
 def render_admin_user_row(admin_user, managed_user):
     status_parts = []
-    status_parts.append('<span class="status accepted">Admin</span>' if managed_user["is_admin"] else '<span class="pill">User</span>')
+    managed_role = user_role(managed_user)
+    role_class = "accepted" if managed_role in (ROLE_OWNER, ROLE_ADMIN) else "pending" if managed_role in (ROLE_MODERATOR, ROLE_ORGANIZER) else ""
+    status_parts.append(f'<span class="status {role_class}">{e(role_label(managed_role))}</span>')
     if managed_user["is_banned"]:
         status_parts.append('<span class="status declined">Banned</span>')
     else:
@@ -1454,8 +1525,6 @@ def render_admin_user_row(admin_user, managed_user):
     status_parts.append(f'<span class="status {trust_class}">{e(trust_label)}</span>')
     ban_action = "unban" if managed_user["is_banned"] else "ban"
     ban_label = "Unban" if managed_user["is_banned"] else "Ban"
-    role_action = "remove_admin" if managed_user["is_admin"] else "make_admin"
-    role_label = "Remove admin" if managed_user["is_admin"] else "Make admin"
     trust_override = int(managed_user["trusted_override"] or 0)
     if trust_override == 1:
         primary_trust_action, primary_trust_label = "revoke", "Revoke trust"
@@ -1469,6 +1538,56 @@ def render_admin_user_row(admin_user, managed_user):
     disable_self = managed_user["id"] == admin_user["id"]
     self_note = '<span class="muted compact">This is you.</span>' if disable_self else ""
     ban_reason = managed_user["ban_reason"] if managed_user["ban_reason"] else ""
+    can_moderate = user_can_manage_target(admin_user, managed_user, CAP_MODERATE_USERS)
+    can_manage_user = user_can_manage_target(admin_user, managed_user, CAP_MANAGE_USERS)
+    role_options = assignable_roles_for_user(admin_user)
+    can_change_role = bool(role_options) and (
+        user_role(admin_user) == ROLE_OWNER or user_can_manage_target(admin_user, managed_user, CAP_MANAGE_ROLES)
+    ) and not disable_self
+    role_form = ""
+    if can_change_role:
+        options = "".join(
+            f'<option value="{e(role)}"{selected(managed_role, role)}>{e(label)}</option>'
+            for role, label in role_options
+        )
+        role_form = f"""
+        <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/role">
+            <label>Role<select name="role">{options}</select></label>
+            <button class="button secondary small" type="submit">Change role</button>
+        </form>
+        """
+    moderation_controls = ""
+    if can_moderate:
+        moderation_controls = f"""
+        <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/ban">
+            <input type="hidden" name="action" value="{ban_action}">
+            <input name="reason" placeholder="Ban reason" value="{e(ban_reason)}" {'disabled' if managed_user["is_banned"] else ""}>
+            <button class="button {'secondary' if managed_user["is_banned"] else 'danger'} small" type="submit">{ban_label}</button>
+        </form>
+        <form class="inline-admin-form trust-form" method="post" action="/admin/user/{managed_user["id"]}/trust">
+            <button class="button secondary small" name="action" value="{primary_trust_action}" type="submit">{primary_trust_label}</button>
+            <button class="button ghost small" name="action" value="{secondary_trust_action}" type="submit">{secondary_trust_label}</button>
+        </form>
+        <form class="inline-admin-form notes-form" method="post" action="/admin/user/{managed_user["id"]}/notes">
+            <textarea name="admin_notes" rows="2" placeholder="Staff notes">{e(managed_user["admin_notes"])}</textarea>
+            <button class="button secondary small" type="submit">Save notes</button>
+        </form>
+        """
+    security_controls = ""
+    if can_manage_user:
+        security_controls = f"""
+        <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/password">
+            <input name="new_password" type="password" minlength="8" placeholder="New password">
+            <input name="confirm_password" type="password" minlength="8" placeholder="Confirm">
+            <button class="button secondary small" type="submit">Reset password</button>
+        </form>
+        <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/2fa">
+            <button class="button secondary small" type="submit" onclick="return confirm('Reset two-factor authentication for this user? They will need to set it up again.')">Reset 2FA</button>
+        </form>
+        """
+    controls = moderation_controls + security_controls + role_form
+    if not controls:
+        controls = '<span class="muted compact">No actions available for this role.</span>'
     return f"""
     <tr>
         <td>
@@ -1491,35 +1610,11 @@ def render_admin_user_row(admin_user, managed_user):
         </td>
         <td>
             <div class="admin-controls">
-                <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/ban">
-                    <input type="hidden" name="action" value="{ban_action}">
-                    <input name="reason" placeholder="Ban reason" value="{e(ban_reason)}" {'disabled' if managed_user["is_banned"] else ""}>
-                    <button class="button {'secondary' if managed_user["is_banned"] else 'danger'} small" type="submit" {'disabled' if disable_self else ""}>{ban_label}</button>
-                </form>
-                <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/password">
-                    <input name="new_password" type="password" minlength="8" placeholder="New password">
-                    <input name="confirm_password" type="password" minlength="8" placeholder="Confirm">
-                    <button class="button secondary small" type="submit" {'disabled' if disable_self else ""}>Reset password</button>
-                </form>
-                <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/2fa">
-                    <button class="button secondary small" type="submit" {'disabled' if disable_self else ""} onclick="return confirm('Reset two-factor authentication for this user? They will need to set it up again.')">Reset 2FA</button>
-                </form>
-                <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/role">
-                    <input type="hidden" name="action" value="{role_action}">
-                    <button class="button secondary small" type="submit" {'disabled' if disable_self and managed_user["is_admin"] else ""}>{role_label}</button>
-                </form>
-                <form class="inline-admin-form trust-form" method="post" action="/admin/user/{managed_user["id"]}/trust">
-                    <button class="button secondary small" name="action" value="{primary_trust_action}" type="submit">{primary_trust_label}</button>
-                    <button class="button ghost small" name="action" value="{secondary_trust_action}" type="submit">{secondary_trust_label}</button>
-                </form>
-                <form class="inline-admin-form notes-form" method="post" action="/admin/user/{managed_user["id"]}/notes">
-                    <textarea name="admin_notes" rows="2" placeholder="Admin notes">{e(managed_user["admin_notes"])}</textarea>
-                    <button class="button secondary small" type="submit">Save notes</button>
-                </form>
+                {controls}
             </div>
         </td>
     </tr>
     """
 
 
-__all__ = ['render_admin', 'render_admin_onboarding_action', 'render_admin_onboarding_item', 'render_admin_onboarding_checklist', 'health_time_label', 'health_status_class', 'render_health_status_counts', 'render_failed_notification_row', 'render_admin_health', 'admin_job_user_label', 'admin_job_time_label', 'admin_job_status_label', 'admin_job_retry_form', 'admin_job_import_target', 'admin_job_import_row', 'admin_job_scryfall_row', 'admin_job_price_row', 'admin_job_notification_row', 'render_admin_jobs', 'admin_audit_log_display_user', 'admin_audit_log_target_label', 'admin_audit_log_time_label', 'render_admin_audit_log_item', 'render_admin_audit_log_table_row', 'trade_dispute_user_label', 'trade_dispute_evidence_admin_preview', 'render_trade_dispute_summary_item', 'render_trade_dispute_admin_row', 'render_admin_trade_disputes', 'render_admin_logs', 'render_registration_invite_row', 'render_admin_user_row']
+__all__ = ['render_staff_admin', 'render_admin', 'render_admin_onboarding_action', 'render_admin_onboarding_item', 'render_admin_onboarding_checklist', 'health_time_label', 'health_status_class', 'render_health_status_counts', 'render_failed_notification_row', 'render_admin_health', 'admin_job_user_label', 'admin_job_time_label', 'admin_job_status_label', 'admin_job_retry_form', 'admin_job_import_target', 'admin_job_import_row', 'admin_job_scryfall_row', 'admin_job_price_row', 'admin_job_notification_row', 'render_admin_jobs', 'admin_audit_log_display_user', 'admin_audit_log_target_label', 'admin_audit_log_time_label', 'render_admin_audit_log_item', 'render_admin_audit_log_table_row', 'trade_dispute_user_label', 'trade_dispute_evidence_admin_preview', 'render_trade_dispute_summary_item', 'render_trade_dispute_admin_row', 'render_admin_trade_disputes', 'render_admin_logs', 'render_registration_invite_row', 'render_admin_user_row']

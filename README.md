@@ -11,7 +11,8 @@ BinderBridge is a self-hostable trading card collection app for small communitie
 - Basic in-memory rate limiting for sign-in, registration, API auth/write actions, Scryfall lookups, and integration management
 - Dark interface enabled by default with a persistent light-mode toggle
 - Account control panel for username, email, profile, and password changes
-- Admin panel for user bans, password resets, admin roles, trusted status, and moderation notes
+- Owner, admin, moderator, organizer, member, and read-only roles with protected hierarchy and capability-based staff tools
+- Staff control panels for user moderation, disputes, invites, role management, trusted status, and security resets
 - Admin activity logs for moderation, invite, registration, fairness, and backup actions
 - Integration audit logs for API token, webhook, failed API-auth, and API write activity
 - Admin-managed registration invites with optional invite-only registration mode and manual-link fallback
@@ -371,7 +372,6 @@ Product features:
 
 Admin and moderation:
 
-- Additional admin roles such as moderator, invite manager, backup manager, integration manager, and trade dispute reviewer
 - Collection health dashboard v2 for duplicates, missing Scryfall data, invalid finishes, stale prices, and public/private coverage
 
 Imports and integrations:

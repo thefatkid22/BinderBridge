@@ -106,6 +106,8 @@ class _AppModule(types.ModuleType):
                 target.__dict__[name] = value
 
 
+from binderbridge import roles as _roles
+_install_feature_module(_roles)
 from binderbridge import ui_helpers as _ui_helpers
 _install_feature_module(_ui_helpers)
 from binderbridge import accounts as _accounts
@@ -1954,6 +1956,15 @@ class App(BaseHTTPRequestHandler):
                 return self.logout()
             if not user:
                 return self.redirect("/login")
+            if method in ("POST", "PUT", "PATCH", "DELETE") and not user_can_mutate_path(user, path):
+                content = """
+                <section class="panel centered-state">
+                    <h1>Read-only account</h1>
+                    <p class="muted">Your account can browse BinderBridge, but it cannot change collections, wishlists, groups, trades, or integrations.</p>
+                    <a class="button primary" href="/browse">Browse cards</a>
+                </section>
+                """
+                return self.html(render_layout(user, "Read-only account", content), HTTPStatus.FORBIDDEN)
             if self._csrf_required:
                 self.parse_request_body()
             if path == "/":

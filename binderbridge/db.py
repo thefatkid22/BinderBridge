@@ -80,6 +80,7 @@ def init_db():
                 display_name TEXT NOT NULL,
                 bio TEXT NOT NULL DEFAULT '',
                 public_email INTEGER NOT NULL DEFAULT 0,
+                role TEXT NOT NULL DEFAULT 'member',
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 is_banned INTEGER NOT NULL DEFAULT 0,
                 trusted_override INTEGER NOT NULL DEFAULT 0,
@@ -697,6 +698,7 @@ def migrate_db(conn):
     user_missing_columns = {
         "email": "TEXT NOT NULL DEFAULT ''",
         "public_email": "INTEGER NOT NULL DEFAULT 0",
+        "role": "TEXT NOT NULL DEFAULT 'member'",
         "is_admin": "INTEGER NOT NULL DEFAULT 0",
         "is_banned": "INTEGER NOT NULL DEFAULT 0",
         "trusted_override": "INTEGER NOT NULL DEFAULT 0",
@@ -744,6 +746,9 @@ def migrate_db(conn):
     if user_count and not admin_count:
         first_user = conn.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()
         conn.execute("UPDATE users SET is_admin = 1, updated_at = ? WHERE id = ?", (now_iso(), first_user["id"]))
+    conn.execute("UPDATE users SET role = 'owner' WHERE is_admin = 1 AND role IN ('', 'member')")
+    conn.execute("UPDATE users SET role = 'member' WHERE role NOT IN ('owner', 'admin', 'moderator', 'organizer', 'member', 'read_only')")
+    conn.execute("UPDATE users SET is_admin = CASE WHEN role IN ('owner', 'admin') THEN 1 ELSE 0 END")
     timestamp = now_iso()
     conn.execute("UPDATE users SET preferred_price_source = 'scryfall', updated_at = ? WHERE preferred_price_source != 'scryfall'", (timestamp,))
 

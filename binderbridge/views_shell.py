@@ -58,8 +58,9 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             ("trades", "/trades", trades_label),
             ("account", "/account", "Account"),
         ]
-        if user["is_admin"]:
-            nav_items.append(("admin", "/admin", "Admin"))
+        if user_has_capability(user, CAP_ACCESS_ADMIN):
+            staff_label = "Admin" if user_role(user) in (ROLE_OWNER, ROLE_ADMIN) else "Staff"
+            nav_items.append(("admin", "/admin", staff_label))
         nav = "".join(
             f'<a class="nav-link {"active" if active == key else ""}" href="{href}">{label}</a>'
             for key, href, label in nav_items
@@ -72,6 +73,7 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             </button>
             <div class="user-chip">
                 <a href="/account">{e(user["display_name"])}</a>
+                <span class="pill">{e(role_label(user))}</span>
                 <form method="post" action="/logout"><button class="button ghost small" type="submit">Sign out</button></form>
             </div>
         """
@@ -683,13 +685,21 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
             </label>
             <p class="muted compact span-2">In-app alerts appear immediately. Quiet hours and digests only change email delivery, and unread notifications remain queued until their scheduled delivery window.</p>
         """
+    role_notice = (
+        '<div class="notice warning">This is a read-only account. You can browse the site and manage account security, but cannot change cards, wishlists, groups, trades, or integrations.</div>'
+        if user_role(user) == ROLE_READ_ONLY
+        else ""
+    )
+    integration_panel = "" if user_role(user) == ROLE_READ_ONLY else render_api_access_panel(user)
     content = f"""
     <section class="section-heading">
         <div>
             <p class="eyebrow">Account</p>
             <h1>Control panel</h1>
+            <p class="muted compact">Role: <strong>{e(role_label(user))}</strong></p>
         </div>
     </section>
+    {role_notice}
     <section class="content-grid account-grid">
         <form class="panel form-grid compact-form" method="post" action="/account/profile">
             <div class="span-2 panel-heading">
@@ -790,7 +800,7 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
 
         {render_passkey_account_panel(user)}
 
-        {render_api_access_panel(user)}
+        {integration_panel}
 
         <article class="panel export-panel">
             <div class="panel-heading">

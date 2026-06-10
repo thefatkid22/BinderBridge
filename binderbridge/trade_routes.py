@@ -259,7 +259,7 @@ def trade_action(self, method, user, path):
     return self.not_found(user)
 
 def trade_dispute_evidence_download(self, user, trade_id, dispute_id, evidence_id):
-    evidence = trade_dispute_evidence_for_user(evidence_id, user["id"], bool(row_value(user, "is_admin", 0)))
+    evidence = trade_dispute_evidence_for_user(evidence_id, user["id"], user_has_capability(user, CAP_MODERATE_DISPUTES))
     if not evidence or int(evidence["trade_id"]) != int(trade_id) or int(evidence["dispute_id"]) != int(dispute_id):
         return self.not_found(user)
     return self.binary(evidence["content"], evidence["content_type"], evidence["original_filename"])

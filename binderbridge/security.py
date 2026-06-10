@@ -1046,7 +1046,7 @@ def get_user_by_username(username):
     with db() as conn:
         return conn.execute("SELECT * FROM users WHERE username = ?", (sanitize_text_input(username, max_length=40).strip(),)).fetchone()
 
-def create_user(username, password, display_name, is_admin=None, email=""):
+def create_user(username, password, display_name, is_admin=None, email="", role=None):
     username = validate_username(username)
     display_name = sanitize_text_input(display_name, max_length=80).strip() or username
     email = validate_email(email)
@@ -1054,12 +1054,16 @@ def create_user(username, password, display_name, is_admin=None, email=""):
     with db() as conn:
         if is_admin is None:
             is_admin = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"] == 0
+        if role is None:
+            role = ROLE_OWNER if is_admin else ROLE_MEMBER
+        role = normalize_user_role(role, is_admin=is_admin)
+        is_admin = bool(role_sync_is_admin(role))
         cursor = conn.execute(
             """
-            INSERT INTO users (username, password_hash, email, display_name, is_admin, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (username, password_hash, email, display_name, role, is_admin, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (username, hash_password(password), email, display_name, 1 if is_admin else 0, created_at, created_at),
+            (username, hash_password(password), email, display_name, role, 1 if is_admin else 0, created_at, created_at),
         )
         return cursor.lastrowid
 

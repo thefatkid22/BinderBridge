@@ -590,7 +590,7 @@ def insert_trade_dispute_evidence_conn(conn, dispute_id, uploader_id, upload, no
 def add_trade_dispute_evidence(dispute_id, uploader_id, upload, note="", trade_id=None):
     with db() as conn:
         uploader = conn.execute(
-            "SELECT id, is_admin, is_banned FROM users WHERE id = ?",
+            "SELECT id, role, is_admin, is_banned FROM users WHERE id = ?",
             (uploader_id,),
         ).fetchone()
         if not uploader or uploader["is_banned"]:
@@ -611,13 +611,13 @@ def add_trade_dispute_evidence(dispute_id, uploader_id, upload, note="", trade_i
             """,
             (dispute_id,),
         ).fetchone()
-        if not dispute or (trade_id is not None and int(dispute["trade_id"]) != int(trade_id)) or (not uploader["is_admin"] and uploader_id not in (dispute["proposer_id"], dispute["recipient_id"])):
+        if not dispute or (trade_id is not None and int(dispute["trade_id"]) != int(trade_id)) or (not user_has_capability(uploader, CAP_MODERATE_DISPUTES) and uploader_id not in (dispute["proposer_id"], dispute["recipient_id"])):
             raise ValueError("Trade issue not found.")
         evidence_id = insert_trade_dispute_evidence_conn(conn, dispute_id, uploader_id, upload, note)
         if not evidence_id:
             raise ValueError("Choose an evidence file before uploading.")
         actor = trade_actor_name(dispute, uploader_id)
-        for admin in conn.execute("SELECT id FROM users WHERE is_admin = 1 AND is_banned = 0").fetchall():
+        for admin in conn.execute("SELECT id FROM users WHERE role IN ('owner', 'admin', 'moderator') AND is_banned = 0").fetchall():
             create_notification(
                 admin["id"],
                 "trade_dispute",
@@ -662,7 +662,7 @@ def create_trade_dispute(trade_id, reporter_id, category, body, evidence_upload=
         reporter_name = trade_actor_name(trade, reporter_id)
         snippet = body.replace("\r", " ").replace("\n", " ")[:180]
         evidence_line = " Evidence attached." if evidence_id else ""
-        for admin in conn.execute("SELECT id FROM users WHERE is_admin = 1 AND is_banned = 0").fetchall():
+        for admin in conn.execute("SELECT id FROM users WHERE role IN ('owner', 'admin', 'moderator') AND is_banned = 0").fetchall():
             create_notification(
                 admin["id"],
                 "trade_dispute",
@@ -733,9 +733,9 @@ def update_trade_dispute_admin(dispute_id, admin_user_id, status_value, admin_no
     resolution_note = sanitize_text_input(resolution_note, max_length=2000).strip()
     timestamp = now_iso()
     with db() as conn:
-        admin = conn.execute("SELECT * FROM users WHERE id = ? AND is_admin = 1 AND is_banned = 0", (admin_user_id,)).fetchone()
-        if not admin:
-            raise ValueError("Admin access is required.")
+        admin = conn.execute("SELECT * FROM users WHERE id = ? AND is_banned = 0", (admin_user_id,)).fetchone()
+        if not user_has_capability(admin, CAP_MODERATE_DISPUTES):
+            raise ValueError("Moderator access is required.")
         dispute = conn.execute(
             """
             SELECT

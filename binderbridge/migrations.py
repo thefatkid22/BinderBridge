@@ -1,7 +1,7 @@
 """Versioned SQLite schema migrations for BinderBridge."""
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def db_schema_version(conn):
@@ -151,10 +151,26 @@ def migrate_csv_import_mapping_presets(conn):
     )
 
 
+def migrate_user_roles(conn):
+    user_columns = {column["name"] for column in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "role" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'")
+    conn.execute("UPDATE users SET role = 'owner' WHERE is_admin = 1 AND role IN ('', 'member')")
+    conn.execute("UPDATE users SET role = 'member' WHERE role NOT IN ('owner', 'admin', 'moderator', 'organizer', 'member', 'read_only')")
+    conn.execute("UPDATE users SET is_admin = CASE WHEN role IN ('owner', 'admin') THEN 1 ELSE 0 END")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_users_role_status
+        ON users(role, is_banned, display_name COLLATE NOCASE)
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
     (3, "csv import mapping presets", migrate_csv_import_mapping_presets),
+    (4, "user roles and hierarchy", migrate_user_roles),
 )
 
 
@@ -176,6 +192,7 @@ __all__ = [
     "migrate_hot_path_indexes",
     "migrate_dispute_moderation",
     "migrate_csv_import_mapping_presets",
+    "migrate_user_roles",
     "SCHEMA_MIGRATIONS",
     "run_schema_migrations",
 ]
