@@ -1352,6 +1352,75 @@ td strong {
     overflow-wrap: anywhere;
 }
 
+.photo-preview-trigger {
+    display: inline-flex;
+    align-items: center;
+    min-height: 26px;
+    border: 1px solid var(--primary);
+    border-radius: 999px;
+    background: var(--pill-bg);
+    padding: 0.18rem 0.55rem;
+    color: var(--primary-dark);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 850;
+}
+
+.photo-preview-trigger:hover,
+.photo-preview-trigger:focus-visible {
+    background: var(--primary);
+    color: var(--primary-contrast);
+}
+
+.condition-photo-dialog {
+    width: min(860px, calc(100vw - 2rem));
+    max-height: min(86vh, 820px);
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 1rem;
+    color: var(--ink);
+    box-shadow: var(--shadow);
+}
+
+.condition-photo-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.72);
+}
+
+.condition-photo-dialog-header {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.condition-photo-dialog-header h2 {
+    margin: 0.15rem 0 0.35rem;
+    font-size: 1.35rem;
+}
+
+.condition-photo-dialog-header form {
+    margin: 0;
+}
+
+.condition-photo-dialog > .condition-detail {
+    margin: 0 0 1rem;
+    border-left: 3px solid var(--primary);
+    padding-left: 0.75rem;
+}
+
+.condition-photo-dialog .card-photo-gallery {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.condition-photo-dialog .card-photo img {
+    max-height: 460px;
+    object-fit: contain;
+}
+
 .card-photo-gallery {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -3939,6 +4008,25 @@ td strong {
     .table-actions {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .condition-photo-dialog {
+        width: calc(100vw - 1rem);
+        max-height: calc(100vh - 1rem);
+        padding: 0.8rem;
+    }
+
+    .condition-photo-dialog-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .condition-photo-dialog-close {
+        width: 100%;
+    }
+
+    .condition-photo-dialog .card-photo-gallery {
+        grid-template-columns: 1fr;
     }
 
     .inline-trade-form .mini-input,

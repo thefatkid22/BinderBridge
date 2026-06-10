@@ -1169,6 +1169,21 @@ def render_browse(user, query, notice=None, status="info"):
     {active_filter_chips}
     <section class="panel flush">{table}</section>
     {pagination}
+    <script>
+        (function () {{
+            document.querySelectorAll("[data-photo-dialog]").forEach(function (button) {{
+                button.addEventListener("click", function () {{
+                    var dialog = document.getElementById(button.dataset.photoDialog);
+                    if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+                }});
+            }});
+            document.querySelectorAll(".condition-photo-dialog").forEach(function (dialog) {{
+                dialog.addEventListener("click", function (event) {{
+                    if (event.target === dialog) dialog.close();
+                }});
+            }});
+        }})();
+    </script>
     """
     return render_layout(user, "Browse", content, active="browse", notice=notice, status=status)
 
@@ -1178,6 +1193,7 @@ def render_browse_row(item):
     type_line = f'<span class="subtle">{e(item["type_line"])}</span>' if item["type_line"] else f'<span class="subtle">{e(item["collector_number"])}</span>'
     price = price_pill(item)
     scryfall_link = f'<a class="subtle" href="{e(item["scryfall_uri"])}" target="_blank" rel="noreferrer">Scryfall</a>' if item["scryfall_uri"] else ""
+    photo_preview = render_browse_photo_preview(item)
     trade_form = f"""
     <form class="inline-trade-form" method="get" action="/trades/new">
         <input type="hidden" name="recipient_id" value="{e(item["owner_id"])}">
@@ -1203,11 +1219,40 @@ def render_browse_row(item):
         <td data-label="Set">{e(item["set_name"] or "-")}</td>
         <td data-label="Code">{e(item["set_code"] or "-")}</td>
         <td data-label="Available">{e(item["quantity_for_trade"])}</td>
-        <td data-label="Quality"><span class="pill">{e(item["condition"])}</span> <span class="pill">{e(item["finish"])}</span>{price} {visibility_badge(item)} {f'<span class="pill">{e(row_value(item, "photo_count", 0))} photo{"s" if int(row_value(item, "photo_count", 0) or 0) != 1 else ""}</span>' if int(row_value(item, "photo_count", 0) or 0) else ''}<span class="subtle">{e(item["language"])}</span>{f'<span class="subtle condition-detail">{e(row_value(item, "condition_notes", ""))}</span>' if row_value(item, "condition_notes", "") else ''}</td>
+        <td data-label="Quality"><span class="pill">{e(item["condition"])}</span> <span class="pill">{e(item["finish"])}</span>{price} {visibility_badge(item)} {photo_preview}<span class="subtle">{e(item["language"])}</span>{f'<span class="subtle condition-detail">{e(row_value(item, "condition_notes", ""))}</span>' if row_value(item, "condition_notes", "") else ''}</td>
         <td class="table-actions" data-label="Trade">
             {trade_form}
         </td>
     </tr>
+    """
+
+
+def render_browse_photo_preview(item):
+    photo_count = int(row_value(item, "photo_count", 0) or 0)
+    if not photo_count:
+        return ""
+    dialog_id = f'browse-photo-dialog-{int(item["id"])}'
+    title_id = f'{dialog_id}-title'
+    photo_label = f'{photo_count} photo{"s" if photo_count != 1 else ""}'
+    condition_notes = row_value(item, "condition_notes", "")
+    return f"""
+    <button class="photo-preview-trigger" type="button" data-photo-dialog="{dialog_id}" aria-haspopup="dialog" aria-controls="{dialog_id}">
+        View {e(photo_label)}
+    </button>
+    <dialog class="condition-photo-dialog" id="{dialog_id}" aria-labelledby="{title_id}">
+        <div class="condition-photo-dialog-header">
+            <div>
+                <p class="eyebrow">Condition preview</p>
+                <h2 id="{title_id}">{e(item["card_name"])}</h2>
+                <p class="muted compact">{e(item["owner_name"])} - {e(item["condition"])} - {e(item["finish"])}</p>
+            </div>
+            <form method="dialog">
+                <button class="button ghost small condition-photo-dialog-close" type="submit" aria-label="Close condition photo preview">Close</button>
+            </form>
+        </div>
+        {f'<p class="condition-detail"><strong>Condition details:</strong> {e(condition_notes)}</p>' if condition_notes else ''}
+        {render_collection_photo_gallery(item["id"])}
+    </dialog>
     """
 
 
@@ -1753,4 +1798,4 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
     return render_layout(user, "Import", content, active="cards", notice=notice, status=status)
 
 
-__all__ = ['query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_stat_coverage_row', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_collection_row', 'render_price_history_panel', 'card_photo_size_label', 'render_collection_photo_gallery', 'render_collection_photo_panel', 'render_collection_form', 'render_import']
+__all__ = ['query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_browse_photo_preview', 'render_collection_row', 'render_price_history_panel', 'card_photo_size_label', 'render_collection_photo_gallery', 'render_collection_photo_panel', 'render_collection_form', 'render_import']
