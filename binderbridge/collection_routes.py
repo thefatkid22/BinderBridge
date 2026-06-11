@@ -385,6 +385,33 @@ def collection_item(self, method, user, path):
         if not delete_collection_item_photo(user["id"], item_id, photo_id):
             return self.not_found(user)
         return self.redirect(f"/collection/{item_id}/edit")
+    if action == "share-links" and len(parts) == 3 and method == "POST":
+        form = self.read_form()
+        try:
+            token, link = create_collection_share_link(
+                user["id"],
+                item_id,
+                form.get("label", [""])[0],
+                form.get("expires_days", ["0"])[0],
+                form.get("show_values", [""])[0] == "1",
+                form.get("show_photos", [""])[0] == "1",
+            )
+        except ValueError as exc:
+            return self.html(render_collection_form(user, item, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        share_result = {"url": f"{self.public_base_url()}/share/{token}", "link": link}
+        return self.html(render_collection_form(
+            user,
+            item,
+            notice="Private card link created. Copy it now; the token is not stored.",
+            share_result=share_result,
+        ))
+    if action == "share-links" and len(parts) == 5 and parts[4] == "revoke" and method == "POST":
+        try:
+            share_id = int(parts[3])
+        except ValueError:
+            return self.not_found(user)
+        revoke_collection_share_link(user["id"], item_id, share_id)
+        return self.html(render_collection_form(user, item, notice="Private card link revoked."))
     if len(parts) != 3:
         return self.not_found(user)
     if action == "edit":

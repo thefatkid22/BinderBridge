@@ -1,4 +1,4 @@
-"""Central privacy policies and private group share links for BinderBridge."""
+"""Central privacy policies and private share links for BinderBridge."""
 
 import hashlib
 import secrets
@@ -141,11 +141,8 @@ def share_token_hash(token):
     return hashlib.sha256(str(token or "").strip().encode("utf-8")).hexdigest()
 
 
-def create_group_share_link(user_id, group_id, label="", expires_days=0, show_values=False, show_photos=True):
-    group = user_group(user_id, group_id)
-    if not group:
-        raise ValueError("Group not found.")
-    clean_label = sanitize_text_input(label, max_length=80).strip() or f"{group['name']} share"
+def create_share_link(user_id, target_type, target_id, default_label, label="", expires_days=0, show_values=False, show_photos=True):
+    clean_label = sanitize_text_input(label, max_length=80).strip() or default_label
     try:
         expires_days = max(0, min(3650, int(expires_days or 0)))
     except (TypeError, ValueError) as exc:
@@ -159,11 +156,12 @@ def create_group_share_link(user_id, group_id, label="", expires_days=0, show_va
         INSERT INTO privacy_share_links
             (user_id, target_type, target_id, token_hash, token_hint, label, show_values, show_photos,
              expires_at, revoked_at, last_accessed_at, created_at)
-        VALUES (?, 'group', ?, ?, ?, ?, ?, ?, ?, '', '', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?)
         """,
         (
             user_id,
-            group_id,
+            target_type,
+            target_id,
             share_token_hash(token),
             token[-8:],
             clean_label,
@@ -176,29 +174,63 @@ def create_group_share_link(user_id, group_id, label="", expires_days=0, show_va
     return token, row("SELECT * FROM privacy_share_links WHERE id = ?", (share_id,))
 
 
-def group_share_link_rows(user_id, group_id):
+def create_group_share_link(user_id, group_id, label="", expires_days=0, show_values=False, show_photos=True):
+    group = user_group(user_id, group_id)
+    if not group:
+        raise ValueError("Group not found.")
+    return create_share_link(
+        user_id, "group", group_id, f"{group['name']} share", label, expires_days, show_values, show_photos
+    )
+
+
+def create_collection_share_link(user_id, collection_item_id, label="", expires_days=0, show_values=False, show_photos=True):
+    item = row("SELECT * FROM collection_items WHERE id = ? AND user_id = ?", (collection_item_id, user_id))
+    if not item:
+        raise ValueError("Collection card not found.")
+    return create_share_link(
+        user_id, "collection", collection_item_id, f"{item['card_name']} share", label, expires_days, show_values, show_photos
+    )
+
+
+def share_link_rows(user_id, target_type, target_id):
     return rows(
         """
         SELECT *
         FROM privacy_share_links
-        WHERE user_id = ? AND target_type = 'group' AND target_id = ?
+        WHERE user_id = ? AND target_type = ? AND target_id = ?
         ORDER BY created_at DESC, id DESC
         """,
-        (user_id, group_id),
+        (user_id, target_type, target_id),
     )
 
 
-def revoke_group_share_link(user_id, group_id, share_id):
+def group_share_link_rows(user_id, group_id):
+    return share_link_rows(user_id, "group", group_id)
+
+
+def collection_share_link_rows(user_id, collection_item_id):
+    return share_link_rows(user_id, "collection", collection_item_id)
+
+
+def revoke_share_link(user_id, target_type, target_id, share_id):
     with db() as conn:
         cursor = conn.execute(
             """
             UPDATE privacy_share_links
             SET revoked_at = ?
-            WHERE id = ? AND user_id = ? AND target_type = 'group' AND target_id = ? AND revoked_at = ''
+            WHERE id = ? AND user_id = ? AND target_type = ? AND target_id = ? AND revoked_at = ''
             """,
-            (now_iso(), share_id, user_id, group_id),
+            (now_iso(), share_id, user_id, target_type, target_id),
         )
         return cursor.rowcount
+
+
+def revoke_group_share_link(user_id, group_id, share_id):
+    return revoke_share_link(user_id, "group", group_id, share_id)
+
+
+def revoke_collection_share_link(user_id, collection_item_id, share_id):
+    return revoke_share_link(user_id, "collection", collection_item_id, share_id)
 
 
 def share_link_from_token(token, touch=True):
@@ -207,15 +239,9 @@ def share_link_from_token(token, touch=True):
         return None
     link = row(
         """
-        SELECT privacy_share_links.*, users.display_name AS owner_name, users.username AS owner_username,
-            card_groups.name AS group_name, card_groups.description AS group_description,
-            card_groups.group_type, card_groups.show_values AS group_show_values,
-            card_groups.show_photos AS group_show_photos
+        SELECT privacy_share_links.*, users.display_name AS owner_name, users.username AS owner_username
         FROM privacy_share_links
         JOIN users ON users.id = privacy_share_links.user_id
-        JOIN card_groups ON card_groups.id = privacy_share_links.target_id
-            AND privacy_share_links.target_type = 'group'
-            AND card_groups.user_id = privacy_share_links.user_id
         WHERE privacy_share_links.token_hash = ?
             AND privacy_share_links.revoked_at = ''
             AND users.is_banned = 0
@@ -227,9 +253,33 @@ def share_link_from_token(token, touch=True):
     expires_at = str(privacy_record_value(link, "expires_at", "") or "")
     if expires_at and expires_at <= now_iso():
         return None
+    result = dict(link)
+    if link["target_type"] == "group":
+        target = row(
+            """
+            SELECT name AS group_name, description AS group_description, group_type,
+                show_values AS group_show_values, show_photos AS group_show_photos
+            FROM card_groups
+            WHERE id = ? AND user_id = ?
+            """,
+            (link["target_id"], link["user_id"]),
+        )
+        if not target:
+            return None
+        result.update(dict(target))
+    elif link["target_type"] == "collection":
+        target = row(
+            "SELECT * FROM collection_items WHERE id = ? AND user_id = ?",
+            (link["target_id"], link["user_id"]),
+        )
+        if not target:
+            return None
+        result.update({f"item_{key}": target[key] for key in target.keys()})
+    else:
+        return None
     if touch:
         execute("UPDATE privacy_share_links SET last_accessed_at = ? WHERE id = ?", (now_iso(), link["id"]))
-    return link
+    return result
 
 
 def share_link_allows_photos(link):
@@ -260,9 +310,15 @@ __all__ = [
     "can_view_collection_values",
     "visible_price_pill",
     "share_token_hash",
+    "create_share_link",
     "create_group_share_link",
+    "create_collection_share_link",
+    "share_link_rows",
     "group_share_link_rows",
+    "collection_share_link_rows",
+    "revoke_share_link",
     "revoke_group_share_link",
+    "revoke_collection_share_link",
     "share_link_from_token",
     "share_link_allows_photos",
 ]

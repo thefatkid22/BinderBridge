@@ -276,6 +276,8 @@ def shared_group_page(self, path):
     if not link:
         return self.not_found(None)
     if len(parts) == 2:
+        if link["target_type"] == "collection":
+            return self.html(render_shared_collection_card(link, token))
         return self.html(render_shared_group(link, token))
     if len(parts) == 4 and parts[2] == "photos":
         try:
@@ -284,16 +286,22 @@ def shared_group_page(self, path):
             return self.not_found(None)
         if not share_link_allows_photos(link):
             return self.not_found(None)
-        photo = row(
-            """
-            SELECT collection_item_photos.*
-            FROM collection_item_photos
-            JOIN collection_items ON collection_items.id = collection_item_photos.collection_item_id
-            JOIN group_collection_items ON group_collection_items.collection_item_id = collection_items.id
-            WHERE collection_item_photos.id = ? AND group_collection_items.group_id = ?
-            """,
-            (photo_id, link["target_id"]),
-        )
+        if link["target_type"] == "collection":
+            photo = row(
+                "SELECT * FROM collection_item_photos WHERE id = ? AND collection_item_id = ?",
+                (photo_id, link["target_id"]),
+            )
+        else:
+            photo = row(
+                """
+                SELECT collection_item_photos.*
+                FROM collection_item_photos
+                JOIN collection_items ON collection_items.id = collection_item_photos.collection_item_id
+                JOIN group_collection_items ON group_collection_items.collection_item_id = collection_items.id
+                WHERE collection_item_photos.id = ? AND group_collection_items.group_id = ?
+                """,
+                (photo_id, link["target_id"]),
+            )
         if not photo:
             return self.not_found(None)
         return self.inline_binary(photo["content"], photo["content_type"], photo["original_filename"])

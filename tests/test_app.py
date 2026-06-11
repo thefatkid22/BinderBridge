@@ -138,6 +138,7 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("idx_users_role_status", user_indexes)
         self.assertIn("trg_collection_privacy_legacy_update", triggers)
         self.assertIn("trg_collection_privacy_visibility_update", triggers)
+        self.assertIn("trg_collection_share_links_delete", triggers)
         self.assertIn("resolution_note", dispute_columns)
         self.assertIn("idx_trade_dispute_evidence_dispute", evidence_indexes)
 
@@ -1548,6 +1549,60 @@ class BinderBridgeTest(unittest.TestCase):
 
         self.assertEqual(app.revoke_group_share_link(owner_id, group_id, link["id"]), 1)
         self.assertIsNone(app.share_link_from_token(token, touch=False))
+
+    def test_private_collection_card_links_render_on_edit_and_control_values_photos(self):
+        owner_id = factory.create_user("cardshareowner", display_name="Card Share Owner")
+        owner = app.row("SELECT * FROM users WHERE id = ?", (owner_id,))
+        item_id = factory.create_collection_item(
+            owner_id,
+            "Private Card Link",
+            set_name="Secret Lair",
+            condition_notes="Small mark on the back.",
+            quantity=2,
+            quantity_for_trade=1,
+            price_usd="42.00",
+            image_url="https://cards.example.test/private.jpg",
+            visibility="private",
+            is_public=0,
+        )
+        photo_id = app.add_collection_item_photo(
+            owner_id,
+            item_id,
+            {
+                "filename": "condition.png",
+                "content_type": "image/png",
+                "content": b"\x89PNG\r\n\x1a\nprivate-card-photo",
+            },
+            "Back mark",
+        )
+        item = app.row("SELECT * FROM collection_items WHERE id = ?", (item_id,))
+        edit_html = app.render_collection_form(owner, item)
+
+        hidden_token, hidden_link = app.create_collection_share_link(owner_id, item_id, "Condition review", 7, False, False)
+        hidden_found = app.share_link_from_token(hidden_token, touch=False)
+        hidden_html = app.render_shared_collection_card(hidden_found, hidden_token)
+        visible_token, _ = app.create_collection_share_link(owner_id, item_id, "Full review", 0, True, True)
+        visible_html = app.render_shared_collection_card(app.share_link_from_token(visible_token, touch=False), visible_token)
+        stored = app.row("SELECT * FROM privacy_share_links WHERE id = ?", (hidden_link["id"],))
+
+        self.assertIn("Private card links", edit_html)
+        self.assertIn(f'action="/collection/{item_id}/share-links"', edit_html)
+        self.assertNotEqual(stored["token_hash"], hidden_token)
+        self.assertEqual(hidden_found["target_type"], "collection")
+        self.assertIn("Private Card Link", hidden_html)
+        self.assertIn("Small mark on the back.", hidden_html)
+        self.assertNotIn("2 owned", hidden_html)
+        self.assertIn("1 available for trade", hidden_html)
+        self.assertNotIn("$42.00", hidden_html)
+        self.assertNotIn(f"/share/{hidden_token}/photos/{photo_id}", hidden_html)
+        self.assertIn("$42.00", visible_html)
+        self.assertIn(f"/share/{visible_token}/photos/{photo_id}", visible_html)
+        self.assertIn('referrerpolicy="no-referrer"', visible_html)
+
+        self.assertEqual(app.revoke_collection_share_link(owner_id, item_id, hidden_link["id"]), 1)
+        self.assertIsNone(app.share_link_from_token(hidden_token, touch=False))
+        app.execute("DELETE FROM collection_items WHERE id = ?", (item_id,))
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM privacy_share_links WHERE target_type = 'collection' AND target_id = ?", (item_id,))["count"], 0)
 
     def test_group_sharing_defaults_update_without_changing_existing_items(self):
         owner_id = factory.create_user("defaultowner", display_name="Default Owner")

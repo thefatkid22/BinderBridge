@@ -275,7 +275,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS privacy_share_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                target_type TEXT NOT NULL CHECK (target_type IN ('group')),
+                target_type TEXT NOT NULL CHECK (target_type IN ('group', 'collection')),
                 target_id INTEGER NOT NULL,
                 token_hash TEXT NOT NULL UNIQUE,
                 token_hint TEXT NOT NULL DEFAULT '',

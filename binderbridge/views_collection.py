@@ -1391,7 +1391,7 @@ def render_collection_photo_panel(item):
         <div class="panel-heading">
             <div>
                 <h2>Condition photos</h2>
-                <p class="muted compact">Photos are visible wherever this public card appears and are snapshotted into new trade offers.</p>
+                <p class="muted compact">Photos follow this card's privacy and private-link settings, and are snapshotted into new trade offers.</p>
             </div>
             <span class="pill">{e(collection_item_photo_count(item_id))}/{e(CARD_PHOTO_MAX_COUNT)}</span>
         </div>
@@ -1409,6 +1409,106 @@ def render_collection_photo_panel(item):
     """
 
 
+def render_collection_share_link_row(item, link):
+    revoked = bool(row_value(link, "revoked_at", ""))
+    expired = bool(row_value(link, "expires_at", "") and row_value(link, "expires_at", "") <= now_iso())
+    state = "Revoked" if revoked else "Expired" if expired else "Active"
+    state_class = "declined" if revoked or expired else "accepted"
+    revoke_form = ""
+    if not revoked:
+        revoke_form = f"""
+        <form method="post" action="/collection/{item["id"]}/share-links/{link["id"]}/revoke">
+            <button class="button danger small" type="submit" onclick="return confirm('Revoke this private card link?')">Revoke</button>
+        </form>
+        """
+    expires = row_value(link, "expires_at", "")
+    return f"""
+    <li>
+        <div>
+            <strong>{e(link["label"])}</strong>
+            <span>Token ending {e(link["token_hint"])} - {e("expires " + expires[:10] if expires else "no expiration")}</span>
+            <small>{e("Value shown" if link["show_values"] else "Value hidden")} - {e("photos shown" if link["show_photos"] else "photos hidden")}{e(" - last opened " + link["last_accessed_at"][:10] if link["last_accessed_at"] else "")}</small>
+        </div>
+        <div class="actions"><span class="status {state_class}">{e(state)}</span>{revoke_form}</div>
+    </li>
+    """
+
+
+def render_collection_share_panel(user_id, item, share_result=None):
+    links = collection_share_link_rows(user_id, item["id"])
+    link_rows = "".join(render_collection_share_link_row(item, link) for link in links)
+    link_rows = link_rows or '<li class="muted compact">No private card links yet.</li>'
+    result_panel = ""
+    if share_result:
+        result_panel = f"""
+        <div class="notice success span-2">
+            <strong>Copy this private link now</strong>
+            <input readonly value="{e(share_result["url"])}" onclick="this.select()">
+        </div>
+        """
+    return f"""
+    <section class="panel">
+        <form class="form-grid compact-form" method="post" action="/collection/{item["id"]}/share-links">
+            <div class="span-2 panel-heading">
+                <div><h2>Private card links</h2><p class="muted compact">Share only this card without exposing the rest of your collection.</p></div>
+            </div>
+            <label>Label<input name="label" maxlength="80" placeholder="Card condition review"></label>
+            <label>Expires<select name="expires_days"><option value="7">In 7 days</option><option value="30" selected>In 30 days</option><option value="90">In 90 days</option><option value="0">Never</option></select></label>
+            <label class="checkbox-line"><input type="checkbox" name="show_values" value="1"> Show Scryfall value</label>
+            <label class="checkbox-line"><input type="checkbox" name="show_photos" value="1" checked> Show condition photos</label>
+            {result_panel}
+            <div class="form-actions span-2"><button class="button primary" type="submit">Create private link</button></div>
+        </form>
+        <ul class="stack-list compact-stack">{link_rows}</ul>
+    </section>
+    """
+
+
+def shared_collection_item_from_link(link):
+    return {key[5:]: value for key, value in link.items() if key.startswith("item_")}
+
+
+def render_shared_collection_card(link, token):
+    item = shared_collection_item_from_link(link)
+    show_values = bool(link["show_values"])
+    show_photos = bool(link["show_photos"])
+    image = (
+        f'<img class="card-thumb" src="{e(item["image_url"])}" alt="" referrerpolicy="no-referrer">'
+        if item.get("image_url")
+        else '<span class="card-thumb placeholder"></span>'
+    )
+    photos = render_shared_photo_gallery(item["id"], token) if show_photos else ""
+    scryfall_link = (
+        f'<a href="{e(item["scryfall_uri"])}" target="_blank" rel="noreferrer">Open on Scryfall</a>'
+        if item.get("scryfall_uri")
+        else ""
+    )
+    trade_quantity = int(item.get("quantity_for_trade") or 0)
+    availability = f"{trade_quantity} available for trade" if trade_quantity else "Not currently listed for trade"
+    content = f"""
+    <section class="section-heading">
+        <div><p class="eyebrow">Shared by {e(link["owner_name"])}</p><h1>{e(item["card_name"])}</h1></div>
+        <span class="pill">Private card link</span>
+    </section>
+    <section class="panel">
+        <div class="card-cell">
+            {image}
+            <div>
+                <strong>{e(item["set_name"] or "Any set")} {e("(" + item["set_code"] + ")" if item["set_code"] else "")} {e("#" + item["collector_number"] if item["collector_number"] else "")}</strong>
+                <span>{e(item["condition"] or "Condition n/a")} - {e(item["finish"] or "Finish n/a")} - {e(item["language"] or "Language n/a")}</span>
+                <span>{e(availability)}</span>
+                {f'<span class="condition-detail"><strong>Condition details:</strong> {e(item["condition_notes"])}</span>' if item.get("condition_notes") else ""}
+                {price_pill(item) if show_values else ""}
+                {scryfall_link}
+            </div>
+        </div>
+        {photos}
+        <p class="muted compact">{e("Value shown" if show_values else "Value hidden")} - {e("photos shown" if show_photos else "photos hidden")}</p>
+    </section>
+    """
+    return render_layout(None, item["card_name"], content)
+
+
 def render_collection_form(
     user,
     item=None,
@@ -1418,6 +1518,7 @@ def render_collection_form(
     scryfall_picker_intent="use_scryfall",
     scryfall_picker_label="Use selected card",
     scryfall_picker_title="Scryfall matches",
+    share_result=None,
 ):
     try:
         is_edit = item is not None and item["id"] is not None
@@ -1471,6 +1572,7 @@ def render_collection_form(
     )
     price_history_panel = render_price_history_panel(user["id"], item["id"]) if is_edit else ""
     photo_panel = render_collection_photo_panel(item) if is_edit else ""
+    share_panel = render_collection_share_panel(user["id"], item, share_result=share_result) if is_edit else ""
     content = f"""
     {render_cards_subnav("collection")}
     <section class="section-heading">
@@ -1538,6 +1640,7 @@ def render_collection_form(
             <button class="button primary" name="intent" value="save" type="submit">Save card</button>
         </div>
     </form>
+    {share_panel}
     {photo_panel}
     {price_history_panel}
     """
@@ -1797,3 +1900,4 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
 
 
 __all__ = ['query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_browse_photo_preview', 'render_collection_row', 'render_price_history_panel', 'card_photo_size_label', 'render_collection_photo_gallery', 'render_collection_photo_panel', 'render_collection_form', 'render_import']
+__all__.extend(['render_collection_share_link_row', 'render_collection_share_panel', 'shared_collection_item_from_link', 'render_shared_collection_card'])
