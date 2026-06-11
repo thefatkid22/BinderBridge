@@ -24,6 +24,7 @@ CARD_PHOTO_EXTENSION_TYPES = {
 }
 
 def collection_item_values(data):
+    requested_visibility = data.get("visibility", "")
     defaults = {
         "game": "mtg",
         "card_name": "",
@@ -45,6 +46,7 @@ def collection_item_values(data):
         "price_status": "",
         "notes": "",
         "is_public": 1,
+        "visibility": VISIBILITY_MEMBERS,
     }
     for field in SCRYFALL_COLLECTION_FIELDS:
         defaults[field] = ""
@@ -54,7 +56,9 @@ def collection_item_values(data):
     defaults["price_usd"] = normalize_price_usd(defaults["price_usd"])
     defaults["price_source"] = "scryfall" if defaults["price_usd"] else ""
     defaults["condition_notes"] = sanitize_text_input(defaults.get("condition_notes", ""), max_length=1000).strip()
-    defaults["is_public"] = 1 if str(defaults.get("is_public", "1")).strip() in ("1", "true", "True", "on", "yes") else 0
+    visibility_default = VISIBILITY_MEMBERS if str(defaults.get("is_public", "1")).strip() in ("1", "true", "True", "on", "yes") else VISIBILITY_PRIVATE
+    defaults["visibility"] = normalize_visibility(requested_visibility, default=visibility_default)
+    defaults["is_public"] = visibility_to_public_flag(defaults["visibility"])
     for field in PRICE_PROVIDER_ID_FIELDS.values():
         defaults[field] = str(defaults.get(field, "") or "").strip()[:80]
     return defaults
@@ -73,7 +77,7 @@ def update_collection_item(user_id, item_id, data):
                 condition_notes = ?, language = ?, quantity = ?, quantity_for_trade = ?, scryfall_id = ?, image_url = ?, mana_cost = ?,
                 type_line = ?, oracle_text = ?, rarity = ?, colors = ?, color_identity = ?, scryfall_uri = ?,
                 price_usd = ?, price_source = ?, tcgplayer_product_id = ?, cardmarket_product_id = ?,
-                cardkingdom_sku = ?, notes = ?, is_public = ?, updated_at = ?
+                cardkingdom_sku = ?, notes = ?, is_public = ?, visibility = ?, updated_at = ?
             WHERE id = ? AND user_id = ?
             """,
             (
@@ -104,13 +108,19 @@ def update_collection_item(user_id, item_id, data):
                 values["cardkingdom_sku"],
                 values["notes"],
                 values["is_public"],
+                values["visibility"],
                 now_iso(),
                 item_id,
                 user_id,
             ),
         )
         record_price_history_for_item(item_id, user_id, values, row_value(existing, "price_usd", ""), values["price_usd"], conn=conn)
-        previous_public_trade_quantity = existing["quantity_for_trade"] if int(row_value(existing, "is_public", 1) or 0) else 0
+        previous_visibility = record_visibility(existing)
+        previous_public_trade_quantity = (
+            existing["quantity_for_trade"]
+            if previous_visibility not in (VISIBILITY_PRIVATE, VISIBILITY_LINK)
+            else 0
+        )
         notify_watchlist_matches_for_collection_item(item_id, previous_trade_quantity=previous_public_trade_quantity, conn=conn)
 
 
@@ -267,20 +277,19 @@ def delete_collection_item_photo(user_id, collection_item_id, photo_id):
 
 
 def collection_item_photo_for_user(photo_id, user_id):
-    return row(
+    photo = row(
         """
-        SELECT collection_item_photos.*, collection_items.user_id AS owner_id
+        SELECT collection_item_photos.*, collection_items.user_id AS owner_id,
+            collection_items.visibility, collection_items.is_public
         FROM collection_item_photos
         JOIN collection_items ON collection_items.id = collection_item_photos.collection_item_id
         JOIN users ON users.id = collection_items.user_id
-        WHERE collection_item_photos.id = ?
-            AND (
-                collection_items.user_id = ?
-                OR (collection_items.is_public = 1 AND users.is_banned = 0)
-            )
+        WHERE collection_item_photos.id = ? AND users.is_banned = 0
         """,
-        (photo_id, user_id),
+        (photo_id,),
     )
+    viewer = row("SELECT * FROM users WHERE id = ?", (user_id,))
+    return photo if photo and can_view_record(viewer, photo["owner_id"], photo) else None
 
 
 def copy_collection_item_photos_to_trade_item_conn(conn, collection_item_id, trade_item_id):
@@ -313,13 +322,15 @@ def parse_optional_bulk_quantity(value, field_label):
 def parse_bulk_collection_update(form):
     quantity = parse_optional_bulk_quantity(form.get("quantity", [""])[0], "Quantity owned")
     quantity_for_trade = parse_optional_bulk_quantity(form.get("quantity_for_trade", [""])[0], "Quantity for trade")
-    visibility_value = str(form.get("is_public", [""])[0] or "").strip()
+    visibility_value = str(form.get("visibility", form.get("is_public", [""]))[0] or "").strip()
     if visibility_value == "":
         is_public = None
     elif visibility_value in ("0", "1"):
         is_public = int(visibility_value)
+    elif visibility_value in VISIBILITY_LABELS:
+        is_public = normalize_visibility(visibility_value)
     else:
-        raise ValueError("Choose public, private, or no visibility change.")
+        raise ValueError("Choose a valid visibility level or no visibility change.")
     if quantity is None and quantity_for_trade is None and is_public is None:
         raise ValueError("Enter a quantity owned, quantity for trade, or visibility value to update.")
     if quantity is not None and quantity_for_trade is not None and quantity_for_trade > quantity:
@@ -348,21 +359,32 @@ def update_collection_items_matching(user_id, q="", game="", trade_only=False, q
 
 def update_collection_items_where(where_sql, params, quantity=None, quantity_for_trade=None, is_public=None):
     with db() as conn:
-        candidates = conn.execute(f"SELECT id, quantity, quantity_for_trade, is_public FROM collection_items WHERE {where_sql}", params).fetchall()
+        candidates = conn.execute(f"SELECT id, quantity, quantity_for_trade, is_public, visibility FROM collection_items WHERE {where_sql}", params).fetchall()
         updated = 0
         for item in candidates:
             new_quantity = item["quantity"] if quantity is None else clamp_quantity(quantity, 0)
             new_trade_quantity = item["quantity_for_trade"] if quantity_for_trade is None else clamp_quantity(quantity_for_trade, 0)
             new_trade_quantity = min(new_trade_quantity, new_quantity)
-            new_is_public = item["is_public"] if is_public is None else is_public
-            previous_public_trade_quantity = item["quantity_for_trade"] if int(item["is_public"] or 0) else 0
+            if is_public is None:
+                new_visibility = item["visibility"]
+            elif str(is_public) in ("0", "1"):
+                new_visibility = VISIBILITY_MEMBERS if int(is_public) else VISIBILITY_PRIVATE
+            else:
+                new_visibility = normalize_visibility(is_public)
+            new_is_public = visibility_to_public_flag(new_visibility)
+            previous_visibility = record_visibility(item)
+            previous_public_trade_quantity = (
+                item["quantity_for_trade"]
+                if previous_visibility not in (VISIBILITY_PRIVATE, VISIBILITY_LINK)
+                else 0
+            )
             conn.execute(
                 """
                 UPDATE collection_items
-                SET quantity = ?, quantity_for_trade = ?, is_public = ?, updated_at = ?
+                SET quantity = ?, quantity_for_trade = ?, is_public = ?, visibility = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (new_quantity, new_trade_quantity, new_is_public, now_iso(), item["id"]),
+                (new_quantity, new_trade_quantity, new_is_public, new_visibility, now_iso(), item["id"]),
             )
             notify_watchlist_matches_for_collection_item(item["id"], previous_trade_quantity=previous_public_trade_quantity, conn=conn)
             updated += 1
@@ -393,7 +415,7 @@ def notify_watchlist_matches_for_collection_item(collection_item_id, previous_tr
             old_trade_quantity = 0
         if old_trade_quantity > 0 or int(row_value(item, "quantity_for_trade", 0) or 0) <= 0:
             return 0
-        if not int(row_value(item, "is_public", 1) or 0):
+        if record_visibility(item) in (VISIBILITY_PRIVATE, VISIBILITY_LINK):
             return 0
         matches = active_conn.execute(
             """
@@ -437,6 +459,9 @@ def notify_watchlist_matches_for_collection_item(collection_item_id, previous_tr
         url = watchlist_browse_url(item)
         for want in matches:
             target_user_id = want["user_id"]
+            target_user = active_conn.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
+            if not can_view_record(target_user, item["user_id"], item):
+                continue
             if target_user_id in notified_users:
                 continue
             notified_users.add(target_user_id)
@@ -546,8 +571,8 @@ def upsert_collection_item(user_id, data, merge=True, return_id=False):
             (user_id, game, card_name, set_name, set_code, collector_number, finish, condition, condition_notes, language,
              quantity, quantity_for_trade, scryfall_id, image_url, mana_cost, type_line, oracle_text, rarity,
              colors, color_identity, scryfall_uri, price_usd, price_source, tcgplayer_product_id,
-             cardmarket_product_id, cardkingdom_sku, notes, is_public, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             cardmarket_product_id, cardkingdom_sku, notes, is_public, visibility, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -578,6 +603,7 @@ def upsert_collection_item(user_id, data, merge=True, return_id=False):
             values["cardkingdom_sku"],
             values["notes"],
             values["is_public"],
+            values["visibility"],
             now_iso(),
             now_iso(),
         ),

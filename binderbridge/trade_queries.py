@@ -494,7 +494,11 @@ def trade_selected_item_rows(owner_id, item_ids, viewer_id=None):
     if not item_ids:
         return []
     placeholders = ",".join("?" for _ in item_ids)
-    visibility_sql = "AND is_public = 1" if viewer_id is not None and int(viewer_id) != int(owner_id) else ""
+    visibility_sql = ""
+    visibility_params = []
+    if viewer_id is not None and int(viewer_id) != int(owner_id):
+        clause, visibility_params = visibility_sql_for_user_id(viewer_id, "visibility", "user_id")
+        visibility_sql = f"AND {clause}"
     return rows(
         f"""
         SELECT *
@@ -502,7 +506,7 @@ def trade_selected_item_rows(owner_id, item_ids, viewer_id=None):
         WHERE user_id = ? AND id IN ({placeholders}) {visibility_sql}
         ORDER BY card_name COLLATE NOCASE, set_name COLLATE NOCASE, collector_number COLLATE NOCASE
         """,
-        [owner_id, *item_ids],
+        [owner_id, *item_ids, *visibility_params],
     )
 
 

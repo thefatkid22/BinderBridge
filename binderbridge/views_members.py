@@ -8,6 +8,7 @@ def render_members(user, query, notice=None, status="info"):
     where = ["users.id != ?"]
     params = [user["id"]]
     where.append("users.is_banned = 0")
+    privacy_clause, privacy_params = visibility_sql_for_user(user, "collection_items.visibility", "collection_items.user_id")
     if q:
         where.append("(users.display_name LIKE ? OR users.username LIKE ? OR collection_items.card_name LIKE ?)")
         term = f"%{q}%"
@@ -22,12 +23,12 @@ def render_members(user, query, notice=None, status="info"):
             COUNT(collection_items.id) AS unique_cards,
             COALESCE(SUM(collection_items.quantity_for_trade), 0) AS trade_cards
         FROM users
-        LEFT JOIN collection_items ON collection_items.user_id = users.id AND collection_items.quantity_for_trade > 0 AND collection_items.is_public = 1
+        LEFT JOIN collection_items ON collection_items.user_id = users.id AND collection_items.quantity_for_trade > 0 AND {privacy_clause}
         WHERE {' AND '.join(where)}
         GROUP BY users.id
         ORDER BY users.display_name COLLATE NOCASE
         """,
-        params,
+        [*privacy_params, *params],
     )
     cards = "".join(
         f"""
@@ -118,33 +119,36 @@ def render_reputation_summary(summary, feedback_rows):
     """
 
 
-def public_profile_stats(member_id):
+def public_profile_stats(member_id, viewer=None):
+    collection_clause, collection_params = visibility_sql_for_user(viewer, "visibility", "user_id")
+    want_clause, want_params = visibility_sql_for_user(viewer, "visibility", "user_id")
+    group_clause, group_params = visibility_sql_for_user(viewer, "visibility", "user_id")
     trade = row(
-        """
+        f"""
         SELECT
             COUNT(*) AS unique_trade_cards,
             COALESCE(SUM(quantity_for_trade), 0) AS available_trade_quantity,
             COALESCE(SUM(CAST(COALESCE(NULLIF(price_usd, ''), '0') AS REAL) * quantity_for_trade), 0) AS trade_value
         FROM collection_items
-        WHERE user_id = ? AND quantity_for_trade > 0 AND is_public = 1
+        WHERE user_id = ? AND quantity_for_trade > 0 AND {collection_clause}
         """,
-        (member_id,),
+        [member_id, *collection_params],
     )
     wants = row(
-        """
+        f"""
         SELECT COUNT(*) AS count, COALESCE(SUM(desired_quantity), 0) AS desired_quantity
         FROM want_items
-        WHERE user_id = ? AND is_public = 1
+        WHERE user_id = ? AND {want_clause}
         """,
-        (member_id,),
+        [member_id, *want_params],
     )
     groups = row(
-        """
+        f"""
         SELECT COUNT(*) AS count
         FROM card_groups
-        WHERE user_id = ? AND is_public = 1
+        WHERE user_id = ? AND {group_clause}
         """,
-        (member_id,),
+        [member_id, *group_params],
     )
     return {
         "unique_trade_cards": int(row_value(trade, "unique_trade_cards", 0) or 0),
@@ -156,7 +160,7 @@ def public_profile_stats(member_id):
     }
 
 
-def render_public_trade_card(member, item):
+def render_public_trade_card(user, member, item):
     thumb = f'<img class="card-thumb" src="{e(item["image_url"])}" alt="">' if item["image_url"] else '<span class="card-thumb placeholder"></span>'
     scryfall_link = f'<a class="subtle" href="{e(item["scryfall_uri"])}" target="_blank" rel="noreferrer">Scryfall</a>' if item["scryfall_uri"] else ""
     type_line = f'<span class="subtle">{e(item["type_line"])}</span>' if item["type_line"] else ""
@@ -177,7 +181,7 @@ def render_public_trade_card(member, item):
             <span class="pill">{e(item["condition"])}</span>
             <span class="pill">{e(item["finish"])}</span>
             <span class="pill">{e(item["language"])}</span>
-            {price_pill(item)}
+            {visible_price_pill(user, member, item)}
         </div>
         <form class="inline-trade-form public-profile-trade-form" method="get" action="/trades/new">
             <input type="hidden" name="recipient_id" value="{e(member["id"])}">
@@ -194,7 +198,7 @@ def render_public_trade_card(member, item):
     """
 
 
-def render_public_want_profile_item(want):
+def render_public_want_profile_item(user, member, want):
     scryfall_link = f'<a href="{e(want["scryfall_uri"])}" target="_blank" rel="noreferrer">Scryfall</a>' if want["scryfall_uri"] else ""
     budget_cap = normalize_price_usd(row_value(want, "budget_cap_usd", ""))
     printing_note = row_value(want, "preferred_printing_notes", "")
@@ -214,7 +218,7 @@ def render_public_want_profile_item(want):
             {f'<span class="subtle"><strong>Preferred printing:</strong> {e(printing_note)}</span>' if printing_note else ''}
             {scryfall_link}
         </div>
-        {price_pill(want)}
+        {visible_price_pill(user, member, want)}
     </li>
     """
 
@@ -238,13 +242,15 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
     member = row("SELECT * FROM users WHERE id = ?", (member_id,))
     if not member or member["id"] == user["id"] or member["is_banned"]:
         return None
+    collection_clause, collection_params = visibility_sql_for_user(user, "visibility", "user_id")
+    want_clause, want_params = visibility_sql_for_user(user, "visibility", "user_id")
     total_count = row(
-        """
+        f"""
         SELECT COUNT(*) AS count
         FROM collection_items
-        WHERE user_id = ? AND quantity_for_trade > 0 AND is_public = 1
+        WHERE user_id = ? AND quantity_for_trade > 0 AND {collection_clause}
         """,
-        (member_id,),
+        [member_id, *collection_params],
     )["count"]
     page, per_page, page_count, offset = pagination_state(query, total_count)
     current_sort, current_dir = sort_state(query, CARD_SORT_OPTIONS)
@@ -258,27 +264,27 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
         f"""
         SELECT *
         FROM collection_items
-        WHERE user_id = ? AND quantity_for_trade > 0 AND is_public = 1
+        WHERE user_id = ? AND quantity_for_trade > 0 AND {collection_clause}
         ORDER BY {order_clause}
         LIMIT ? OFFSET ?
         """,
-        (member_id, per_page, offset),
+        [member_id, *collection_params, per_page, offset],
     )
-    stats = public_profile_stats(member_id)
+    stats = public_profile_stats(member_id, user)
     wants = rows(
-        """
+        f"""
         SELECT *
         FROM want_items
-        WHERE user_id = ? AND is_public = 1
+        WHERE user_id = ? AND {want_clause}
         ORDER BY card_name COLLATE NOCASE, set_name COLLATE NOCASE
         """,
-        (member_id,),
+        [member_id, *want_params],
     )
-    public_groups = public_member_group_rows(member_id)
-    collection_rows = "".join(render_public_trade_card(member, item) for item in collection)
+    public_groups = public_member_group_rows(member_id, user)
+    collection_rows = "".join(render_public_trade_card(user, member, item) for item in collection)
     collection_list = f'<div class="public-card-list">{collection_rows}</div>' if collection else '<div class="empty-state">This member has no trade cards listed.</div>'
     pagination = render_pagination(f"/members/{member_id}", query, total_count, page, per_page, page_count)
-    want_list = "".join(render_public_want_profile_item(want) for want in wants) or '<li class="muted">No public wants listed.</li>'
+    want_list = "".join(render_public_want_profile_item(user, member, want) for want in wants) or '<li class="muted">No shared wants listed.</li>'
     group_list = "".join(render_public_group_profile_card(member, group) for group in public_groups) or '<div class="empty-state compact-empty">No public groups listed.</div>'
     profile_details = []
     if member["bio"]:
@@ -287,6 +293,7 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
         profile_details.append(f'<p><strong>Email:</strong> <a href="mailto:{e(member["email"])}">{e(member["email"])}</a></p>')
     profile_block = "".join(profile_details) or '<p class="muted">No profile details yet.</p>'
     reputation_block = render_reputation_summary(reputation_summary(member_id), recent_feedback_for_user(member_id, limit=3))
+    listed_value = f" - {e('$' + format(stats['trade_value'], '.2f'))} listed value" if can_view_collection_values(user, member) else ""
     content = f"""
     <section class="section-heading">
         <div>
@@ -324,7 +331,7 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
             <div class="panel-heading padded">
                 <div>
                     <h2>Trade availability</h2>
-                    <p class="muted compact">{e(stats["unique_trade_cards"])} public entr{'y' if stats["unique_trade_cards"] == 1 else 'ies'} - {e(f"${stats['trade_value']:.2f}")} listed value</p>
+                    <p class="muted compact">{e(stats["unique_trade_cards"])} shared entr{'y' if stats["unique_trade_cards"] == 1 else 'ies'}{listed_value}</p>
                 </div>
                 <a class="button primary small" href="/trades/new?recipient_id={member["id"]}">Propose trade</a>
             </div>

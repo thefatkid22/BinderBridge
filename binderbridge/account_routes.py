@@ -265,6 +265,7 @@ def account_profile(self, user):
             quiet_hours_start,
             quiet_hours_end,
             form.get("stale_trade_reminder_days", ["3"])[0],
+            form.get("collection_value_visibility", [VISIBILITY_MEMBERS])[0],
         )
     except ValueError as exc:
         return self.html(render_account(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)

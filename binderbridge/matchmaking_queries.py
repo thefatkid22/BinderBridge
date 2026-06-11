@@ -4,8 +4,14 @@ Shared app helpers are injected at runtime by the app facade.
 """
 
 def trade_matchmaking_candidate_rows(user_id):
+    collection_clause, collection_params = visibility_sql_for_user_id(
+        user_id, "collection_items.visibility", "collection_items.user_id"
+    )
+    want_clause, want_params = visibility_sql_for_user_id(
+        user_id, "want_items.visibility", "want_items.user_id"
+    )
     they_have_rows = rows(
-        """
+        f"""
         SELECT
             users.id AS member_id,
             users.username,
@@ -34,7 +40,7 @@ def trade_matchmaking_candidate_rows(user_id):
             AND collection_items.user_id != ?
             AND users.is_banned = 0
             AND collection_items.quantity_for_trade > 0
-            AND collection_items.is_public = 1
+            AND {collection_clause}
             AND collection_items.game = want_items.game
             AND (
                 (want_items.scryfall_id != '' AND collection_items.scryfall_id = want_items.scryfall_id)
@@ -57,10 +63,10 @@ def trade_matchmaking_candidate_rows(user_id):
             users.display_name COLLATE NOCASE,
             collection_items.card_name COLLATE NOCASE
         """,
-        (user_id, user_id),
+        [user_id, user_id, *collection_params],
     )
     they_want_rows = rows(
-        """
+        f"""
         SELECT
             users.id AS member_id,
             users.username,
@@ -86,7 +92,7 @@ def trade_matchmaking_candidate_rows(user_id):
         JOIN users ON users.id = want_items.user_id
         JOIN collection_items ON collection_items.user_id = ?
         WHERE want_items.user_id != ?
-            AND want_items.is_public = 1
+            AND {want_clause}
             AND users.is_banned = 0
             AND collection_items.quantity_for_trade > 0
             AND collection_items.game = want_items.game
@@ -111,7 +117,7 @@ def trade_matchmaking_candidate_rows(user_id):
             users.display_name COLLATE NOCASE,
             collection_items.card_name COLLATE NOCASE
         """,
-        (user_id, user_id),
+        [user_id, user_id, *want_params],
     )
     return they_have_rows, they_want_rows
 

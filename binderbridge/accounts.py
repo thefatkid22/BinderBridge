@@ -72,6 +72,7 @@ def update_user_profile(
     quiet_hours_start="22:00",
     quiet_hours_end="07:00",
     stale_trade_reminder_days=3,
+    collection_value_visibility="members",
 ):
     username = validate_username(username)
     display_name = sanitize_text_input(display_name, max_length=80).strip()
@@ -88,6 +89,7 @@ def update_user_profile(
     quiet_hours_start = normalize_notification_time(quiet_hours_start, "Quiet hours start")
     quiet_hours_end = normalize_notification_time(quiet_hours_end, "Quiet hours end")
     stale_trade_reminder_days = normalize_stale_trade_reminder_days(stale_trade_reminder_days)
+    collection_value_visibility = normalize_value_visibility(collection_value_visibility)
     try:
         execute(
             """
@@ -104,7 +106,7 @@ def update_user_profile(
                 email_admin_notice_enabled = ?, email_digest_frequency = ?,
                 email_digest_time = ?, email_digest_weekday = ?, notification_timezone = ?,
                 quiet_hours_enabled = ?, quiet_hours_start = ?, quiet_hours_end = ?,
-                stale_trade_reminder_days = ?, updated_at = ?
+                stale_trade_reminder_days = ?, collection_value_visibility = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -139,6 +141,7 @@ def update_user_profile(
                 quiet_hours_start,
                 quiet_hours_end,
                 stale_trade_reminder_days,
+                collection_value_visibility,
                 now_iso(),
                 user_id,
             ),

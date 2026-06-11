@@ -110,6 +110,8 @@ from binderbridge import roles as _roles
 _install_feature_module(_roles)
 from binderbridge import ui_helpers as _ui_helpers
 _install_feature_module(_ui_helpers)
+from binderbridge import privacy as _privacy
+_install_feature_module(_privacy)
 from binderbridge import accounts as _accounts
 _install_feature_module(_accounts)
 from binderbridge import groups as _groups
@@ -1718,7 +1720,10 @@ def add_deck_missing_items_to_wishlist(user_id, deck_group_id, items, selected_k
             )
             updated += 1
             continue
-        want_id = insert_want_item(user_id, deck_missing_want_data(deck_group, item))
+        want_data = deck_missing_want_data(deck_group, item)
+        want_data["visibility"] = row_value(wishlist_group, "default_item_visibility", VISIBILITY_MEMBERS)
+        want_data["is_public"] = visibility_to_public_flag(want_data["visibility"])
+        want_id = insert_want_item(user_id, want_data)
         add_want_item_to_group(user_id, wishlist_group_id, want_id)
         added += 1
     return {
@@ -1950,6 +1955,8 @@ class App(BaseHTTPRequestHandler):
                 return self.login_passkey_complete(method, user)
             if path == "/register":
                 return self.register(method, user, query)
+            if path.startswith("/share/") and method == "GET":
+                return self.shared_group_page(path)
             if path == "/logout" and method == "POST":
                 if self._csrf_required:
                     self.parse_request_body()

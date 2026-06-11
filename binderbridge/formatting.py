@@ -250,8 +250,11 @@ def collection_search_suggestions(user_id, limit=100):
     return [item["value"] for item in found]
 
 def browse_search_suggestions(user_id, limit=100):
+    privacy_clause, privacy_params = visibility_sql_for_user_id(
+        user_id, "collection_items.visibility", "collection_items.user_id"
+    )
     found = rows(
-        """
+        f"""
         SELECT value
         FROM (
             SELECT DISTINCT collection_items.card_name AS value
@@ -259,7 +262,7 @@ def browse_search_suggestions(user_id, limit=100):
             JOIN users ON users.id = collection_items.user_id
             WHERE collection_items.user_id != ?
                 AND collection_items.quantity_for_trade > 0
-                AND collection_items.is_public = 1
+                AND {privacy_clause}
                 AND users.is_banned = 0
                 AND collection_items.card_name != ''
             UNION
@@ -268,14 +271,14 @@ def browse_search_suggestions(user_id, limit=100):
             JOIN users ON users.id = collection_items.user_id
             WHERE collection_items.user_id != ?
                 AND collection_items.quantity_for_trade > 0
-                AND collection_items.is_public = 1
+                AND {privacy_clause}
                 AND users.is_banned = 0
                 AND collection_items.type_line != ''
         )
         ORDER BY value COLLATE NOCASE
         LIMIT ?
         """,
-        (user_id, user_id, limit),
+        [user_id, *privacy_params, user_id, *privacy_params, limit],
     )
     return [item["value"] for item in found]
 
@@ -283,6 +286,9 @@ def browse_field_suggestions(user_id, column, limit=80):
     column_name = SUGGESTION_COLUMNS.get(column)
     if not column_name:
         return []
+    privacy_clause, privacy_params = visibility_sql_for_user_id(
+        user_id, "collection_items.visibility", "collection_items.user_id"
+    )
     found = rows(
         f"""
         SELECT DISTINCT collection_items.{column_name} AS value
@@ -290,13 +296,13 @@ def browse_field_suggestions(user_id, column, limit=80):
         JOIN users ON users.id = collection_items.user_id
         WHERE collection_items.user_id != ?
             AND collection_items.quantity_for_trade > 0
-            AND collection_items.is_public = 1
+            AND {privacy_clause}
             AND users.is_banned = 0
             AND collection_items.{column_name} != ''
         ORDER BY collection_items.{column_name} COLLATE NOCASE
         LIMIT ?
         """,
-        (user_id, limit),
+        [user_id, *privacy_params, limit],
     )
     return [item["value"] for item in found]
 
@@ -342,8 +348,11 @@ def trade_picker_search_suggestions(user_id, limit=100, public_only=False):
     return [item["value"] for item in found]
 
 def member_search_suggestions(user_id, limit=100):
+    privacy_clause, privacy_params = visibility_sql_for_user_id(
+        user_id, "collection_items.visibility", "collection_items.user_id"
+    )
     found = rows(
-        """
+        f"""
         SELECT value
         FROM (
             SELECT DISTINCT display_name AS value
@@ -356,13 +365,13 @@ def member_search_suggestions(user_id, limit=100):
             UNION
             SELECT DISTINCT collection_items.card_name AS value
             FROM users
-            JOIN collection_items ON collection_items.user_id = users.id AND collection_items.quantity_for_trade > 0 AND collection_items.is_public = 1
+            JOIN collection_items ON collection_items.user_id = users.id AND collection_items.quantity_for_trade > 0 AND {privacy_clause}
             WHERE users.id != ? AND users.is_banned = 0 AND collection_items.card_name != ''
         )
         ORDER BY value COLLATE NOCASE
         LIMIT ?
         """,
-        (user_id, user_id, user_id, limit),
+        [user_id, user_id, *privacy_params, user_id, limit],
     )
     return [item["value"] for item in found]
 

@@ -32,6 +32,7 @@ COLLECTION_EXPORT_FIELDS = [
     "scryfall_uri",
     "notes",
     "is_public",
+    "visibility",
     "created_at",
     "updated_at",
 ]
@@ -59,6 +60,7 @@ WANT_EXPORT_FIELDS = [
     "preferred_printing_notes",
     "notes",
     "is_public",
+    "visibility",
     "created_at",
     "updated_at",
 ]
@@ -85,6 +87,7 @@ ACCOUNT_EXPORT_USER_FIELDS = [
     "display_name",
     "bio",
     "public_email",
+    "collection_value_visibility",
     "role",
     "preferred_price_source",
     "price_alerts_enabled",

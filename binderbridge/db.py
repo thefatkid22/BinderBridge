@@ -80,6 +80,7 @@ def init_db():
                 display_name TEXT NOT NULL,
                 bio TEXT NOT NULL DEFAULT '',
                 public_email INTEGER NOT NULL DEFAULT 0,
+                collection_value_visibility TEXT NOT NULL DEFAULT 'members',
                 role TEXT NOT NULL DEFAULT 'member',
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 is_banned INTEGER NOT NULL DEFAULT 0,
@@ -200,6 +201,7 @@ def init_db():
                 price_status TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 is_public INTEGER NOT NULL DEFAULT 1,
+                visibility TEXT NOT NULL DEFAULT 'members',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -247,6 +249,7 @@ def init_db():
                 preferred_printing_notes TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 is_public INTEGER NOT NULL DEFAULT 1,
+                visibility TEXT NOT NULL DEFAULT 'members',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -258,12 +261,35 @@ def init_db():
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 is_public INTEGER NOT NULL DEFAULT 1,
+                visibility TEXT NOT NULL DEFAULT 'members',
+                default_item_visibility TEXT NOT NULL DEFAULT 'members',
+                show_values INTEGER NOT NULL DEFAULT 1,
+                show_photos INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_card_groups_user
                 ON card_groups(user_id, group_type, name);
+
+            CREATE TABLE IF NOT EXISTS privacy_share_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                target_type TEXT NOT NULL CHECK (target_type IN ('group')),
+                target_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                token_hint TEXT NOT NULL DEFAULT '',
+                label TEXT NOT NULL DEFAULT '',
+                show_values INTEGER NOT NULL DEFAULT 0,
+                show_photos INTEGER NOT NULL DEFAULT 1,
+                expires_at TEXT NOT NULL DEFAULT '',
+                revoked_at TEXT NOT NULL DEFAULT '',
+                last_accessed_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_privacy_share_links_target
+                ON privacy_share_links(user_id, target_type, target_id, revoked_at);
 
             CREATE TABLE IF NOT EXISTS group_collection_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -698,6 +724,7 @@ def migrate_db(conn):
     user_missing_columns = {
         "email": "TEXT NOT NULL DEFAULT ''",
         "public_email": "INTEGER NOT NULL DEFAULT 0",
+        "collection_value_visibility": "TEXT NOT NULL DEFAULT 'members'",
         "role": "TEXT NOT NULL DEFAULT 'member'",
         "is_admin": "INTEGER NOT NULL DEFAULT 0",
         "is_banned": "INTEGER NOT NULL DEFAULT 0",
@@ -773,6 +800,7 @@ def migrate_db(conn):
         "price_refreshed_at": "TEXT NOT NULL DEFAULT ''",
         "price_status": "TEXT NOT NULL DEFAULT ''",
         "is_public": "INTEGER NOT NULL DEFAULT 1",
+        "visibility": "TEXT NOT NULL DEFAULT 'members'",
     }
     for name, definition in missing_columns.items():
         if name not in collection_columns:
@@ -817,6 +845,7 @@ def migrate_db(conn):
         "price_source": "TEXT NOT NULL DEFAULT ''",
         "preferred_printing_notes": "TEXT NOT NULL DEFAULT ''",
         "is_public": "INTEGER NOT NULL DEFAULT 1",
+        "visibility": "TEXT NOT NULL DEFAULT 'members'",
     }
     for name, definition in want_missing_columns.items():
         if name not in want_columns:
@@ -841,10 +870,25 @@ def migrate_db(conn):
     group_columns = {column["name"] for column in conn.execute("PRAGMA table_info(card_groups)").fetchall()}
     group_missing_columns = {
         "is_public": "INTEGER NOT NULL DEFAULT 1",
+        "visibility": "TEXT NOT NULL DEFAULT 'members'",
+        "default_item_visibility": "TEXT NOT NULL DEFAULT 'members'",
+        "show_values": "INTEGER NOT NULL DEFAULT 1",
+        "show_photos": "INTEGER NOT NULL DEFAULT 1",
     }
     for name, definition in group_missing_columns.items():
         if name not in group_columns:
             conn.execute(f"ALTER TABLE card_groups ADD COLUMN {name} {definition}")
+    for table in ("collection_items", "want_items", "card_groups"):
+        conn.execute(
+            f"UPDATE {table} SET visibility = CASE WHEN is_public = 1 THEN 'members' ELSE 'private' END "
+            "WHERE visibility NOT IN ('private', 'trusted', 'members', 'link') OR visibility = '' "
+            "OR (visibility = 'members' AND is_public = 0)"
+        )
+        conn.execute(f"UPDATE {table} SET is_public = CASE WHEN visibility = 'members' THEN 1 ELSE 0 END")
+    conn.execute(
+        "UPDATE users SET collection_value_visibility = 'members' "
+        "WHERE collection_value_visibility NOT IN ('private', 'trusted', 'members')"
+    )
 
     trade_columns = {column["name"] for column in conn.execute("PRAGMA table_info(trades)").fetchall()}
     trade_missing_columns = {

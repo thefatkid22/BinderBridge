@@ -124,10 +124,9 @@ def collection_where(user_id, q="", game="", trade_only=False, **advanced_filter
         where.append("image_url != ''")
     elif advanced_filters.get("card_data") == "missing_image":
         where.append("image_url = ''")
-    if advanced_filters.get("visibility") == "public":
-        where.append("is_public = 1")
-    elif advanced_filters.get("visibility") == "private":
-        where.append("is_public = 0")
+    if advanced_filters.get("visibility") in VISIBILITY_LABELS:
+        where.append("visibility = ?")
+        params.append(advanced_filters["visibility"])
     if advanced_filters.get("quantity_min") is not None:
         where.append("quantity >= ?")
         params.append(advanced_filters["quantity_min"])
@@ -154,10 +153,16 @@ def browse_where(user_id, q="", game="", quality="", finish="", owner_id=0, **ad
     where = [
         "collection_items.user_id != ?",
         "collection_items.quantity_for_trade > 0",
-        "collection_items.is_public = 1",
         "users.is_banned = 0",
     ]
     params = [user_id]
+    privacy_clause, privacy_params = visibility_sql_for_user_id(
+        user_id,
+        "collection_items.visibility",
+        "collection_items.user_id",
+    )
+    where.append(privacy_clause)
+    params.extend(privacy_params)
     if q:
         where.append("(collection_items.card_name LIKE ? OR collection_items.type_line LIKE ?)")
         term = f"%{q}%"
@@ -222,22 +227,29 @@ def browse_where(user_id, q="", game="", quality="", finish="", owner_id=0, **ad
     return where, params
 
 def browse_filter_users(user_id):
+    privacy_clause, privacy_params = visibility_sql_for_user_id(
+        user_id,
+        "collection_items.visibility",
+        "collection_items.user_id",
+    )
     return rows(
-        """
+        f"""
         SELECT DISTINCT users.id, users.display_name, users.username
         FROM users
         JOIN collection_items ON collection_items.user_id = users.id
-        WHERE users.id != ? AND users.is_banned = 0 AND collection_items.quantity_for_trade > 0 AND collection_items.is_public = 1
+        WHERE users.id != ? AND users.is_banned = 0 AND collection_items.quantity_for_trade > 0 AND {privacy_clause}
         ORDER BY users.display_name COLLATE NOCASE
         """,
-        (user_id,),
+        [user_id, *privacy_params],
     )
 
 def trade_picker_where(user_id, filters, viewer_id=None):
     where = ["user_id = ?", "quantity_for_trade > 0"]
     params = [user_id]
     if viewer_id is not None and int(viewer_id) != int(user_id):
-        where.append("is_public = 1")
+        privacy_clause, privacy_params = visibility_sql_for_user_id(viewer_id, "visibility", "user_id")
+        where.append(privacy_clause)
+        params.extend(privacy_params)
     if filters.get("q"):
         where.append("(card_name LIKE ? OR type_line LIKE ?)")
         term = f"%{filters['q']}%"
@@ -341,6 +353,7 @@ def browse_page_rows(where, params, order_clause, limit, offset):
             users.id AS owner_id,
             users.username AS owner_username,
             users.display_name AS owner_name,
+            users.collection_value_visibility AS owner_value_visibility,
             (SELECT COUNT(*) FROM collection_item_photos WHERE collection_item_photos.collection_item_id = collection_items.id) AS photo_count
         FROM collection_items
         JOIN users ON users.id = collection_items.user_id

@@ -110,9 +110,11 @@ class BinderBridgeTest(unittest.TestCase):
         passkey_indexes = {item["name"] for item in app.rows("PRAGMA index_list(passkey_credentials)")}
         passkey_challenge_indexes = {item["name"] for item in app.rows("PRAGMA index_list(passkey_challenges)")}
         csv_preset_indexes = {item["name"] for item in app.rows("PRAGMA index_list(csv_import_mapping_presets)")}
+        privacy_link_indexes = {item["name"] for item in app.rows("PRAGMA index_list(privacy_share_links)")}
         user_indexes = {item["name"] for item in app.rows("PRAGMA index_list(users)")}
         dispute_columns = {item["name"] for item in app.rows("PRAGMA table_info(trade_disputes)")}
         evidence_indexes = {item["name"] for item in app.rows("PRAGMA index_list(trade_dispute_evidence)")}
+        triggers = {item["name"] for item in app.rows("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
         with app.db() as conn:
             busy_timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
             journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
@@ -132,7 +134,10 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("idx_passkey_challenges_user", passkey_challenge_indexes)
         self.assertIn("idx_csv_import_mapping_presets_user", csv_preset_indexes)
         self.assertIn("idx_csv_import_mapping_presets_shared", csv_preset_indexes)
+        self.assertIn("idx_privacy_share_links_target", privacy_link_indexes)
         self.assertIn("idx_users_role_status", user_indexes)
+        self.assertIn("trg_collection_privacy_legacy_update", triggers)
+        self.assertIn("trg_collection_privacy_visibility_update", triggers)
         self.assertIn("resolution_note", dispute_columns)
         self.assertIn("idx_trade_dispute_evidence_dispute", evidence_indexes)
 
@@ -1393,10 +1398,11 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("Decks &amp; Binders", groups_html)
         self.assertIn("Wishlist Groups", wishlist_groups_html)
         self.assertIn("Visibility", groups_html)
-        self.assertIn('<option value="1" selected>Public</option>', groups_html)
+        self.assertIn('<option value="members" selected>All members</option>', groups_html)
         self.assertIn("2 x Sol Ring", deck_html)
         self.assertIn("Add card", deck_html)
-        self.assertIn("Make private", deck_html)
+        self.assertIn("Sharing defaults", deck_html)
+        self.assertIn("Private share links", deck_html)
         self.assertIn(f'/groups/{deck_id}/export', deck_html)
         self.assertIn("Rhystic Study", wishlist_html)
         self.assertIn("Add want", wishlist_html)
@@ -1446,6 +1452,126 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIsNone(private_group_html)
         self.assertEqual(updated, 1)
         self.assertIn("Private Deck", member_after_update)
+
+    def test_granular_privacy_trusted_visibility_and_hidden_values(self):
+        owner_id = factory.create_user("privacyowner", display_name="Privacy Owner")
+        member_id = factory.create_user("privacyviewer", display_name="Privacy Viewer")
+        trusted_id = factory.create_user("trustedviewer", display_name="Trusted Viewer")
+        app.admin_set_user_trust(trusted_id, "trust", owner_id)
+        app.execute(
+            "UPDATE users SET collection_value_visibility = 'trusted' WHERE id = ?",
+            (owner_id,),
+        )
+        factory.create_collection_item(
+            owner_id,
+            "Members Card",
+            quantity_for_trade=1,
+            price_usd="4.25",
+            visibility="members",
+            is_public=1,
+        )
+        factory.create_collection_item(
+            owner_id,
+            "Trusted Card",
+            quantity_for_trade=1,
+            price_usd="9.50",
+            visibility="trusted",
+            is_public=0,
+        )
+        factory.create_collection_item(
+            owner_id,
+            "Link Card",
+            quantity_for_trade=1,
+            visibility="link",
+            is_public=0,
+        )
+        factory.create_collection_item(
+            owner_id,
+            "Private Card",
+            quantity_for_trade=1,
+            visibility="private",
+            is_public=0,
+        )
+        member = app.row("SELECT * FROM users WHERE id = ?", (member_id,))
+        trusted = app.row("SELECT * FROM users WHERE id = ?", (trusted_id,))
+
+        member_html = app.render_browse(member, {})
+        trusted_html = app.render_browse(trusted, {})
+
+        self.assertIn("Members Card", member_html)
+        self.assertNotIn("Trusted Card", member_html)
+        self.assertNotIn("Link Card", member_html)
+        self.assertNotIn("Private Card", member_html)
+        self.assertNotIn("$4.25", member_html)
+        self.assertIn("Members Card", trusted_html)
+        self.assertIn("Trusted Card", trusted_html)
+        self.assertNotIn("Link Card", trusted_html)
+        self.assertNotIn("Private Card", trusted_html)
+        self.assertIn("$4.25", trusted_html)
+
+    def test_private_group_share_links_are_hashed_revocable_and_control_values(self):
+        owner_id = factory.create_user("shareowner", display_name="Share Owner")
+        item_id = factory.create_collection_item(
+            owner_id,
+            "Secret Binder Card",
+            price_usd="19.99",
+            image_url="https://cards.example.test/secret.jpg",
+            visibility="private",
+            is_public=0,
+        )
+        group_id = app.create_card_group(
+            owner_id,
+            "binder",
+            "Private Binder",
+            visibility="private",
+            default_item_visibility="trusted",
+            show_values=False,
+            show_photos=False,
+        )
+        app.add_collection_item_to_group(owner_id, group_id, item_id, 1)
+
+        token, link = app.create_group_share_link(owner_id, group_id, "Meetup link", 30, False, False)
+        found = app.share_link_from_token(token, touch=False)
+        hidden_html = app.render_shared_group(found, token)
+        stored = app.row("SELECT * FROM privacy_share_links WHERE id = ?", (link["id"],))
+
+        self.assertTrue(token.startswith(app.SHARE_TOKEN_PREFIX))
+        self.assertNotEqual(stored["token_hash"], token)
+        self.assertIn("Secret Binder Card", hidden_html)
+        self.assertNotIn("$19.99", hidden_html)
+        self.assertIn("Values hidden", hidden_html)
+        self.assertIn('referrerpolicy="no-referrer"', hidden_html)
+
+        visible_token, _ = app.create_group_share_link(owner_id, group_id, "Values link", 0, True, True)
+        visible_html = app.render_shared_group(app.share_link_from_token(visible_token, touch=False), visible_token)
+        self.assertIn("$19.99", visible_html)
+
+        self.assertEqual(app.revoke_group_share_link(owner_id, group_id, link["id"]), 1)
+        self.assertIsNone(app.share_link_from_token(token, touch=False))
+
+    def test_group_sharing_defaults_update_without_changing_existing_items(self):
+        owner_id = factory.create_user("defaultowner", display_name="Default Owner")
+        item_id = factory.create_collection_item(owner_id, "Existing Public Card", visibility="members", is_public=1)
+        group_id = app.create_card_group(owner_id, "binder", "Default Binder")
+        app.add_collection_item_to_group(owner_id, group_id, item_id, 1)
+
+        updated = app.update_card_group_sharing_defaults(
+            owner_id,
+            group_id,
+            "trusted",
+            "private",
+            False,
+            False,
+        )
+        group = app.user_group(owner_id, group_id)
+        item = app.row("SELECT * FROM collection_items WHERE id = ?", (item_id,))
+
+        self.assertEqual(updated, 1)
+        self.assertEqual(group["visibility"], "trusted")
+        self.assertEqual(group["default_item_visibility"], "private")
+        self.assertEqual(group["show_values"], 0)
+        self.assertEqual(group["show_photos"], 0)
+        self.assertEqual(item["visibility"], "members")
 
     def test_group_detail_sorts_collection_and_wishlist_items(self):
         user_id = app.create_user("groupsorter", "password123", "Group Sorter")
@@ -5033,7 +5159,8 @@ Deck
         self.assertIn('name="quantity_for_trade"', html)
         self.assertIn("Visibility", html)
         self.assertIn('<option value="">No change</option>', html)
-        self.assertIn('<option value="0">Private</option>', html)
+        self.assertIn('<option value="trusted">Trusted members</option>', html)
+        self.assertIn('<option value="private">Private</option>', html)
         self.assertIn('list="collection-search-suggestions"', html)
         self.assertIn('<datalist id="collection-search-suggestions">', html)
         self.assertIn('value="Card 00"', html)
@@ -5582,6 +5709,28 @@ Deck
         self.assertIsNone(quantity)
         self.assertIsNone(quantity_for_trade)
         self.assertEqual(is_public, 0)
+
+    def test_bulk_update_accepts_granular_visibility(self):
+        user_id = factory.create_user("bulkprivacy", display_name="Bulk Privacy")
+        card_id = factory.create_collection_item(user_id, "Trusted Bulk Card")
+
+        quantity, quantity_for_trade, visibility = app.parse_bulk_collection_update({
+            "quantity": [""],
+            "quantity_for_trade": [""],
+            "visibility": ["trusted"],
+        })
+        app.update_collection_items_by_ids(
+            user_id,
+            [card_id],
+            quantity=quantity,
+            quantity_for_trade=quantity_for_trade,
+            is_public=visibility,
+        )
+        card = app.row("SELECT visibility, is_public FROM collection_items WHERE id = ?", (card_id,))
+
+        self.assertEqual(visibility, "trusted")
+        self.assertEqual(card["visibility"], "trusted")
+        self.assertEqual(card["is_public"], 0)
 
     def test_bulk_update_requires_at_least_one_value(self):
         with self.assertRaisesRegex(ValueError, "Enter a quantity"):

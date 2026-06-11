@@ -4,6 +4,9 @@ Shared app helpers are injected at runtime by the app facade.
 """
 
 def want_trade_matches(user_id, want, limit=3):
+    privacy_clause, privacy_params = visibility_sql_for_user_id(
+        user_id, "collection_items.visibility", "collection_items.user_id"
+    )
     condition_preference = row_value(want, "condition", "")
     finish_preference = row_value(want, "finish", "")
     language_preference = row_value(want, "language", "")
@@ -25,7 +28,7 @@ def want_trade_matches(user_id, want, limit=3):
         language_preference,
         language_preference,
     ]
-    params = [budget_cap_usd, budget_cap_usd, *base_params]
+    params = [budget_cap_usd, budget_cap_usd, user_id, *privacy_params, *base_params[1:]]
     matches = rows(
         f"""
         SELECT
@@ -47,7 +50,7 @@ def want_trade_matches(user_id, want, limit=3):
         WHERE collection_items.user_id != ?
             AND users.is_banned = 0
             AND collection_items.quantity_for_trade > 0
-            AND collection_items.is_public = 1
+            AND {privacy_clause}
             AND collection_items.game = ?
             AND (
                 (? != '' AND collection_items.scryfall_id = ?)
@@ -67,7 +70,7 @@ def want_trade_matches(user_id, want, limit=3):
         params,
     )
     totals = row(
-        """
+        f"""
         SELECT
             COUNT(DISTINCT users.id) AS user_count,
             COALESCE(SUM(collection_items.quantity_for_trade), 0) AS total_quantity,
@@ -84,7 +87,7 @@ def want_trade_matches(user_id, want, limit=3):
         WHERE collection_items.user_id != ?
             AND users.is_banned = 0
             AND collection_items.quantity_for_trade > 0
-            AND collection_items.is_public = 1
+            AND {privacy_clause}
             AND collection_items.game = ?
             AND (
                 (? != '' AND collection_items.scryfall_id = ?)

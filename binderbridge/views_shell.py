@@ -578,6 +578,10 @@ def render_passkey_account_panel(user):
 
 def render_account(user, notice=None, status="info", recovery_codes=None):
     public_email_checked = checked(bool(user["public_email"]))
+    value_visibility_options = "".join(
+        f'<option value="{e(value)}"{selected(row_value(user, "collection_value_visibility", VISIBILITY_MEMBERS), value)}>{e(label)}</option>'
+        for value, label in VALUE_VISIBILITY_OPTIONS
+    )
     price_alert_checked = checked(bool(row_value(user, "price_alerts_enabled", 1)))
     price_alert_threshold = row_value(user, "price_alert_threshold_percent", "0") or "0"
     watchlist_alert_checked = checked(bool(row_value(user, "watchlist_alerts_enabled", 1)))
@@ -717,6 +721,9 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
             <label class="checkbox-line span-2">
                 <input type="checkbox" name="public_email" value="1"{public_email_checked}>
                 Show email on my member profile
+            </label>
+            <label class="span-2">Who can see collection values
+                <select name="collection_value_visibility">{value_visibility_options}</select>
             </label>
             <label class="span-2">Bio
                 <textarea name="bio" rows="5" maxlength="1000">{e(user["bio"])}</textarea>

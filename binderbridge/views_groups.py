@@ -13,24 +13,25 @@ def group_count_label(group):
 
 
 def record_is_public(record):
-    return bool(int(row_value(record, "is_public", 1) or 0))
-
-
-def visibility_label(record):
-    return "Public" if record_is_public(record) else "Private"
+    return record_visibility(record) == VISIBILITY_MEMBERS
 
 
 def visibility_badge(record):
-    css_class = "accepted" if record_is_public(record) else "pending"
+    visibility = record_visibility(record)
+    css_class = "accepted" if visibility == VISIBILITY_MEMBERS else "pending" if visibility == VISIBILITY_TRUSTED else "declined" if visibility == VISIBILITY_PRIVATE else ""
     return f'<span class="status {css_class}">{e(visibility_label(record))}</span>'
 
 
-def visibility_checkbox(record, name="is_public"):
+def visibility_checkbox(record, name="visibility"):
+    current = record_visibility(record)
+    options = "".join(
+        f'<option value="{e(value)}"{selected(current, value)}>{e(label)}</option>'
+        for value, label in VISIBILITY_OPTIONS
+    )
     return f"""
     <label class="span-2">Visibility
         <select name="{e(name)}">
-            <option value="1"{selected("1" if record_is_public(record) else "0", "1")}>Public</option>
-            <option value="0"{selected("1" if record_is_public(record) else "0", "0")}>Private</option>
+            {options}
         </select>
     </label>
     """
@@ -124,12 +125,7 @@ def render_groups(user, notice=None, status="info", view="cards"):
             <label class="span-2">Notes
                 <textarea name="description" rows="4" maxlength="1000"></textarea>
             </label>
-            <label class="span-2">Visibility
-                <select name="is_public">
-                    <option value="1" selected>Public</option>
-                    <option value="0">Private</option>
-                </select>
-            </label>
+            {visibility_checkbox({"visibility": VISIBILITY_MEMBERS})}
             <div class="form-actions span-2">
                 <button class="button primary" type="submit">Create group</button>
             </div>
@@ -630,7 +626,78 @@ def render_deck_import_panel(user, group, result=None, review=None):
     """
 
 
-def render_group_detail(user, group_id, notice=None, status="info", import_result=None, import_review=None, query=None):
+def render_group_share_link_row(group, link):
+    revoked = bool(row_value(link, "revoked_at", ""))
+    expired = bool(row_value(link, "expires_at", "") and row_value(link, "expires_at", "") <= now_iso())
+    state = "Revoked" if revoked else "Expired" if expired else "Active"
+    state_class = "declined" if revoked or expired else "accepted"
+    revoke_form = ""
+    if not revoked:
+        revoke_form = f"""
+        <form method="post" action="/groups/{group["id"]}/share-links/{link["id"]}/revoke">
+            <button class="button danger small" type="submit" onclick="return confirm('Revoke this private share link?')">Revoke</button>
+        </form>
+        """
+    expires = row_value(link, "expires_at", "")
+    return f"""
+    <li>
+        <div>
+            <strong>{e(link["label"])}</strong>
+            <span>Token ending {e(link["token_hint"])} - {e("expires " + expires[:10] if expires else "no expiration")}</span>
+            <small>{e("Values shown" if link["show_values"] else "Values hidden")} - {e("photos shown" if link["show_photos"] else "photos hidden")}{e(" - last opened " + link["last_accessed_at"][:10] if link["last_accessed_at"] else "")}</small>
+        </div>
+        <div class="actions"><span class="status {state_class}">{e(state)}</span>{revoke_form}</div>
+    </li>
+    """
+
+
+def render_group_privacy_panel(group, share_result=None):
+    share_rows = "".join(render_group_share_link_row(group, link) for link in group_share_link_rows(group["user_id"], group["id"]))
+    share_rows = share_rows or '<li class="muted compact">No private share links yet.</li>'
+    share_result_panel = ""
+    if share_result:
+        share_result_panel = f"""
+        <div class="notice success span-2">
+            <strong>Copy this private link now</strong>
+            <input readonly value="{e(share_result["url"])}" onclick="this.select()">
+        </div>
+        """
+    visibility_options = "".join(
+        f'<option value="{e(value)}"{selected(record_visibility(group), value)}>{e(label)}</option>'
+        for value, label in VISIBILITY_OPTIONS
+    )
+    default_options = "".join(
+        f'<option value="{e(value)}"{selected(row_value(group, "default_item_visibility", VISIBILITY_MEMBERS), value)}>{e(label)}</option>'
+        for value, label in VISIBILITY_OPTIONS
+    )
+    return f"""
+    <section class="content-grid group-sharing-grid">
+        <form class="panel form-grid compact-form" method="post" action="/groups/{group["id"]}/sharing">
+            <div class="span-2 panel-heading"><h2>Sharing defaults</h2><span class="pill">{e(visibility_label(group))}</span></div>
+            <label>Group audience<select name="visibility">{visibility_options}</select></label>
+            <label>New item default<select name="default_item_visibility">{default_options}</select></label>
+            <label class="checkbox-line span-2"><input type="checkbox" name="show_values" value="1"{checked(row_value(group, "show_values", 1))}> Show card values when this group is viewed</label>
+            <label class="checkbox-line span-2"><input type="checkbox" name="show_photos" value="1"{checked(row_value(group, "show_photos", 1))}> Show condition photos when this group is viewed</label>
+            <p class="muted compact span-2">Defaults apply to future items and imports. Existing card visibility is never changed automatically.</p>
+            <div class="form-actions span-2"><button class="button secondary" type="submit">Save sharing defaults</button></div>
+        </form>
+        <article class="panel">
+            <form class="form-grid compact-form" method="post" action="/groups/{group["id"]}/share-links">
+                <div class="span-2 panel-heading"><h2>Private share links</h2></div>
+                <label>Label<input name="label" maxlength="80" placeholder="Friday meetup"></label>
+                <label>Expires<select name="expires_days"><option value="7">In 7 days</option><option value="30" selected>In 30 days</option><option value="90">In 90 days</option><option value="0">Never</option></select></label>
+                <label class="checkbox-line"><input type="checkbox" name="show_values" value="1"> Show values</label>
+                <label class="checkbox-line"><input type="checkbox" name="show_photos" value="1" checked> Show photos</label>
+                {share_result_panel}
+                <div class="form-actions span-2"><button class="button primary" type="submit">Create private link</button></div>
+            </form>
+            <ul class="stack-list compact-stack">{share_rows}</ul>
+        </article>
+    </section>
+    """
+
+
+def render_group_detail(user, group_id, notice=None, status="info", import_result=None, import_review=None, query=None, share_result=None):
     group = user_group(user["id"], group_id)
     if not group:
         return None
@@ -675,53 +742,126 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         <div class="actions">
             <a class="button secondary" href="{e(group_listing_url(group))}">{e(back_label)}</a>
             <a class="button secondary" href="/groups/{group["id"]}/export">Export CSV</a>
-            <form method="post" action="/groups/{group["id"]}/visibility">
-                <input type="hidden" name="is_public" value="{e('0' if record_is_public(group) else '1')}">
-                <button class="button secondary" type="submit">Make {e('private' if record_is_public(group) else 'public')}</button>
-            </form>
             <form method="post" action="/groups/{group["id"]}/delete">
                 <button class="button danger" type="submit" onclick="return confirm('Delete this group? Cards stay in your collection and wants.')">Delete group</button>
             </form>
         </div>
     </section>
     {items_html}
+    {render_group_privacy_panel(group, share_result=share_result)}
     {deck_import_html}
     """
     return render_layout(user, group["name"], content, active=layout_active, notice=notice, status=status)
 
 
-def public_member_group_rows(member_id):
-    return rows(
-        """
-        SELECT
-            card_groups.*,
-            COALESCE((
-                SELECT SUM(group_collection_items.quantity)
-                FROM group_collection_items
-                JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
-                WHERE group_collection_items.group_id = card_groups.id AND collection_items.is_public = 1
-            ), 0) AS collection_quantity,
-            (
-                SELECT COUNT(*)
-                FROM group_collection_items
-                JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
-                WHERE group_collection_items.group_id = card_groups.id AND collection_items.is_public = 1
-            ) AS collection_entries,
-            (
-                SELECT COUNT(*)
-                FROM group_want_items
-                JOIN want_items ON want_items.id = group_want_items.want_item_id
-                WHERE group_want_items.group_id = card_groups.id AND want_items.is_public = 1
-            ) AS want_entries
-        FROM card_groups
-        WHERE card_groups.user_id = ? AND card_groups.is_public = 1
-        ORDER BY card_groups.group_type, card_groups.name COLLATE NOCASE
-        """,
-        (member_id,),
+def render_shared_photo_gallery(collection_item_id, token):
+    photos = collection_item_photo_rows(collection_item_id)
+    if not photos:
+        return ""
+    return '<div class="condition-photo-gallery compact">' + "".join(
+        f'<a href="/share/{e(token)}/photos/{photo["id"]}" target="_blank" rel="noreferrer"><img src="/share/{e(token)}/photos/{photo["id"]}" alt="{e(photo["caption"] or photo["original_filename"])}"></a>'
+        for photo in photos
+    ) + "</div>"
+
+
+def render_shared_group(link, token):
+    group_id = link["target_id"]
+    show_values = bool(link["show_values"])
+    show_photos = bool(link["show_photos"])
+    if link["group_type"] == "wishlist":
+        items = rows(
+            """
+            SELECT want_items.*
+            FROM group_want_items
+            JOIN want_items ON want_items.id = group_want_items.want_item_id
+            WHERE group_want_items.group_id = ?
+            ORDER BY want_items.card_name COLLATE NOCASE, want_items.set_name COLLATE NOCASE
+            """,
+            (group_id,),
+        )
+        body = "".join(
+            f"""
+            <li class="group-item"><div><strong>{e(item["card_name"])}</strong>
+            <span>{e(item["set_name"] or "Any set")} - want {e(item["desired_quantity"])}</span>
+            {price_pill(item) if show_values else ""}</div></li>
+            """
+            for item in items
+        )
+    else:
+        items = rows(
+            """
+            SELECT group_collection_items.quantity AS group_quantity, collection_items.*
+            FROM group_collection_items
+            JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+            WHERE group_collection_items.group_id = ?
+            ORDER BY collection_items.card_name COLLATE NOCASE, collection_items.set_name COLLATE NOCASE
+            """,
+            (group_id,),
+        )
+        body = "".join(
+            f"""
+            <li class="group-item"><div class="card-cell">
+                {f'<img class="card-thumb" src="{e(item["image_url"])}" alt="" referrerpolicy="no-referrer">' if item["image_url"] else '<span class="card-thumb placeholder"></span>'}
+                <div><strong>{e(item["group_quantity"])} x {e(item["card_name"])}</strong>
+                <span>{e(item["set_name"] or "Any set")} - {e(item["condition"])} - {e(item["finish"])}</span>
+                {price_pill(item) if show_values else ""}
+                {render_shared_photo_gallery(item["id"], token) if show_photos else ""}</div>
+            </div></li>
+            """
+            for item in items
+        )
+    items_html = f'<ul class="group-item-list">{body}</ul>' if body else '<div class="empty-state">This shared group has no cards.</div>'
+    description = f'<p class="lead">{e(link["group_description"])}</p>' if link["group_description"] else ""
+    content = f"""
+    <section class="section-heading">
+        <div><p class="eyebrow">Shared by {e(link["owner_name"])}</p><h1>{e(link["group_name"])}</h1>{description}</div>
+        <span class="pill">Private link</span>
+    </section>
+    <section class="panel">
+        <div class="panel-heading"><h2>{e(group_type_label(link["group_type"]))} cards</h2><span class="muted">{e("Values shown" if show_values else "Values hidden")} - {e("photos shown" if show_photos else "photos hidden")}</span></div>
+        {items_html}
+    </section>
+    """
+    return render_layout(None, link["group_name"], content)
+
+
+def public_member_group_rows(member_id, viewer=None):
+    group_clause, group_params = visibility_sql_for_user(viewer, "visibility", "user_id")
+    collection_clause, collection_params = visibility_sql_for_user(viewer, "collection_items.visibility", "collection_items.user_id")
+    want_clause, want_params = visibility_sql_for_user(viewer, "want_items.visibility", "want_items.user_id")
+    visible_groups = rows(
+        f"SELECT * FROM card_groups WHERE user_id = ? AND {group_clause} ORDER BY group_type, name COLLATE NOCASE",
+        [member_id, *group_params],
     )
+    result = []
+    for group in visible_groups:
+        data = dict(group)
+        collection = row(
+            f"""
+            SELECT COALESCE(SUM(group_collection_items.quantity), 0) AS quantity, COUNT(*) AS entries
+            FROM group_collection_items
+            JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+            WHERE group_collection_items.group_id = ? AND {collection_clause}
+            """,
+            [group["id"], *collection_params],
+        )
+        wants = row(
+            f"""
+            SELECT COUNT(*) AS entries
+            FROM group_want_items
+            JOIN want_items ON want_items.id = group_want_items.want_item_id
+            WHERE group_want_items.group_id = ? AND {want_clause}
+            """,
+            [group["id"], *want_params],
+        )
+        data["collection_quantity"] = int(collection["quantity"] or 0)
+        data["collection_entries"] = int(collection["entries"] or 0)
+        data["want_entries"] = int(wants["entries"] or 0)
+        result.append(data)
+    return result
 
 
-def render_public_group_collection_items(items):
+def render_public_group_collection_items(user, member, group, items):
     if not items:
         return '<div class="empty-state">No public cards in this group.</div>'
     rendered = "".join(
@@ -733,8 +873,8 @@ def render_public_group_collection_items(items):
                     <strong>{e(item["group_quantity"])} x {e(item["card_name"])}</strong>
                     <span>{e(item["set_name"] or "Any set")} - {e(item["condition"])} - {e(item["finish"])}</span>
                     {f'<span class="subtle condition-detail">{e(row_value(item, "condition_notes", ""))}</span>' if row_value(item, "condition_notes", "") else ''}
-                    {render_collection_photo_gallery(item["id"], compact=True)}
-                    <span class="subtle">{e(game_label(item["game"]))}{price_pill(item)}</span>
+                    {render_collection_photo_gallery(item["id"], compact=True) if row_value(group, "show_photos", 1) else ""}
+                    <span class="subtle">{e(game_label(item["game"]))}{visible_price_pill(user, member, item, group=group)}</span>
                 </div>
             </div>
         </li>
@@ -744,7 +884,7 @@ def render_public_group_collection_items(items):
     return f'<ul class="group-item-list">{rendered}</ul>'
 
 
-def render_public_group_want_items(wants):
+def render_public_group_want_items(user, member, group, wants):
     if not wants:
         return '<div class="empty-state">No public wanted cards in this group.</div>'
     rendered = "".join(
@@ -753,7 +893,7 @@ def render_public_group_want_items(wants):
             <div>
                 <strong>{e(want["card_name"])}</strong>
                 <span>{e(want["set_name"] or "Any set")} - want {e(want["desired_quantity"])}</span>
-                <span class="subtle">{e(want["type_line"] or "Any printing")}{price_pill(want)}</span>
+                <span class="subtle">{e(want["type_line"] or "Any printing")}{visible_price_pill(user, member, want, group=group)}</span>
                 <span class="subtle">{e(want_priority_label(row_value(want, "priority", "normal")))} priority{f' - up to ${e(normalize_price_usd(row_value(want, "budget_cap_usd", "")))} each' if normalize_price_usd(row_value(want, "budget_cap_usd", "")) else ''}</span>
                 {f'<span class="subtle"><strong>Preferred printing:</strong> {e(row_value(want, "preferred_printing_notes", ""))}</span>' if row_value(want, "preferred_printing_notes", "") else ''}
             </div>
@@ -769,12 +909,11 @@ def render_public_group_detail(user, member_id, group_id, query=None, notice=Non
     if not member or member["id"] == user["id"] or member["is_banned"]:
         return None
     query = query or {}
-    group = row(
-        "SELECT * FROM card_groups WHERE id = ? AND user_id = ? AND is_public = 1",
-        (group_id, member_id),
-    )
-    if not group:
+    group = row("SELECT * FROM card_groups WHERE id = ? AND user_id = ?", (group_id, member_id))
+    if not group or not can_view_record(user, member_id, group):
         return None
+    collection_clause, collection_params = visibility_sql_for_user(user, "collection_items.visibility", "collection_items.user_id")
+    want_clause, want_params = visibility_sql_for_user(user, "want_items.visibility", "want_items.user_id")
     if group["group_type"] == "wishlist":
         current_sort, current_dir = sort_state(query, WANT_SORT_OPTIONS)
         order_clause = sort_order_clause(
@@ -788,12 +927,12 @@ def render_public_group_detail(user, member_id, group_id, query=None, notice=Non
             SELECT group_want_items.id AS group_item_id, want_items.*
             FROM group_want_items
             JOIN want_items ON want_items.id = group_want_items.want_item_id
-            WHERE group_want_items.group_id = ? AND want_items.is_public = 1
+            WHERE group_want_items.group_id = ? AND {want_clause}
             ORDER BY {order_clause}
             """,
-            (group_id,),
+            [group_id, *want_params],
         )
-        items_html = render_public_group_want_items(items)
+        items_html = render_public_group_want_items(user, member, group, items)
         sort_options = WANT_SORT_OPTIONS
     else:
         current_sort, current_dir = sort_state(query, CARD_SORT_OPTIONS)
@@ -811,12 +950,12 @@ def render_public_group_detail(user, member_id, group_id, query=None, notice=Non
                 collection_items.*
             FROM group_collection_items
             JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
-            WHERE group_collection_items.group_id = ? AND collection_items.is_public = 1
+            WHERE group_collection_items.group_id = ? AND {collection_clause}
             ORDER BY {order_clause}
             """,
-            (group_id,),
+            [group_id, *collection_params],
         )
-        items_html = render_public_group_collection_items(items)
+        items_html = render_public_group_collection_items(user, member, group, items)
         sort_options = CARD_SORT_OPTIONS
     sort_bar = render_sort_bar(f"/members/{member_id}/groups/{group_id}", query, sort_options, current_sort, current_dir)
     description = f'<p class="lead">{e(group["description"])}</p>' if group["description"] else ""
@@ -842,3 +981,4 @@ def render_public_group_detail(user, member_id, group_id, query=None, notice=Non
 
 
 __all__ = ['group_count_label', 'record_is_public', 'visibility_label', 'visibility_badge', 'visibility_checkbox', 'render_group_card', 'normalize_group_view', 'render_groups', 'collection_item_option_tags', 'want_item_option_tags', 'render_group_collection_items', 'render_group_want_items', 'render_group_import_result', 'render_import_warning_block', 'render_import_preview_rows', 'render_import_batch_list', 'render_collection_import_preview', 'render_deck_import_preview', 'render_deck_missing_wishlist_prompt', 'render_deck_import_review', 'render_deck_import_panel', 'render_group_detail', 'public_member_group_rows', 'render_public_group_collection_items', 'render_public_group_want_items', 'render_public_group_detail']
+__all__.extend(['render_group_share_link_row', 'render_group_privacy_panel', 'render_shared_photo_gallery', 'render_shared_group'])

@@ -20,7 +20,7 @@ def groups_page(self, method, user, query=None):
             form.get("group_type", ["deck"])[0],
             form.get("name", [""])[0],
             form.get("description", [""])[0],
-            form.get("is_public", [""])[0] == "1",
+            visibility=form_visibility(form),
         )
     except ValueError as exc:
         return self.html(render_groups(user, notice=str(exc), status="error", view=view), HTTPStatus.BAD_REQUEST)
@@ -46,8 +46,44 @@ def group_action(self, method, user, path, query=None):
         return self.redirect(redirect_to)
     if len(parts) == 3 and parts[2] == "visibility" and method == "POST":
         form = self.read_form()
-        update_card_group_visibility(user["id"], group_id, form.get("is_public", [""])[0] == "1")
+        update_card_group_visibility(user["id"], group_id, form_visibility(form))
         return self.redirect(f"/groups/{group_id}")
+    if len(parts) == 3 and parts[2] == "sharing" and method == "POST":
+        form = self.read_form()
+        update_card_group_sharing_defaults(
+            user["id"],
+            group_id,
+            form_visibility(form),
+            form.get("default_item_visibility", [VISIBILITY_MEMBERS])[0],
+            form.get("show_values", [""])[0] == "1",
+            form.get("show_photos", [""])[0] == "1",
+        )
+        return self.html(render_group_detail(user, group_id, notice="Sharing defaults updated. Existing card visibility was not changed."))
+    if len(parts) == 3 and parts[2] == "share-links" and method == "POST":
+        form = self.read_form()
+        try:
+            token, link = create_group_share_link(
+                user["id"],
+                group_id,
+                form.get("label", [""])[0],
+                form.get("expires_days", ["0"])[0],
+                form.get("show_values", [""])[0] == "1",
+                form.get("show_photos", [""])[0] == "1",
+            )
+        except ValueError as exc:
+            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        share_result = {
+            "url": f"{self.public_base_url()}/share/{token}",
+            "link": link,
+        }
+        return self.html(render_group_detail(user, group_id, notice="Private share link created. Copy it now; the token is not stored.", share_result=share_result))
+    if len(parts) == 5 and parts[2] == "share-links" and parts[4] == "revoke" and method == "POST":
+        try:
+            share_id = int(parts[3])
+        except ValueError:
+            return self.not_found(user)
+        revoke_group_share_link(user["id"], group_id, share_id)
+        return self.html(render_group_detail(user, group_id, notice="Share link revoked."))
     if len(parts) == 3 and parts[2] == "export" and method == "GET":
         return self.group_export(user, group)
     if len(parts) == 3 and parts[2] == "import" and method == "POST":
@@ -231,7 +267,40 @@ def member_detail(self, user, path, query=None):
         return self.not_found(user)
     self.html(page)
 
-GROUP_ROUTE_METHODS = ('group_export', 'groups_page', 'group_action', 'group_deck_import', 'group_deck_missing_wants', 'member_detail')
+def shared_group_page(self, path):
+    parts = path.strip("/").split("/")
+    if len(parts) < 2:
+        return self.not_found(None)
+    token = parts[1]
+    link = share_link_from_token(token)
+    if not link:
+        return self.not_found(None)
+    if len(parts) == 2:
+        return self.html(render_shared_group(link, token))
+    if len(parts) == 4 and parts[2] == "photos":
+        try:
+            photo_id = int(parts[3])
+        except ValueError:
+            return self.not_found(None)
+        if not share_link_allows_photos(link):
+            return self.not_found(None)
+        photo = row(
+            """
+            SELECT collection_item_photos.*
+            FROM collection_item_photos
+            JOIN collection_items ON collection_items.id = collection_item_photos.collection_item_id
+            JOIN group_collection_items ON group_collection_items.collection_item_id = collection_items.id
+            WHERE collection_item_photos.id = ? AND group_collection_items.group_id = ?
+            """,
+            (photo_id, link["target_id"]),
+        )
+        if not photo:
+            return self.not_found(None)
+        return self.inline_binary(photo["content"], photo["content_type"], photo["original_filename"])
+    return self.not_found(None)
+
+
+GROUP_ROUTE_METHODS = ('group_export', 'groups_page', 'group_action', 'group_deck_import', 'group_deck_missing_wants', 'member_detail', 'shared_group_page')
 
 __all__ = [
     "GROUP_ROUTE_METHODS",

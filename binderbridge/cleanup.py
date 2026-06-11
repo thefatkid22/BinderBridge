@@ -283,12 +283,13 @@ def merge_collection_duplicate_group(conn, group):
     condition_notes = combine_text_field(items, "condition_notes")
     notes = combine_notes(items)
     is_public = 1 if any(int(row_value(item, "is_public", 1) or 0) for item in items) else 0
+    visibility = VISIBILITY_MEMBERS if is_public else record_visibility(items[0])
     timestamp = now_iso()
 
     conn.execute(
         """
         UPDATE collection_items
-        SET quantity = ?, quantity_for_trade = ?, condition_notes = ?, notes = ?, is_public = ?,
+        SET quantity = ?, quantity_for_trade = ?, condition_notes = ?, notes = ?, is_public = ?, visibility = ?,
             scryfall_id = ?, image_url = ?, mana_cost = ?, type_line = ?, oracle_text = ?,
             rarity = ?, colors = ?, color_identity = ?, scryfall_uri = ?, price_usd = ?,
             price_source = ?, tcgplayer_product_id = ?, cardmarket_product_id = ?,
@@ -301,6 +302,7 @@ def merge_collection_duplicate_group(conn, group):
             condition_notes,
             notes,
             is_public,
+            visibility,
             metadata["scryfall_id"],
             metadata["image_url"],
             metadata["mana_cost"],
@@ -386,12 +388,13 @@ def merge_want_duplicate_group(conn, group):
     ]
     budget_cap_usd = min(budgets, key=price_to_cents) if budgets else ""
     is_public = 1 if any(int(row_value(item, "is_public", 1) or 0) for item in items) else 0
+    visibility = VISIBILITY_MEMBERS if is_public else record_visibility(items[0])
 
     conn.execute(
         """
         UPDATE want_items
         SET desired_quantity = ?, priority = ?, budget_cap_usd = ?,
-            preferred_printing_notes = ?, notes = ?, is_public = ?,
+            preferred_printing_notes = ?, notes = ?, is_public = ?, visibility = ?,
             scryfall_id = ?, image_url = ?, mana_cost = ?, type_line = ?, oracle_text = ?,
             rarity = ?, colors = ?, color_identity = ?, scryfall_uri = ?, price_usd = ?,
             price_source = ?, updated_at = ?
@@ -404,6 +407,7 @@ def merge_want_duplicate_group(conn, group):
             preferred_printing_notes,
             notes,
             is_public,
+            visibility,
             metadata["scryfall_id"],
             metadata["image_url"],
             metadata["mana_cost"],

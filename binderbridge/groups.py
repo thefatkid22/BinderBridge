@@ -16,19 +16,48 @@ def group_type_label(group_type, plural=False):
     return f"{label}s" if plural else label
 
 
-def create_card_group(user_id, group_type, name, description="", is_public=True):
+def create_card_group(
+    user_id,
+    group_type,
+    name,
+    description="",
+    is_public=True,
+    visibility=None,
+    default_item_visibility="members",
+    show_values=True,
+    show_photos=True,
+):
     group_type = normalize_group_type(group_type)
     name = sanitize_text_input(name, max_length=80).strip()
     description = sanitize_text_input(description, max_length=1000).strip()
     if not name:
         raise ValueError("Group name is required.")
+    visibility = normalize_visibility(
+        visibility,
+        default=VISIBILITY_MEMBERS if is_public else VISIBILITY_PRIVATE,
+    )
+    default_item_visibility = normalize_visibility(default_item_visibility)
     timestamp = now_iso()
     return execute(
         """
-        INSERT INTO card_groups (user_id, group_type, name, description, is_public, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO card_groups
+            (user_id, group_type, name, description, is_public, visibility, default_item_visibility,
+             show_values, show_photos, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, group_type, name, description, 1 if is_public else 0, timestamp, timestamp),
+        (
+            user_id,
+            group_type,
+            name,
+            description,
+            visibility_to_public_flag(visibility),
+            visibility,
+            default_item_visibility,
+            1 if show_values else 0,
+            1 if show_photos else 0,
+            timestamp,
+            timestamp,
+        ),
     )
 
 
@@ -144,11 +173,38 @@ def delete_card_group(user_id, group_id):
         return cursor.rowcount
 
 
-def update_card_group_visibility(user_id, group_id, is_public):
+def update_card_group_visibility(user_id, group_id, visibility):
+    if isinstance(visibility, bool):
+        visibility = VISIBILITY_MEMBERS if visibility else VISIBILITY_PRIVATE
+    visibility = normalize_visibility(visibility)
     with db() as conn:
         cursor = conn.execute(
-            "UPDATE card_groups SET is_public = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-            (1 if is_public else 0, now_iso(), group_id, user_id),
+            "UPDATE card_groups SET visibility = ?, is_public = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (visibility, visibility_to_public_flag(visibility), now_iso(), group_id, user_id),
+        )
+        return cursor.rowcount
+
+
+def update_card_group_sharing_defaults(user_id, group_id, visibility, default_item_visibility, show_values, show_photos):
+    visibility = normalize_visibility(visibility)
+    default_item_visibility = normalize_visibility(default_item_visibility)
+    with db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE card_groups
+            SET visibility = ?, is_public = ?, default_item_visibility = ?, show_values = ?, show_photos = ?, updated_at = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                visibility,
+                visibility_to_public_flag(visibility),
+                default_item_visibility,
+                1 if show_values else 0,
+                1 if show_photos else 0,
+                now_iso(),
+                group_id,
+                user_id,
+            ),
         )
         return cursor.rowcount
 
@@ -166,4 +222,5 @@ __all__ = [
     "remove_group_item",
     "delete_card_group",
     "update_card_group_visibility",
+    "update_card_group_sharing_defaults",
 ]

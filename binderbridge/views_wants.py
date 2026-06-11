@@ -26,6 +26,7 @@ def default_want_item():
         "scryfall_finish_override": "",
         "price_source": "",
         "is_public": 1,
+        "visibility": VISIBILITY_MEMBERS,
     }
     for field in SCRYFALL_COLLECTION_FIELDS:
         item[field] = ""
@@ -105,11 +106,12 @@ def validate_want_form(form):
         "language": normalize_want_preference_values(form.get("language", []), LANGUAGE_OPTIONS, normalize_language),
         "preferred_printing_notes": preferred_printing_notes,
         "notes": notes,
-        "is_public": form_public_flag(form),
+        "visibility": form_visibility(form),
         "lookup_on_save": "1" if form.get("lookup_on_save", [""])[0] == "1" else "",
         "scryfall_finish_override": "1" if form.get("scryfall_finish_override", [""])[0] == "1" else "",
         "selected_scryfall_id": sanitize_text_input(form.get("selected_scryfall_id", [""])[0], max_length=80).strip(),
     }
+    data["is_public"] = visibility_to_public_flag(data["visibility"])
     for field in SCRYFALL_COLLECTION_FIELDS:
         data[field] = sanitize_text_input(form.get(field, [""])[0], max_length=5000).strip()
     data["price_usd"] = normalize_price_usd(data.get("price_usd", ""))
@@ -124,8 +126,8 @@ def insert_want_item(user_id, data):
             (user_id, game, card_name, set_name, set_code, collector_number, desired_quantity,
              priority, budget_cap_usd, condition, finish, language,
              scryfall_id, image_url, mana_cost, type_line, oracle_text, rarity, colors, color_identity,
-             scryfall_uri, price_usd, price_source, preferred_printing_notes, notes, is_public, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             scryfall_uri, price_usd, price_source, preferred_printing_notes, notes, is_public, visibility, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -154,6 +156,7 @@ def insert_want_item(user_id, data):
             data.get("preferred_printing_notes", ""),
             data.get("notes", ""),
             1 if data.get("is_public", 1) else 0,
+            normalize_visibility(data.get("visibility", ""), default=VISIBILITY_MEMBERS if data.get("is_public", 1) else VISIBILITY_PRIVATE),
             now_iso(),
             now_iso(),
         ),
@@ -169,7 +172,7 @@ def update_want_item(user_id, want_id, data):
                 desired_quantity = ?, priority = ?, budget_cap_usd = ?, condition = ?, finish = ?, language = ?,
                 scryfall_id = ?, image_url = ?, mana_cost = ?, type_line = ?, oracle_text = ?,
                 rarity = ?, colors = ?, color_identity = ?, scryfall_uri = ?, price_usd = ?,
-                price_source = ?, preferred_printing_notes = ?, notes = ?, is_public = ?, updated_at = ?
+                price_source = ?, preferred_printing_notes = ?, notes = ?, is_public = ?, visibility = ?, updated_at = ?
             WHERE id = ? AND user_id = ?
             """,
             (
@@ -198,6 +201,7 @@ def update_want_item(user_id, want_id, data):
                 data.get("preferred_printing_notes", ""),
                 data.get("notes", ""),
                 1 if data.get("is_public", 1) else 0,
+                normalize_visibility(data.get("visibility", ""), default=VISIBILITY_MEMBERS if data.get("is_public", 1) else VISIBILITY_PRIVATE),
                 now_iso(),
                 want_id,
                 user_id,

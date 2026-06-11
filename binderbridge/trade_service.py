@@ -53,7 +53,7 @@ def validate_collection_form(form):
         "quantity": quantity,
         "quantity_for_trade": quantity_for_trade,
         "notes": notes,
-        "is_public": form_public_flag(form),
+        "visibility": form_visibility(form),
     }
     for field in SCRYFALL_COLLECTION_FIELDS:
         data[field] = sanitize_text_input(form.get(field, [""])[0], max_length=5000).strip()
@@ -81,10 +81,9 @@ def parse_trade_quantities(form, prefix, owner_id, price_basis="", viewer_id=Non
             continue
         where = "id = ? AND user_id = ? AND quantity_for_trade >= ?"
         params = [item_id, owner_id, quantity]
-        if viewer_id is not None and int(viewer_id) != int(owner_id):
-            where += " AND is_public = 1"
         item = row(f"SELECT * FROM collection_items WHERE {where}", params)
-        if item:
+        viewer = row("SELECT * FROM users WHERE id = ?", (viewer_id,)) if viewer_id is not None else None
+        if item and (viewer_id is None or int(viewer_id) == int(owner_id) or can_view_record(viewer, owner_id, item)):
             chosen.append((apply_trade_price_basis(item, price_basis), quantity))
     return chosen
 
@@ -288,9 +287,13 @@ def trade_recommendation_match_rows(owner_id, want_user_id, viewer_id, selected_
     ]
     params = [owner_id, want_user_id]
     if int(viewer_id) != int(owner_id):
-        where.append("collection_items.is_public = 1")
+        clause, privacy_params = visibility_sql_for_user_id(viewer_id, "collection_items.visibility", "collection_items.user_id")
+        where.append(clause)
+        params.extend(privacy_params)
     if public_wants:
-        where.append("want_items.is_public = 1")
+        clause, privacy_params = visibility_sql_for_user_id(viewer_id, "want_items.visibility", "want_items.user_id")
+        where.append(clause)
+        params.extend(privacy_params)
     if selected_ids:
         placeholders = ",".join("?" for _ in selected_ids)
         where.append(f"collection_items.id NOT IN ({placeholders})")
@@ -330,7 +333,9 @@ def trade_recommendation_available_rows(owner_id, viewer_id, selected_ids=None, 
     where = ["user_id = ?", "quantity_for_trade > 0"]
     params = [owner_id]
     if int(viewer_id) != int(owner_id):
-        where.append("is_public = 1")
+        clause, privacy_params = visibility_sql_for_user_id(viewer_id, "visibility", "user_id")
+        where.append(clause)
+        params.extend(privacy_params)
     if selected_ids:
         placeholders = ",".join("?" for _ in selected_ids)
         where.append(f"id NOT IN ({placeholders})")

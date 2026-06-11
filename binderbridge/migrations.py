@@ -1,7 +1,7 @@
 """Versioned SQLite schema migrations for BinderBridge."""
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def db_schema_version(conn):
@@ -166,11 +166,97 @@ def migrate_user_roles(conn):
     )
 
 
+def migrate_granular_privacy(conn):
+    for table in ("collection_items", "want_items", "card_groups"):
+        columns = {column["name"] for column in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "visibility" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN visibility TEXT NOT NULL DEFAULT 'members'")
+        conn.execute(
+            f"UPDATE {table} SET visibility = CASE WHEN is_public = 1 THEN 'members' ELSE 'private' END "
+            "WHERE visibility NOT IN ('private', 'trusted', 'members', 'link') OR visibility = '' "
+            "OR (visibility = 'members' AND is_public = 0)"
+        )
+        conn.execute(f"UPDATE {table} SET is_public = CASE WHEN visibility = 'members' THEN 1 ELSE 0 END")
+    user_columns = {column["name"] for column in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "collection_value_visibility" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN collection_value_visibility TEXT NOT NULL DEFAULT 'members'")
+    group_columns = {column["name"] for column in conn.execute("PRAGMA table_info(card_groups)").fetchall()}
+    for name, definition in {
+        "default_item_visibility": "TEXT NOT NULL DEFAULT 'members'",
+        "show_values": "INTEGER NOT NULL DEFAULT 1",
+        "show_photos": "INTEGER NOT NULL DEFAULT 1",
+    }.items():
+        if name not in group_columns:
+            conn.execute(f"ALTER TABLE card_groups ADD COLUMN {name} {definition}")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS privacy_share_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            target_type TEXT NOT NULL CHECK (target_type IN ('group')),
+            target_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            token_hint TEXT NOT NULL DEFAULT '',
+            label TEXT NOT NULL DEFAULT '',
+            show_values INTEGER NOT NULL DEFAULT 0,
+            show_photos INTEGER NOT NULL DEFAULT 1,
+            expires_at TEXT NOT NULL DEFAULT '',
+            revoked_at TEXT NOT NULL DEFAULT '',
+            last_accessed_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_privacy_share_links_target
+            ON privacy_share_links(user_id, target_type, target_id, revoked_at);
+        CREATE INDEX IF NOT EXISTS idx_collection_visibility_trade
+            ON collection_items(visibility, user_id, card_name COLLATE NOCASE)
+            WHERE quantity_for_trade > 0;
+        CREATE INDEX IF NOT EXISTS idx_wants_visibility_name
+            ON want_items(visibility, user_id, card_name COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_groups_visibility_name
+            ON card_groups(visibility, user_id, group_type, name COLLATE NOCASE);
+
+        CREATE TRIGGER IF NOT EXISTS trg_collection_privacy_insert
+        AFTER INSERT ON collection_items WHEN NEW.visibility = 'members' AND NEW.is_public = 0
+        BEGIN UPDATE collection_items SET visibility = 'private' WHERE id = NEW.id; END;
+        CREATE TRIGGER IF NOT EXISTS trg_collection_privacy_legacy_update
+        AFTER UPDATE OF is_public ON collection_items
+        WHEN NEW.is_public != OLD.is_public AND NEW.visibility = OLD.visibility
+        BEGIN UPDATE collection_items SET visibility = CASE WHEN NEW.is_public = 1 THEN 'members' ELSE 'private' END WHERE id = NEW.id; END;
+        CREATE TRIGGER IF NOT EXISTS trg_collection_privacy_visibility_update
+        AFTER UPDATE OF visibility ON collection_items WHEN NEW.visibility != OLD.visibility
+        BEGIN UPDATE collection_items SET is_public = CASE WHEN NEW.visibility = 'members' THEN 1 ELSE 0 END WHERE id = NEW.id; END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_wants_privacy_insert
+        AFTER INSERT ON want_items WHEN NEW.visibility = 'members' AND NEW.is_public = 0
+        BEGIN UPDATE want_items SET visibility = 'private' WHERE id = NEW.id; END;
+        CREATE TRIGGER IF NOT EXISTS trg_wants_privacy_legacy_update
+        AFTER UPDATE OF is_public ON want_items
+        WHEN NEW.is_public != OLD.is_public AND NEW.visibility = OLD.visibility
+        BEGIN UPDATE want_items SET visibility = CASE WHEN NEW.is_public = 1 THEN 'members' ELSE 'private' END WHERE id = NEW.id; END;
+        CREATE TRIGGER IF NOT EXISTS trg_wants_privacy_visibility_update
+        AFTER UPDATE OF visibility ON want_items WHEN NEW.visibility != OLD.visibility
+        BEGIN UPDATE want_items SET is_public = CASE WHEN NEW.visibility = 'members' THEN 1 ELSE 0 END WHERE id = NEW.id; END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_groups_privacy_insert
+        AFTER INSERT ON card_groups WHEN NEW.visibility = 'members' AND NEW.is_public = 0
+        BEGIN UPDATE card_groups SET visibility = 'private' WHERE id = NEW.id; END;
+        CREATE TRIGGER IF NOT EXISTS trg_groups_privacy_legacy_update
+        AFTER UPDATE OF is_public ON card_groups
+        WHEN NEW.is_public != OLD.is_public AND NEW.visibility = OLD.visibility
+        BEGIN UPDATE card_groups SET visibility = CASE WHEN NEW.is_public = 1 THEN 'members' ELSE 'private' END WHERE id = NEW.id; END;
+        CREATE TRIGGER IF NOT EXISTS trg_groups_privacy_visibility_update
+        AFTER UPDATE OF visibility ON card_groups WHEN NEW.visibility != OLD.visibility
+        BEGIN UPDATE card_groups SET is_public = CASE WHEN NEW.visibility = 'members' THEN 1 ELSE 0 END WHERE id = NEW.id; END;
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
     (3, "csv import mapping presets", migrate_csv_import_mapping_presets),
     (4, "user roles and hierarchy", migrate_user_roles),
+    (5, "granular privacy and share links", migrate_granular_privacy),
 )
 
 
@@ -193,6 +279,7 @@ __all__ = [
     "migrate_dispute_moderation",
     "migrate_csv_import_mapping_presets",
     "migrate_user_roles",
+    "migrate_granular_privacy",
     "SCHEMA_MIGRATIONS",
     "run_schema_migrations",
 ]

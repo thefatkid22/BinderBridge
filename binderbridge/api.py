@@ -732,13 +732,13 @@ COLLECTION_API_FIELDS = (
     "id", "game", "card_name", "set_name", "set_code", "collector_number", "finish", "condition",
     "condition_notes", "language", "quantity", "quantity_for_trade", "scryfall_id", "image_url", "mana_cost", "type_line",
     "oracle_text", "rarity", "colors", "color_identity", "scryfall_uri", "price_usd", "price_source",
-    "price_refreshed_at", "price_status", "notes", "is_public", "created_at", "updated_at",
+    "price_refreshed_at", "price_status", "notes", "is_public", "visibility", "created_at", "updated_at",
 )
 WANT_API_FIELDS = (
     "id", "game", "card_name", "set_name", "set_code", "collector_number", "desired_quantity",
     "priority", "budget_cap_usd", "condition", "finish", "language", "scryfall_id", "image_url", "mana_cost", "type_line",
     "oracle_text", "rarity", "colors", "color_identity", "scryfall_uri", "price_usd", "price_source",
-    "preferred_printing_notes", "notes", "is_public", "created_at", "updated_at",
+    "preferred_printing_notes", "notes", "is_public", "visibility", "created_at", "updated_at",
 )
 
 

@@ -62,7 +62,7 @@ def collection_filter_values(query):
         filters["color_identity"] = ""
     if filters["card_data"] and filters["card_data"] not in dict(CARD_DATA_FILTER_OPTIONS):
         filters["card_data"] = ""
-    if filters["visibility"] not in ("", "public", "private"):
+    if filters["visibility"] not in ("", *VISIBILITY_LABELS.keys()):
         filters["visibility"] = ""
     return filters
 
@@ -534,10 +534,9 @@ def render_collection(user, query, notice=None, status="info"):
                     <input type="number" min="0" name="quantity_for_trade" placeholder="No change">
                 </label>
                 <label>Visibility
-                    <select name="is_public">
+                    <select name="visibility">
                         <option value="">No change</option>
-                        <option value="1">Public</option>
-                        <option value="0">Private</option>
+                        {''.join(f'<option value="{e(value)}">{e(label)}</option>' for value, label in VISIBILITY_OPTIONS)}
                     </select>
                 </label>
                 <button class="button secondary small" type="submit" formaction="/collection/bulk-update">Update selected</button>
@@ -674,8 +673,7 @@ def render_collection(user, query, notice=None, status="info"):
                 <label>Visibility
                     <select name="visibility">
                         <option value="">Any visibility</option>
-                        <option value="public"{selected(filters["visibility"], "public")}>Public</option>
-                        <option value="private"{selected(filters["visibility"], "private")}>Private</option>
+                        {''.join(f'<option value="{e(value)}"{selected(filters["visibility"], value)}>{e(label)}</option>' for value, label in VISIBILITY_OPTIONS)}
                     </select>
                 </label>
                 <label>Qty min
@@ -1021,7 +1019,7 @@ def render_browse(user, query, notice=None, status="info"):
         f'<option value="{owner["id"]}"{selected(str(owner_id), str(owner["id"]))}>{e(owner["display_name"])} (@{e(owner["username"])})</option>'
         for owner in filter_users
     )
-    rows_html = "".join(render_browse_row(item) for item in items)
+    rows_html = "".join(render_browse_row(user, item) for item in items)
     language_options = simple_option_tags(LANGUAGE_OPTIONS, filters["language"])
     rarity_options = "".join(
         f'<option value="{rarity}"{selected(filters["rarity"], rarity)}>{e(rarity.title())}</option>'
@@ -1188,10 +1186,10 @@ def render_browse(user, query, notice=None, status="info"):
     return render_layout(user, "Browse", content, active="browse", notice=notice, status=status)
 
 
-def render_browse_row(item):
+def render_browse_row(user, item):
     thumb = f'<img class="card-thumb" src="{e(item["image_url"])}" alt="">' if item["image_url"] else '<span class="card-thumb placeholder"></span>'
     type_line = f'<span class="subtle">{e(item["type_line"])}</span>' if item["type_line"] else f'<span class="subtle">{e(item["collector_number"])}</span>'
-    price = price_pill(item)
+    price = visible_price_pill(user, item, item)
     scryfall_link = f'<a class="subtle" href="{e(item["scryfall_uri"])}" target="_blank" rel="noreferrer">Scryfall</a>' if item["scryfall_uri"] else ""
     photo_preview = render_browse_photo_preview(item)
     trade_form = f"""
