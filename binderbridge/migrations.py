@@ -1,7 +1,7 @@
 """Versioned SQLite schema migrations for BinderBridge."""
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 def db_schema_version(conn):
@@ -289,6 +289,50 @@ def migrate_collection_share_links(conn):
     )
 
 
+def migrate_want_share_links(conn):
+    conn.executescript(
+        """
+        DROP TRIGGER IF EXISTS trg_collection_share_links_delete;
+        DROP TRIGGER IF EXISTS trg_group_share_links_delete;
+        DROP TRIGGER IF EXISTS trg_want_share_links_delete;
+        ALTER TABLE privacy_share_links RENAME TO privacy_share_links_legacy;
+        CREATE TABLE privacy_share_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            target_type TEXT NOT NULL CHECK (target_type IN ('group', 'collection', 'want')),
+            target_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            token_hint TEXT NOT NULL DEFAULT '',
+            label TEXT NOT NULL DEFAULT '',
+            show_values INTEGER NOT NULL DEFAULT 0,
+            show_photos INTEGER NOT NULL DEFAULT 1,
+            expires_at TEXT NOT NULL DEFAULT '',
+            revoked_at TEXT NOT NULL DEFAULT '',
+            last_accessed_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO privacy_share_links
+            (id, user_id, target_type, target_id, token_hash, token_hint, label, show_values, show_photos,
+             expires_at, revoked_at, last_accessed_at, created_at)
+        SELECT id, user_id, target_type, target_id, token_hash, token_hint, label, show_values, show_photos,
+             expires_at, revoked_at, last_accessed_at, created_at
+        FROM privacy_share_links_legacy;
+        DROP TABLE privacy_share_links_legacy;
+        CREATE INDEX idx_privacy_share_links_target
+            ON privacy_share_links(user_id, target_type, target_id, revoked_at);
+        CREATE TRIGGER trg_collection_share_links_delete
+        AFTER DELETE ON collection_items
+        BEGIN DELETE FROM privacy_share_links WHERE target_type = 'collection' AND target_id = OLD.id; END;
+        CREATE TRIGGER trg_group_share_links_delete
+        AFTER DELETE ON card_groups
+        BEGIN DELETE FROM privacy_share_links WHERE target_type = 'group' AND target_id = OLD.id; END;
+        CREATE TRIGGER trg_want_share_links_delete
+        AFTER DELETE ON want_items
+        BEGIN DELETE FROM privacy_share_links WHERE target_type = 'want' AND target_id = OLD.id; END;
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
@@ -296,6 +340,7 @@ SCHEMA_MIGRATIONS = (
     (4, "user roles and hierarchy", migrate_user_roles),
     (5, "granular privacy and share links", migrate_granular_privacy),
     (6, "collection card share links", migrate_collection_share_links),
+    (7, "wanted card share links", migrate_want_share_links),
 )
 
 
@@ -320,6 +365,7 @@ __all__ = [
     "migrate_user_roles",
     "migrate_granular_privacy",
     "migrate_collection_share_links",
+    "migrate_want_share_links",
     "SCHEMA_MIGRATIONS",
     "run_schema_migrations",
 ]

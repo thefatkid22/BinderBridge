@@ -649,6 +649,132 @@ def render_want_form(
     """
 
 
+def render_want_share_link_row(want, link):
+    revoked = bool(row_value(link, "revoked_at", ""))
+    expired = bool(row_value(link, "expires_at", "") and row_value(link, "expires_at", "") <= now_iso())
+    state = "Revoked" if revoked else "Expired" if expired else "Active"
+    state_class = "declined" if revoked or expired else "accepted"
+    revoke_form = ""
+    if not revoked:
+        revoke_form = f"""
+        <form method="post" action="/wants/{want["id"]}/share-links/{link["id"]}/revoke">
+            <button class="button danger small" type="submit" onclick="return confirm('Revoke this private wanted-card link?')">Revoke</button>
+        </form>
+        """
+    expires = row_value(link, "expires_at", "")
+    return f"""
+    <li>
+        <div>
+            <strong>{e(link["label"])}</strong>
+            <span>Token ending {e(link["token_hint"])} - {e("expires " + expires[:10] if expires else "no expiration")}</span>
+            <small>{e("Value shown" if link["show_values"] else "Value hidden")}{e(" - last opened " + link["last_accessed_at"][:10] if link["last_accessed_at"] else "")}</small>
+        </div>
+        <div class="actions"><span class="status {state_class}">{e(state)}</span>{revoke_form}</div>
+    </li>
+    """
+
+
+def render_want_share_panel(user_id, want, share_result=None):
+    links = want_share_link_rows(user_id, want["id"])
+    link_rows = "".join(render_want_share_link_row(want, link) for link in links)
+    link_rows = link_rows or '<li class="muted compact">No private wanted-card links yet.</li>'
+    result_panel = ""
+    if share_result:
+        result_panel = f"""
+        <div class="notice success span-2">
+            <strong>Copy this private link now</strong>
+            <input readonly value="{e(share_result["url"])}" onclick="this.select()">
+        </div>
+        """
+    if record_visibility(want) == VISIBILITY_LINK:
+        create_form = f"""
+        <form class="form-grid compact-form" method="post" action="/wants/{want["id"]}/share-links">
+            <div class="span-2 panel-heading">
+                <div><h2>Private wanted-card links</h2><p class="muted compact">Share only this wanted card without exposing the rest of your wishlist.</p></div>
+            </div>
+            <label>Label<input name="label" maxlength="80" placeholder="Local trade request"></label>
+            <label>Expires<select name="expires_days"><option value="7">In 7 days</option><option value="30" selected>In 30 days</option><option value="90">In 90 days</option><option value="0">Never</option></select></label>
+            <label class="checkbox-line span-2"><input type="checkbox" name="show_values" value="1"> Show Scryfall value</label>
+            {result_panel}
+            <div class="form-actions span-2"><button class="button primary" type="submit">Create private link</button></div>
+        </form>
+        """
+    else:
+        create_form = """
+        <div class="panel-heading">
+            <div>
+                <h2>Private wanted-card links</h2>
+                <p class="muted compact">Choose Share-link only above and save this wanted card before creating a private link.</p>
+            </div>
+        </div>
+        """
+    return f"""
+    <section class="want-share-panel" id="want-share-links-{want["id"]}">
+        {create_form}
+        <ul class="stack-list compact-stack">{link_rows}</ul>
+    </section>
+    """
+
+
+def shared_want_from_link(link):
+    return {key[5:]: value for key, value in link.items() if key.startswith("want_")}
+
+
+def render_shared_want_card(link, token):
+    want = shared_want_from_link(link)
+    show_values = bool(link["show_values"])
+    image = (
+        f'<img class="want-image" src="{e(want["image_url"])}" alt="" referrerpolicy="no-referrer">'
+        if want.get("image_url")
+        else '<span class="want-image placeholder"></span>'
+    )
+    metadata = [game_label(want.get("game", "other"))]
+    if want.get("set_name"):
+        metadata.append(want["set_name"])
+    if want.get("set_code"):
+        metadata.append(want["set_code"])
+    if want.get("collector_number"):
+        metadata.append(f"#{want['collector_number']}")
+    priority = normalize_want_priority(want.get("priority", "normal"))
+    budget_cap = normalize_price_usd(want.get("budget_cap_usd", ""))
+    preferred_printing = want.get("preferred_printing_notes", "")
+    notes = want.get("notes", "")
+    scryfall_link = (
+        f'<a href="{e(want["scryfall_uri"])}" target="_blank" rel="noreferrer">Open on Scryfall</a>'
+        if want.get("scryfall_uri")
+        else ""
+    )
+    content = f"""
+    <section class="section-heading shared-want-heading">
+        <div><p class="eyebrow">Wanted by {e(link["owner_name"])}</p><h1>{e(want["card_name"])}</h1></div>
+        <span class="pill">Private wanted-card link</span>
+    </section>
+    <article class="panel want-card shared-want-card">
+        {image}
+        <div class="want-main">
+            <div class="want-title-row">
+                <div><h2>{e(want["card_name"])}</h2><p>{e(" - ".join(metadata))}</p></div>
+                <div class="want-card-badges">
+                    <span class="pill want-priority priority-{e(priority)}">{e(want_priority_label(priority))}</span>
+                    <span class="want-qty">Want {e(want.get("desired_quantity", 1))}</span>
+                </div>
+            </div>
+            <p class="want-type">{e(want.get("type_line") or "Any printing")}</p>
+            {render_preference_summary(want)}
+            {f'<p class="want-printing-note"><strong>Preferred printing:</strong> {e(preferred_printing)}</p>' if preferred_printing else ""}
+            {f'<p class="muted compact">{e(notes)}</p>' if notes else ""}
+            <div class="want-links">{scryfall_link}</div>
+        </div>
+        <div class="want-side">
+            <span class="pill">{e("Budget up to $" + budget_cap + " each" if budget_cap else "No budget cap")}</span>
+            {price_pill(want) if show_values else ""}
+            <span class="muted compact">{e("Scryfall value shown" if show_values else "Scryfall value hidden")}</span>
+        </div>
+    </article>
+    """
+    return render_layout(None, want["card_name"], content)
+
+
 def render_want_card(
     user,
     want,
@@ -658,6 +784,7 @@ def render_want_card(
     scryfall_picker_label="Use selected want",
     scryfall_picker_title="Scryfall matches",
     scryfall_picker_multiple=False,
+    share_result=None,
 ):
     if edit_draft is not None:
         draft = prepare_want_draft(edit_draft)
@@ -676,11 +803,13 @@ def render_want_card(
             cancel_href="/wants",
             form_classes="want-edit-form form-grid compact-form",
         )
+        share_panel = render_want_share_panel(user["id"], want, share_result=share_result)
         return f"""
         <article class="want-card editing">
             {image}
             <div class="want-edit-body">
                 {edit_form}
+                {share_panel}
             </div>
         </article>
         """
@@ -740,6 +869,11 @@ def render_want_card(
         """
     scryfall_link = f'<a href="{e(want["scryfall_uri"])}" target="_blank" rel="noreferrer">Scryfall</a>' if want["scryfall_uri"] else ""
     notes = f'<p class="muted compact">{e(want["notes"])}</p>' if want["notes"] else ""
+    share_action = (
+        f'<a class="button secondary small" href="/wants/{want["id"]}/edit#want-share-links-{want["id"]}">Manage link</a>'
+        if record_visibility(want) == VISIBILITY_LINK
+        else ""
+    )
     return f"""
     <article class="want-card">
         {image}
@@ -765,6 +899,7 @@ def render_want_card(
         <div class="want-side">
             {trade_html}
             <div class="inline-actions">
+                {share_action}
                 <a class="button secondary small" href="/wants/{want["id"]}/edit">Edit</a>
                 <form method="post" action="/wants/{want["id"]}/delete" data-confirm="Delete this wanted card?">
                     <button class="button danger small" type="submit">Delete</button>
@@ -787,6 +922,7 @@ def render_wants(
     scryfall_picker_multiple=False,
     edit_want_id=0,
     query=None,
+    share_result=None,
 ):
     query = query or {}
     draft = prepare_want_draft(draft)
@@ -809,6 +945,7 @@ def render_wants(
             scryfall_picker_label=scryfall_picker_label,
             scryfall_picker_title=scryfall_picker_title,
             scryfall_picker_multiple=scryfall_picker_multiple,
+            share_result=share_result if edit_want_id and want["id"] == int(edit_want_id) else None,
         )
         for want in wants
     )
@@ -852,4 +989,4 @@ def render_wants(
     return render_layout(user, "Wishlist", content, active="wants", notice=notice, status=status)
 
 
-__all__ = ['default_want_item', 'validate_want_form', 'insert_want_item', 'update_want_item', 'insert_selected_want_items', 'want_trade_matches', 'render_want_card', 'render_wants', 'match_entry_quantity', 'trade_match_entry_from_row', 'add_trade_match_entry', 'sorted_trade_match_entries', 'finalize_trade_match', 'trade_matchmaking_candidate_rows', 'trade_matchmaking_results', 'trade_matchmaking_prefill_url', 'render_trade_match_card_list', 'render_trade_match_card', 'render_trade_matchmaking']
+__all__ = ['default_want_item', 'validate_want_form', 'insert_want_item', 'update_want_item', 'insert_selected_want_items', 'want_trade_matches', 'render_want_share_link_row', 'render_want_share_panel', 'shared_want_from_link', 'render_shared_want_card', 'render_want_card', 'render_wants', 'match_entry_quantity', 'trade_match_entry_from_row', 'add_trade_match_entry', 'sorted_trade_match_entries', 'finalize_trade_match', 'trade_matchmaking_candidate_rows', 'trade_matchmaking_results', 'trade_matchmaking_prefill_url', 'render_trade_match_card_list', 'render_trade_match_card', 'render_trade_matchmaking']

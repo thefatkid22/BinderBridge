@@ -279,6 +279,8 @@ def shared_group_page(self, path):
     if len(parts) == 2:
         if link["target_type"] == "collection":
             return self.html(render_shared_collection_card(link, token))
+        if link["target_type"] == "want":
+            return self.html(render_shared_want_card(link, token))
         return self.html(render_shared_group(link, token))
     if len(parts) == 4 and parts[2] == "photos":
         try:
@@ -292,7 +294,7 @@ def shared_group_page(self, path):
                 "SELECT * FROM collection_item_photos WHERE id = ? AND collection_item_id = ?",
                 (photo_id, link["target_id"]),
             )
-        else:
+        elif link["target_type"] == "group":
             photo = row(
                 """
                 SELECT collection_item_photos.*
@@ -303,6 +305,8 @@ def shared_group_page(self, path):
                 """,
                 (photo_id, link["target_id"]),
             )
+        else:
+            return self.not_found(None)
         if not photo:
             return self.not_found(None)
         return self.inline_binary(photo["content"], photo["content_type"], photo["original_filename"])

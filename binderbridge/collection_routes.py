@@ -758,6 +758,54 @@ def want_edit(self, method, user, path):
         return self.not_found(user)
     self.redirect("/wants")
 
+
+def want_share_link(self, method, user, path):
+    parts = path.strip("/").split("/")
+    try:
+        want_id = int(parts[1])
+    except (ValueError, IndexError):
+        return self.not_found(user)
+    want = row("SELECT * FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
+    if not want or method != "POST":
+        return self.not_found(user)
+    if len(parts) == 3 and parts[2] == "share-links":
+        form = self.read_form()
+        try:
+            token, link = create_want_share_link(
+                user["id"],
+                want_id,
+                form.get("label", [""])[0],
+                form.get("expires_days", ["0"])[0],
+                form.get("show_values", [""])[0] == "1",
+            )
+        except ValueError as exc:
+            return self.html(
+                render_wants(user, want, notice=str(exc), status="error", edit_want_id=want_id),
+                HTTPStatus.BAD_REQUEST,
+            )
+        share_result = {"url": f"{self.public_base_url()}/share/{token}", "link": link}
+        return self.html(render_wants(
+            user,
+            want,
+            notice="Private wanted-card link created. Copy it now; the token is not stored.",
+            edit_want_id=want_id,
+            share_result=share_result,
+        ))
+    if len(parts) == 5 and parts[2] == "share-links" and parts[4] == "revoke":
+        try:
+            share_id = int(parts[3])
+        except ValueError:
+            return self.not_found(user)
+        revoke_want_share_link(user["id"], want_id, share_id)
+        return self.html(render_wants(
+            user,
+            want,
+            notice="Private wanted-card link revoked.",
+            edit_want_id=want_id,
+        ))
+    return self.not_found(user)
+
+
 def want_delete(self, user, path):
     try:
         want_id = int(path.strip("/").split("/")[1])
@@ -766,7 +814,7 @@ def want_delete(self, user, path):
     execute("DELETE FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
     self.redirect("/wants")
 
-COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_delete')
+COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_share_link', 'want_delete')
 
 __all__ = [
     "COLLECTION_ROUTE_METHODS",

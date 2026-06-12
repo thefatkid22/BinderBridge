@@ -2140,6 +2140,8 @@ class App(BaseHTTPRequestHandler):
                 return self.wants_export(user)
             if path == "/wants/new":
                 return self.want_new(user) if method == "POST" else self.redirect("/wants")
+            if path.startswith("/wants/") and "/share-links" in path:
+                return self.want_share_link(method, user, path)
             if path.startswith("/wants/") and path.endswith("/edit"):
                 return self.want_edit(method, user, path)
             if path.startswith("/wants/") and path.endswith("/delete") and method == "POST":

@@ -139,6 +139,7 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("trg_collection_privacy_legacy_update", triggers)
         self.assertIn("trg_collection_privacy_visibility_update", triggers)
         self.assertIn("trg_collection_share_links_delete", triggers)
+        self.assertIn("trg_want_share_links_delete", triggers)
         self.assertIn("resolution_note", dispute_columns)
         self.assertIn("idx_trade_dispute_evidence_dispute", evidence_indexes)
 
@@ -1653,6 +1654,60 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIsNone(app.share_link_from_token(hidden_token, touch=False))
         app.execute("DELETE FROM collection_items WHERE id = ?", (item_id,))
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM privacy_share_links WHERE target_type = 'collection' AND target_id = ?", (item_id,))["count"], 0)
+
+    def test_share_only_wanted_card_links_render_on_edit_and_control_values(self):
+        owner_id = factory.create_user("wantshareowner", display_name="Want Share Owner")
+        owner = app.row("SELECT * FROM users WHERE id = ?", (owner_id,))
+        want_id = factory.create_want_item(
+            owner_id,
+            "Shared Want",
+            set_name="Desired Set",
+            set_code="DSR",
+            collector_number="17",
+            desired_quantity=3,
+            priority="high",
+            budget_cap_usd="25.00",
+            condition="NM,LP",
+            finish="Regular,Foil",
+            language="English",
+            type_line="Artifact",
+            preferred_printing_notes="Prefer the alternate art.",
+            notes="Needed for the local league.",
+            price_usd="21.50",
+            price_source="scryfall",
+            scryfall_uri="https://scryfall.example.test/shared-want",
+            visibility="link",
+            is_public=0,
+        )
+        want = app.row("SELECT * FROM want_items WHERE id = ?", (want_id,))
+        edit_html = app.render_wants(owner, want, edit_want_id=want_id)
+
+        hidden_token, hidden_link = app.create_want_share_link(owner_id, want_id, "League request", 7, False)
+        hidden_found = app.share_link_from_token(hidden_token, touch=False)
+        hidden_html = app.render_shared_want_card(hidden_found, hidden_token)
+        visible_token, _ = app.create_want_share_link(owner_id, want_id, "Value request", 0, True)
+        visible_html = app.render_shared_want_card(app.share_link_from_token(visible_token, touch=False), visible_token)
+        stored = app.row("SELECT * FROM privacy_share_links WHERE id = ?", (hidden_link["id"],))
+
+        self.assertIn("Private wanted-card links", edit_html)
+        self.assertIn(f'action="/wants/{want_id}/share-links"', edit_html)
+        self.assertNotEqual(stored["token_hash"], hidden_token)
+        self.assertEqual(hidden_found["target_type"], "want")
+        self.assertIn("Shared Want", hidden_html)
+        self.assertIn("Want 3", hidden_html)
+        self.assertIn("Prefer the alternate art.", hidden_html)
+        self.assertIn("Condition: NM, LP", hidden_html)
+        self.assertNotIn("$21.50", hidden_html)
+        self.assertIn("$21.50", visible_html)
+
+        self.assertEqual(app.revoke_want_share_link(owner_id, want_id, hidden_link["id"]), 1)
+        self.assertIsNone(app.share_link_from_token(hidden_token, touch=False))
+        app.execute("UPDATE want_items SET visibility = 'private' WHERE id = ?", (want_id,))
+        self.assertIsNone(app.share_link_from_token(visible_token, touch=False))
+        with self.assertRaisesRegex(ValueError, "Share-link only"):
+            app.create_want_share_link(owner_id, want_id)
+        app.execute("DELETE FROM want_items WHERE id = ?", (want_id,))
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM privacy_share_links WHERE target_type = 'want' AND target_id = ?", (want_id,))["count"], 0)
 
     def test_group_sharing_defaults_update_without_changing_existing_items(self):
         owner_id = factory.create_user("defaultowner", display_name="Default Owner")

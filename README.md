@@ -37,7 +37,7 @@ BinderBridge is a self-hostable trading card collection app for small communitie
 - Wishlist entries with desired condition, finish, language, set, exact printing preferences, priority levels, per-copy budget caps, and preferred-printing notes
 - Deck, binder, and wishlist groups for organizing collection and want entries
 - Granular privacy controls for collection cards, wanted cards, decks, binders, and wishlist groups: all-members, trusted-members, share-link-only, or private
-- Hidden collection values, per-group value/photo sharing defaults, and expiring/revocable private card/group share links stored as hashes
+- Hidden collection values, per-group value/photo sharing defaults, and expiring/revocable private collection-card, wanted-card, and group share links stored as hashes
 - Public member profile pages with visible trade cards, wanted cards, binders, reputation, and propose-trade actions
 - Deck group bulk imports from CSV, pasted deck lists, text files, and public deck-list URLs
 - Deck imports match against owned collection cards and can turn missing cards into grouped wishlist wants

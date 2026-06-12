@@ -192,6 +192,17 @@ def create_collection_share_link(user_id, collection_item_id, label="", expires_
     )
 
 
+def create_want_share_link(user_id, want_id, label="", expires_days=0, show_values=False):
+    want = row("SELECT * FROM want_items WHERE id = ? AND user_id = ?", (want_id, user_id))
+    if not want:
+        raise ValueError("Wanted card not found.")
+    if record_visibility(want) != VISIBILITY_LINK:
+        raise ValueError("Set this wanted card to Share-link only before creating a private link.")
+    return create_share_link(
+        user_id, "want", want_id, f"{want['card_name']} want share", label, expires_days, show_values, False
+    )
+
+
 def share_link_rows(user_id, target_type, target_id):
     return rows(
         """
@@ -210,6 +221,10 @@ def group_share_link_rows(user_id, group_id):
 
 def collection_share_link_rows(user_id, collection_item_id):
     return share_link_rows(user_id, "collection", collection_item_id)
+
+
+def want_share_link_rows(user_id, want_id):
+    return share_link_rows(user_id, "want", want_id)
 
 
 def revoke_share_link(user_id, target_type, target_id, share_id):
@@ -231,6 +246,10 @@ def revoke_group_share_link(user_id, group_id, share_id):
 
 def revoke_collection_share_link(user_id, collection_item_id, share_id):
     return revoke_share_link(user_id, "collection", collection_item_id, share_id)
+
+
+def revoke_want_share_link(user_id, want_id, share_id):
+    return revoke_share_link(user_id, "want", want_id, share_id)
 
 
 def share_link_from_token(token, touch=True):
@@ -275,6 +294,14 @@ def share_link_from_token(token, touch=True):
         if not target:
             return None
         result.update({f"item_{key}": target[key] for key in target.keys()})
+    elif link["target_type"] == "want":
+        target = row(
+            "SELECT * FROM want_items WHERE id = ? AND user_id = ?",
+            (link["target_id"], link["user_id"]),
+        )
+        if not target or record_visibility(target) != VISIBILITY_LINK:
+            return None
+        result.update({f"want_{key}": target[key] for key in target.keys()})
     else:
         return None
     if touch:
@@ -313,12 +340,15 @@ __all__ = [
     "create_share_link",
     "create_group_share_link",
     "create_collection_share_link",
+    "create_want_share_link",
     "share_link_rows",
     "group_share_link_rows",
     "collection_share_link_rows",
+    "want_share_link_rows",
     "revoke_share_link",
     "revoke_group_share_link",
     "revoke_collection_share_link",
+    "revoke_want_share_link",
     "share_link_from_token",
     "share_link_allows_photos",
 ]
