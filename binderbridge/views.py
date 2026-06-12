@@ -52,4 +52,5 @@ __all__.extend(['render_group_privacy_panel', 'render_shared_group'])
 __all__.extend(['render_collection_share_link_row', 'render_collection_share_panel', 'shared_collection_item_from_link', 'render_shared_collection_card'])
 __all__.extend(['render_want_share_link_row', 'render_want_share_panel', 'shared_want_from_link', 'render_shared_want_card'])
 __all__.extend(['render_collection_health_issue', 'render_collection_health_visibility', 'render_collection_health_user_row', 'render_admin_collection_health'])
+__all__.extend(['render_database_storage_chart', 'render_database_maintenance_run', 'render_database_index_row', 'render_database_migration_row', 'render_admin_database'])
 

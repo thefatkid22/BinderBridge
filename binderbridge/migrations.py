@@ -1,7 +1,10 @@
 """Versioned SQLite schema migrations for BinderBridge."""
 
+from datetime import datetime, timezone
+
+
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 
 def db_schema_version(conn):
@@ -333,6 +336,49 @@ def migrate_want_share_links(conn):
     )
 
 
+def migrate_database_maintenance(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migration_history (
+            version INTEGER PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS database_storage_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recorded_at TEXT NOT NULL,
+            database_bytes INTEGER NOT NULL DEFAULT 0,
+            wal_bytes INTEGER NOT NULL DEFAULT 0,
+            shm_bytes INTEGER NOT NULL DEFAULT 0,
+            total_bytes INTEGER NOT NULL DEFAULT 0,
+            page_count INTEGER NOT NULL DEFAULT 0,
+            page_size INTEGER NOT NULL DEFAULT 0,
+            freelist_count INTEGER NOT NULL DEFAULT 0,
+            source TEXT NOT NULL DEFAULT 'health'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_database_storage_snapshots_recorded
+            ON database_storage_snapshots(recorded_at DESC, id DESC);
+
+        CREATE TABLE IF NOT EXISTS database_maintenance_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL CHECK (action IN ('analyze', 'vacuum', 'snapshot')),
+            status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
+            before_bytes INTEGER NOT NULL DEFAULT 0,
+            after_bytes INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            details TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_database_maintenance_runs_completed
+            ON database_maintenance_runs(completed_at DESC, id DESC);
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
@@ -341,7 +387,27 @@ SCHEMA_MIGRATIONS = (
     (5, "granular privacy and share links", migrate_granular_privacy),
     (6, "collection card share links", migrate_collection_share_links),
     (7, "wanted card share links", migrate_want_share_links),
+    (8, "database maintenance history and storage snapshots", migrate_database_maintenance),
 )
+
+
+def migration_timestamp():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def record_schema_migration_history(conn, current_version):
+    if current_version < 8:
+        return
+    timestamp = migration_timestamp()
+    for version, description, _migration in SCHEMA_MIGRATIONS:
+        if version <= current_version:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO schema_migration_history (version, description, applied_at)
+                VALUES (?, ?, ?)
+                """,
+                (version, description, timestamp),
+            )
 
 
 def run_schema_migrations(conn):
@@ -351,6 +417,8 @@ def run_schema_migrations(conn):
             migration(conn)
             set_db_schema_version(conn, version)
             current_version = version
+            record_schema_migration_history(conn, current_version)
+    record_schema_migration_history(conn, current_version)
     return current_version
 
 
@@ -366,6 +434,9 @@ __all__ = [
     "migrate_granular_privacy",
     "migrate_collection_share_links",
     "migrate_want_share_links",
+    "migrate_database_maintenance",
     "SCHEMA_MIGRATIONS",
+    "migration_timestamp",
+    "record_schema_migration_history",
     "run_schema_migrations",
 ]

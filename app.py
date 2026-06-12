@@ -2050,6 +2050,14 @@ class App(BaseHTTPRequestHandler):
                 return self.admin_health_page(user)
             if path == "/admin/collection-health":
                 return self.admin_collection_health_page(user)
+            if path == "/admin/database":
+                return self.admin_database_page(user)
+            if path == "/admin/database/analyze" and method == "POST":
+                return self.admin_database_analyze(user)
+            if path == "/admin/database/vacuum" and method == "POST":
+                return self.admin_database_vacuum(user)
+            if path == "/admin/database/snapshot" and method == "POST":
+                return self.admin_database_snapshot(user)
             if path == "/admin/health/jobs/retry" and method == "POST":
                 return self.admin_health_retry_jobs(user)
             if path == "/admin/health/notifications/replay" and method == "POST":

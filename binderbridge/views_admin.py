@@ -138,6 +138,7 @@ def render_admin(user, notice=None, status="info", invite_result=None):
             <a class="button secondary" href="/admin/jobs">Import and jobs</a>
             <a class="button secondary" href="/admin/collection-health">Collection health</a>
             <a class="button secondary" href="/admin/health">Maintenance health</a>
+            <a class="button secondary" href="/admin/database">Database maintenance</a>
         </div>
     </section>
     {onboarding_panel}
@@ -373,7 +374,7 @@ def health_time_label(value):
 
 def health_status_class(value):
     status = str(value or "").strip().lower()
-    if status in ("done", "idle", "sent", "none", "ok", "completed"):
+    if status in ("done", "idle", "sent", "none", "ok", "completed", "applied"):
         return "accepted"
     if status in ("failed", "error", "disabled", "not_found"):
         return "declined"
@@ -386,7 +387,7 @@ def health_severity_for_status(value):
         return "error"
     if status in ("pending", "processing", "queued", "warning", "paused"):
         return "warning"
-    if status in ("done", "idle", "sent", "none", "ok", "completed", "enabled"):
+    if status in ("done", "idle", "sent", "none", "ok", "completed", "enabled", "applied"):
         return "ok"
     return "info"
 
@@ -652,6 +653,201 @@ def render_admin_collection_health(user, notice=None, status="info"):
     return render_layout(user, "Collection health", content, active="admin", notice=notice, status=status)
 
 
+def render_database_storage_chart(history):
+    points = list(history or ())
+    if not points:
+        return '<div class="empty-state compact-empty">No database storage snapshots yet.</div>'
+    maximum = max(int(item["total_bytes"] or 0) for item in points) or 1
+    bars = "".join(
+        f"""
+        <div class="storage-growth-point" title="{e(item["recorded_at"][:16].replace("T", " "))} - {e(bytes_label(item["total_bytes"]))} - {e(item["source"])}">
+            <span class="storage-growth-bar" style="height: {e(max(4, round((int(item["total_bytes"] or 0) / maximum) * 100)))}%"></span>
+        </div>
+        """
+        for item in points
+    )
+    first = int(points[0]["total_bytes"] or 0)
+    latest = int(points[-1]["total_bytes"] or 0)
+    difference = latest - first
+    change_label = f"+{bytes_label(difference)}" if difference > 0 else f"-{bytes_label(abs(difference))}" if difference < 0 else "No change"
+    return f"""
+    <div class="storage-growth-chart" role="img" aria-label="Database storage growth across {e(len(points))} snapshots">
+        {bars}
+    </div>
+    <div class="storage-growth-labels">
+        <span>{e(points[0]["recorded_at"][:10])}</span>
+        <strong>{e(change_label)}</strong>
+        <span>{e(points[-1]["recorded_at"][:10])}</span>
+    </div>
+    """
+
+
+def render_database_maintenance_run(item):
+    action = str(item["action"] or "").upper()
+    status_value = str(item["status"] or "")
+    change = int(item["after_bytes"] or 0) - int(item["before_bytes"] or 0)
+    change_label = f"+{bytes_label(change)}" if change > 0 else f"-{bytes_label(abs(change))}" if change < 0 else "No size change"
+    return f"""
+    <li>
+        <div>
+            <strong>{e(action)}</strong>
+            <span>{e(item["completed_at"][:16].replace("T", " "))} - {e(item["duration_ms"])} ms - {e(change_label)}</span>
+            <small>{e(item["details"])}</small>
+        </div>
+        <span class="status {health_status_class(status_value)}">{e(status_value.title())}</span>
+    </li>
+    """
+
+
+def render_database_index_row(item):
+    observations = item["observed_plans"]
+    observation_html = "".join(f'<span class="pill">{e(label)}</span>' for label in observations)
+    if not observation_html:
+        observation_html = '<span class="muted compact">Not chosen by the current sample plans.</span>'
+    flags = []
+    if item["unique"]:
+        flags.append("Unique")
+    if item["partial"]:
+        flags.append("Partial")
+    flags_html = "".join(f'<span class="pill">{e(flag)}</span>' for flag in flags)
+    return f"""
+    <tr>
+        <td data-label="Index">
+            <strong>{e(item["name"])}</strong>
+            <div class="status-row">{flags_html}</div>
+        </td>
+        <td data-label="Table"><strong>{e(item["table"])}</strong></td>
+        <td data-label="Columns"><span>{e(item["columns_label"])}</span></td>
+        <td data-label="Planner statistics"><span>{e(item["stat"] or "Run ANALYZE to populate statistics")}</span></td>
+        <td data-label="Storage"><strong>{e(item["size_label"])}</strong><span class="subtle">{e(item["page_count"])} pages</span></td>
+        <td data-label="Sample planner use"><div class="status-row">{observation_html}</div></td>
+    </tr>
+    """
+
+
+def render_database_migration_row(item):
+    applied_at = item["applied_at"][:16].replace("T", " ") if item["applied_at"] else "Not applied"
+    return f"""
+    <tr>
+        <td data-label="Version"><strong>v{e(item["version"])}</strong></td>
+        <td data-label="Migration"><strong>{e(item["description"])}</strong><span class="subtle">{e(item["function"])}</span></td>
+        <td data-label="Status"><span class="status {health_status_class(item["status"])}">{e(item["status"].title())}</span></td>
+        <td data-label="Recorded">{e(applied_at)}</td>
+    </tr>
+    """
+
+
+def render_admin_database(user, notice=None, status="info"):
+    dashboard = database_maintenance_dashboard()
+    storage = dashboard["storage"]
+    index_data = dashboard["indexes"]
+    index_summary = index_data["summary"]
+    migration_data = dashboard["migrations"]
+    run_rows = "".join(render_database_maintenance_run(item) for item in dashboard["runs"])
+    run_rows = run_rows or '<li class="muted">No manual database maintenance actions have been recorded yet.</li>'
+    index_rows = "".join(render_database_index_row(item) for item in index_data["indexes"])
+    index_rows = index_rows or '<tr><td class="empty-state" colspan="6">No application indexes found.</td></tr>'
+    migration_rows = "".join(render_database_migration_row(item) for item in migration_data["migrations"])
+    content = f"""
+    <section class="section-heading">
+        <div>
+            <p class="eyebrow">Admin</p>
+            <h1>Database maintenance</h1>
+            <p class="muted">Inspect SQLite storage, refresh planner statistics, reclaim unused pages, and review schema history.</p>
+        </div>
+        <div class="actions">
+            <a class="button secondary" href="/admin">Back to admin</a>
+            <a class="button secondary" href="/admin/health">Maintenance health</a>
+            <a class="button secondary" href="/admin/logs">Activity log</a>
+        </div>
+    </section>
+    <section class="metric-grid">
+        <article class="{health_card_class('metric', 'ok')}"><span>{e(storage["total_size_label"])}</span><p>database and WAL storage</p></article>
+        <article class="{health_card_class('metric', 'warning' if storage["reusable_percent"] >= 20 else 'ok')}"><span>{e(storage["reusable_size_label"])}</span><p>reusable free pages ({e(storage["reusable_percent"])}%)</p></article>
+        <article class="{health_card_class('metric', 'ok')}"><span>{e(index_summary["total"])}</span><p>application indexes</p></article>
+        <article class="{health_card_class('metric', 'ok' if migration_data["current_version"] == migration_data["latest_version"] else 'warning')}"><span>v{e(migration_data["current_version"])}</span><p>schema version</p></article>
+    </section>
+    <section class="panel database-action-panel">
+        <div class="panel-heading">
+            <div><h2>Maintenance actions</h2><p class="muted compact">These operations run synchronously and are recorded in the admin activity log.</p></div>
+            <span class="pill">SQLite {e(storage["journal_mode"].upper())}</span>
+        </div>
+        <div class="maintenance-grid">
+            <form class="backup-action-card" method="post" action="/admin/database/analyze">
+                <strong>Refresh planner statistics</strong>
+                <span class="subtle">Runs ANALYZE and PRAGMA optimize so SQLite can make better index choices. Routine and low risk.</span>
+                <button class="button primary" type="submit">Run ANALYZE</button>
+            </form>
+            <form class="backup-action-card" method="post" action="/admin/database/vacuum">
+                <strong>Rebuild and compact database</strong>
+                <span class="subtle">Runs quick_check, checkpoints WAL, then VACUUM. This needs temporary free disk space and may pause writes.</span>
+                <a class="button ghost small" href="/admin">Create a backup first</a>
+                <button class="button danger" type="submit" onclick="return confirm('Run VACUUM now? This can take time and temporarily block database writes. Create a backup first.')">Run VACUUM</button>
+            </form>
+            <form class="backup-action-card" method="post" action="/admin/database/snapshot">
+                <strong>Record storage snapshot</strong>
+                <span class="subtle">Adds a point to the storage-growth chart. The page also records at most one automatic point per day.</span>
+                <button class="button secondary" type="submit">Record snapshot</button>
+            </form>
+        </div>
+    </section>
+    <section class="admin-settings-grid database-overview-grid">
+        <article class="panel">
+            <div class="panel-heading"><div><h2>Storage growth</h2><p class="muted compact">Database, WAL, and shared-memory files combined.</p></div><span class="pill">{e(len(dashboard["storage_history"]))} snapshots</span></div>
+            {render_database_storage_chart(dashboard["storage_history"])}
+        </article>
+        <article class="panel">
+            <div class="panel-heading"><h2>Current storage</h2><span class="pill">{e(storage["journal_mode"].upper())}</span></div>
+            <div class="detail-grid">
+                <span>Database file</span><strong>{e(storage["database_size_label"])}</strong>
+                <span>WAL file</span><strong>{e(storage["wal_size_label"])}</strong>
+                <span>Shared memory</span><strong>{e(storage["shm_size_label"])}</strong>
+                <span>Page size</span><strong>{e(storage["page_size_label"])}</strong>
+                <span>Allocated pages</span><strong>{e(storage["page_count"])}</strong>
+                <span>Reusable pages</span><strong>{e(storage["freelist_count"])}</strong>
+                <span>Auto vacuum mode</span><strong>{e(storage["auto_vacuum"])}</strong>
+            </div>
+        </article>
+        <article class="panel span-2">
+            <div class="panel-heading"><div><h2>Recent maintenance</h2><p class="muted compact">Manual ANALYZE, VACUUM, and storage snapshot actions.</p></div></div>
+            <ul class="stack-list compact-stack">{run_rows}</ul>
+        </article>
+    </section>
+    <section class="panel flush database-index-panel">
+        <div class="panel-heading padded">
+            <div>
+                <h2>Index visibility</h2>
+                <p class="muted compact">SQLite does not expose cumulative index-use counters. “Sample planner use” shows indexes chosen by BinderBridge's representative query plans; ANALYZE statistics and storage footprint provide the remaining visibility.</p>
+            </div>
+            <div class="status-row">
+                <span class="pill">{e(index_summary["observed"])} observed in samples</span>
+                <span class="pill">{e(index_summary["with_stats"])} with ANALYZE stats</span>
+                <span class="pill">{e(index_summary["total_size_label"])} total</span>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table class="admin-table database-index-table">
+                <thead><tr><th>Index</th><th>Table</th><th>Columns</th><th>Planner statistics</th><th>Storage</th><th>Sample planner use</th></tr></thead>
+                <tbody>{index_rows}</tbody>
+            </table>
+        </div>
+    </section>
+    <section class="panel flush database-migration-panel">
+        <div class="panel-heading padded">
+            <div><h2>Migration history</h2><p class="muted compact">Schema migrations run automatically during startup. Older applied versions were backfilled when migration-history tracking was introduced.</p></div>
+            <span class="status {health_status_class('applied' if migration_data["current_version"] == migration_data["latest_version"] else 'pending')}">v{e(migration_data["current_version"])} of v{e(migration_data["latest_version"])}</span>
+        </div>
+        <div class="table-wrap">
+            <table class="admin-table responsive-card-table database-migration-table">
+                <thead><tr><th>Version</th><th>Migration</th><th>Status</th><th>Recorded</th></tr></thead>
+                <tbody>{migration_rows}</tbody>
+            </table>
+        </div>
+    </section>
+    """
+    return render_layout(user, "Database maintenance", content, active="admin", notice=notice, status=status)
+
+
 def render_admin_health(user, notice=None, status="info"):
     health = maintenance_health_status()
     dashboard = maintenance_job_dashboard(limit=6)
@@ -745,6 +941,7 @@ def render_admin_health(user, notice=None, status="info"):
         <div class="actions">
             <a class="button secondary" href="/admin">Back to admin</a>
             <a class="button secondary" href="/admin/collection-health">Collection health</a>
+            <a class="button secondary" href="/admin/database">Database maintenance</a>
             <a class="button secondary" href="/admin/logs">Activity log</a>
         </div>
     </section>
@@ -797,6 +994,11 @@ def render_admin_health(user, notice=None, status="info"):
                     <span class="subtle">Review individual imports, lookups, price refreshes, and failed emails.</span>
                     <span class="button ghost small">Open jobs</span>
                 </a>
+                <a class="backup-action-card link-card" href="/admin/database">
+                    <strong>Open database maintenance</strong>
+                    <span class="subtle">Review storage growth, indexes, migration history, and run ANALYZE or VACUUM.</span>
+                    <span class="button ghost small">Open database tools</span>
+                </a>
             </div>
         </article>
         <article class="{health_card_class('panel span-2', setup_severity)}">
@@ -839,7 +1041,7 @@ def render_admin_health(user, notice=None, status="info"):
         <article class="{health_card_class('panel', 'ok')}">
             <div class="panel-heading">
                 <h2>Database</h2>
-                <span class="pill">SQLite</span>
+                <a class="button ghost small" href="/admin/database">Open tools</a>
             </div>
             <p class="muted compact">{e(database["path"])}</p>
             <div class="metric-grid compact-stats">{db_metrics}</div>

@@ -39,6 +39,67 @@ def admin_collection_health_page(self, user):
     return self.html(render_admin_collection_health(user))
 
 
+def admin_database_page(self, user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
+        return self.not_found(user)
+    return self.html(render_admin_database(user))
+
+
+def admin_database_maintenance_action(self, user, action):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
+        return self.not_found(user)
+    try:
+        result = run_database_maintenance(action)
+    except ValueError as exc:
+        return self.html(render_admin_database(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    action_label = action.upper()
+    details = (
+        f"{result['details']} Before {result['before']['total_size_label']}; "
+        f"after {result['after']['total_size_label']}; duration {result['duration_ms']} ms."
+    )
+    log_admin_action(
+        user["id"],
+        f"database_{action}_completed",
+        None,
+        "database",
+        action_label,
+        details,
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    notice = f"{action_label} completed in {result['duration_ms']} ms."
+    if action == "vacuum":
+        notice += f" Reclaimed {result['saved_size_label']}."
+    return self.html(render_admin_database(updated, notice=notice))
+
+
+def admin_database_analyze(self, user):
+    return admin_database_maintenance_action(self, user, "analyze")
+
+
+def admin_database_vacuum(self, user):
+    return admin_database_maintenance_action(self, user, "vacuum")
+
+
+def admin_database_snapshot(self, user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
+        return self.not_found(user)
+    snapshot = run_database_storage_snapshot()
+    log_admin_action(
+        user["id"],
+        "database_storage_snapshot_recorded",
+        None,
+        "database",
+        "Storage snapshot",
+        f"Recorded database storage snapshot at {bytes_label(snapshot['total_bytes'])}.",
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    return self.html(render_admin_database(updated, notice="Database storage snapshot recorded."))
+
+
 def admin_health_retry_jobs(self, user):
     if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
@@ -666,6 +727,11 @@ __all__ = [
     "admin_logs_page",
     "admin_health_page",
     "admin_collection_health_page",
+    "admin_database_page",
+    "admin_database_maintenance_action",
+    "admin_database_analyze",
+    "admin_database_vacuum",
+    "admin_database_snapshot",
     "admin_health_retry_jobs",
     "admin_health_replay_notifications",
     "admin_health_check_backups",

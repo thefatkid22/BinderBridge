@@ -1,6 +1,7 @@
 """Maintenance, backup, restore, and retention helpers for BinderBridge."""
 
 import json
+import re
 import secrets
 import shutil
 import sqlite3
@@ -48,9 +49,39 @@ _automatic_backup_worker_lock = threading.Lock()
 _automatic_backup_worker_started = False
 _job_dashboard_price_retry_lock = threading.Lock()
 _job_dashboard_price_retry_running = False
+_database_maintenance_lock = threading.Lock()
 
 
 JOB_DASHBOARD_RETRY_STATUSES = ("failed", "not_found", "processing")
+DATABASE_MAINTENANCE_ACTIONS = ("analyze", "vacuum")
+INDEX_PLAN_RE = re.compile(r"USING (?:COVERING )?INDEX ([^\s]+)", re.IGNORECASE)
+INDEX_USAGE_SAMPLE_QUERIES = (
+    (
+        "Collection owner list",
+        "SELECT id FROM collection_items WHERE user_id = ? ORDER BY card_name COLLATE NOCASE, set_name COLLATE NOCASE, collector_number COLLATE NOCASE LIMIT 25",
+        (0,),
+    ),
+    (
+        "Browse trade cards",
+        "SELECT id FROM collection_items WHERE is_public = 1 AND quantity_for_trade > 0 ORDER BY card_name COLLATE NOCASE, set_name COLLATE NOCASE, collector_number COLLATE NOCASE LIMIT 25",
+        (),
+    ),
+    (
+        "Wishlist owner list",
+        "SELECT id FROM want_items WHERE user_id = ? ORDER BY card_name COLLATE NOCASE, set_name COLLATE NOCASE, collector_number COLLATE NOCASE LIMIT 25",
+        (0,),
+    ),
+    (
+        "Proposed trades",
+        "SELECT id FROM trades WHERE proposer_id = ? ORDER BY updated_at DESC, id DESC LIMIT 25",
+        (0,),
+    ),
+    (
+        "Scryfall exact printing",
+        "SELECT scryfall_id FROM scryfall_bulk_cards WHERE set_code = ? AND collector_number = ? ORDER BY released_at DESC LIMIT 25",
+        ("", ""),
+    ),
+)
 
 
 def backup_directory():
@@ -68,6 +99,352 @@ def bytes_label(size):
             return f"{value:.1f} {unit}" if unit != "B" else f"{size} B"
         value /= 1024
     return f"{size} B"
+
+
+def database_related_file_size(suffix=""):
+    path = Path(f"{DB_PATH}{suffix}")
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def database_storage_status():
+    with db() as conn:
+        page_count = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
+        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0] or 0)
+        freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0] or 0)
+        journal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0] or "")
+        auto_vacuum = int(conn.execute("PRAGMA auto_vacuum").fetchone()[0] or 0)
+    database_bytes = database_related_file_size()
+    wal_bytes = database_related_file_size("-wal")
+    shm_bytes = database_related_file_size("-shm")
+    total_bytes = database_bytes + wal_bytes + shm_bytes
+    allocated_bytes = page_count * page_size
+    reusable_bytes = freelist_count * page_size
+    reusable_percent = round((reusable_bytes / allocated_bytes) * 100, 1) if allocated_bytes else 0
+    return {
+        "database_bytes": database_bytes,
+        "database_size_label": bytes_label(database_bytes),
+        "wal_bytes": wal_bytes,
+        "wal_size_label": bytes_label(wal_bytes),
+        "shm_bytes": shm_bytes,
+        "shm_size_label": bytes_label(shm_bytes),
+        "total_bytes": total_bytes,
+        "total_size_label": bytes_label(total_bytes),
+        "page_count": page_count,
+        "page_size": page_size,
+        "page_size_label": bytes_label(page_size),
+        "freelist_count": freelist_count,
+        "reusable_bytes": reusable_bytes,
+        "reusable_size_label": bytes_label(reusable_bytes),
+        "reusable_percent": reusable_percent,
+        "journal_mode": journal_mode,
+        "auto_vacuum": auto_vacuum,
+    }
+
+
+def record_database_storage_snapshot(force=False, source="health"):
+    storage = database_storage_status()
+    timestamp = now_iso()
+    with db() as conn:
+        latest = conn.execute(
+            "SELECT * FROM database_storage_snapshots ORDER BY recorded_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+        if not force and latest and str(latest["recorded_at"])[:10] == timestamp[:10]:
+            return dict(latest)
+        cursor = conn.execute(
+            """
+            INSERT INTO database_storage_snapshots
+                (recorded_at, database_bytes, wal_bytes, shm_bytes, total_bytes,
+                 page_count, page_size, freelist_count, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                timestamp,
+                storage["database_bytes"],
+                storage["wal_bytes"],
+                storage["shm_bytes"],
+                storage["total_bytes"],
+                storage["page_count"],
+                storage["page_size"],
+                storage["freelist_count"],
+                str(source or "health")[:32],
+            ),
+        )
+        return dict(conn.execute("SELECT * FROM database_storage_snapshots WHERE id = ?", (cursor.lastrowid,)).fetchone())
+
+
+def database_storage_history(limit=60):
+    clean_limit = max(2, min(365, int(limit or 60)))
+    return rows(
+        """
+        SELECT *
+        FROM (
+            SELECT *
+            FROM database_storage_snapshots
+            ORDER BY recorded_at DESC, id DESC
+            LIMIT ?
+        )
+        ORDER BY recorded_at ASC, id ASC
+        """,
+        (clean_limit,),
+    )
+
+
+def database_maintenance_run_rows(limit=12):
+    return rows(
+        """
+        SELECT *
+        FROM database_maintenance_runs
+        ORDER BY completed_at DESC, id DESC
+        LIMIT ?
+        """,
+        (max(1, min(100, int(limit or 12))),),
+    )
+
+
+def record_database_maintenance_run(action, status, before_bytes, after_bytes, duration_ms, details, started_at, completed_at):
+    return execute(
+        """
+        INSERT INTO database_maintenance_runs
+            (action, status, before_bytes, after_bytes, duration_ms, details, started_at, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            action,
+            status,
+            int(before_bytes or 0),
+            int(after_bytes or 0),
+            max(0, int(duration_ms or 0)),
+            str(details or "")[:2000],
+            started_at,
+            completed_at,
+        ),
+    )
+
+
+def database_maintenance_connection():
+    connection = sqlite3.connect(
+        DB_PATH,
+        timeout=SQLITE_BUSY_TIMEOUT_MS / 1000,
+        isolation_level=None,
+    )
+    return configure_sqlite_connection(connection)
+
+
+def run_database_maintenance(action):
+    action = str(action or "").strip().lower()
+    if action not in DATABASE_MAINTENANCE_ACTIONS:
+        raise ValueError("Choose ANALYZE or VACUUM.")
+    if not _database_maintenance_lock.acquire(blocking=False):
+        raise ValueError("Another database maintenance action is already running.")
+    started_at = now_iso()
+    started = time.monotonic()
+    before = database_storage_status()
+    details = ""
+    try:
+        connection = database_maintenance_connection()
+        try:
+            if action == "analyze":
+                connection.execute("ANALYZE")
+                connection.execute("PRAGMA optimize")
+                details = "Updated SQLite query-planner statistics and ran PRAGMA optimize."
+            else:
+                integrity = str(connection.execute("PRAGMA quick_check").fetchone()[0] or "")
+                if integrity.lower() != "ok":
+                    raise ValueError(f"VACUUM was not started because quick_check returned: {integrity}")
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                connection.execute("VACUUM")
+                details = "quick_check passed, WAL checkpointed, and the database was rebuilt with VACUUM."
+        finally:
+            connection.close()
+        after = database_storage_status()
+        duration_ms = round((time.monotonic() - started) * 1000)
+        completed_at = now_iso()
+        record_database_maintenance_run(
+            action,
+            "completed",
+            before["total_bytes"],
+            after["total_bytes"],
+            duration_ms,
+            details,
+            started_at,
+            completed_at,
+        )
+        record_database_storage_snapshot(force=True, source=action)
+        return {
+            "action": action,
+            "status": "completed",
+            "before": before,
+            "after": after,
+            "duration_ms": duration_ms,
+            "details": details,
+            "saved_bytes": max(0, before["total_bytes"] - after["total_bytes"]),
+            "saved_size_label": bytes_label(max(0, before["total_bytes"] - after["total_bytes"])),
+        }
+    except Exception as exc:
+        after = database_storage_status()
+        duration_ms = round((time.monotonic() - started) * 1000)
+        record_database_maintenance_run(
+            action,
+            "failed",
+            before["total_bytes"],
+            after["total_bytes"],
+            duration_ms,
+            str(exc),
+            started_at,
+            now_iso(),
+        )
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError(f"{action.upper()} failed: {exc}") from exc
+    finally:
+        _database_maintenance_lock.release()
+
+
+def run_database_storage_snapshot():
+    started_at = now_iso()
+    started = time.monotonic()
+    before = database_storage_status()
+    snapshot = record_database_storage_snapshot(force=True, source="manual")
+    duration_ms = round((time.monotonic() - started) * 1000)
+    record_database_maintenance_run(
+        "snapshot",
+        "completed",
+        before["total_bytes"],
+        before["total_bytes"],
+        duration_ms,
+        "Recorded a manual database storage snapshot.",
+        started_at,
+        now_iso(),
+    )
+    return snapshot
+
+
+def quote_sqlite_identifier(value):
+    return '"' + str(value or "").replace('"', '""') + '"'
+
+
+def database_index_usage():
+    with db() as conn:
+        index_rows = conn.execute(
+            """
+            SELECT name, tbl_name, sql
+            FROM sqlite_master
+            WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'
+            ORDER BY tbl_name COLLATE NOCASE, name COLLATE NOCASE
+            """
+        ).fetchall()
+        has_stats = bool(conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'"
+        ).fetchone())
+        stats = {
+            item["idx"]: item["stat"]
+            for item in conn.execute("SELECT idx, stat FROM sqlite_stat1 WHERE idx IS NOT NULL").fetchall()
+        } if has_stats else {}
+        try:
+            size_rows = conn.execute(
+                "SELECT name, SUM(pgsize) AS size_bytes, COUNT(*) AS page_count FROM dbstat GROUP BY name"
+            ).fetchall()
+            sizes = {item["name"]: (int(item["size_bytes"] or 0), int(item["page_count"] or 0)) for item in size_rows}
+            size_available = True
+        except sqlite3.OperationalError:
+            sizes = {}
+            size_available = False
+        observed = {}
+        sample_plans = []
+        for label, sql, params in INDEX_USAGE_SAMPLE_QUERIES:
+            details = [
+                str(item["detail"] or "")
+                for item in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+            ]
+            selected = []
+            for detail in details:
+                match = INDEX_PLAN_RE.search(detail)
+                if match:
+                    index_name = match.group(1)
+                    selected.append(index_name)
+                    observed.setdefault(index_name, []).append(label)
+            sample_plans.append({"label": label, "details": details, "indexes": selected})
+        inventory = []
+        for item in index_rows:
+            index_name = item["name"]
+            columns = [
+                info["name"] or f"expression {info['seqno'] + 1}"
+                for info in conn.execute(f"PRAGMA index_info({quote_sqlite_identifier(index_name)})").fetchall()
+            ]
+            flags = next(
+                (
+                    flag
+                    for flag in conn.execute(f"PRAGMA index_list({quote_sqlite_identifier(item['tbl_name'])})").fetchall()
+                    if flag["name"] == index_name
+                ),
+                None,
+            )
+            size_bytes, page_count = sizes.get(index_name, (0, 0))
+            inventory.append({
+                "name": index_name,
+                "table": item["tbl_name"],
+                "columns": columns,
+                "columns_label": ", ".join(columns) or "Expression index",
+                "unique": bool(flags["unique"]) if flags else False,
+                "partial": bool(flags["partial"]) if flags else " WHERE " in str(item["sql"] or "").upper(),
+                "origin": flags["origin"] if flags else "",
+                "stat": stats.get(index_name, ""),
+                "size_bytes": size_bytes,
+                "size_label": bytes_label(size_bytes) if size_bytes else "Unavailable",
+                "page_count": page_count,
+                "observed_plans": observed.get(index_name, []),
+                "observed": bool(observed.get(index_name)),
+            })
+    return {
+        "indexes": inventory,
+        "sample_plans": sample_plans,
+        "size_available": size_available,
+        "summary": {
+            "total": len(inventory),
+            "observed": sum(1 for item in inventory if item["observed"]),
+            "with_stats": sum(1 for item in inventory if item["stat"]),
+            "total_size_bytes": sum(item["size_bytes"] for item in inventory),
+            "total_size_label": bytes_label(sum(item["size_bytes"] for item in inventory)) if size_available else "Unavailable",
+        },
+    }
+
+
+def database_migration_history():
+    with db() as conn:
+        current_version = db_schema_version(conn)
+        applied_rows = conn.execute(
+            "SELECT * FROM schema_migration_history ORDER BY version"
+        ).fetchall()
+    applied = {int(item["version"]): item for item in applied_rows}
+    migrations = []
+    for version, description, migration in SCHEMA_MIGRATIONS:
+        history = applied.get(version)
+        migrations.append({
+            "version": version,
+            "description": description,
+            "function": migration.__name__,
+            "status": "applied" if version <= current_version else "pending",
+            "applied_at": history["applied_at"] if history else "",
+        })
+    return {
+        "current_version": current_version,
+        "latest_version": CURRENT_SCHEMA_VERSION,
+        "migrations": migrations,
+    }
+
+
+def database_maintenance_dashboard(snapshot_limit=60, run_limit=12):
+    record_database_storage_snapshot(force=False, source="health")
+    return {
+        "storage": database_storage_status(),
+        "storage_history": database_storage_history(snapshot_limit),
+        "runs": database_maintenance_run_rows(run_limit),
+        "indexes": database_index_usage(),
+        "migrations": database_migration_history(),
+    }
 
 
 def backup_archive_name(prefix="binderbridge-backup"):
@@ -292,7 +669,8 @@ def prune_data_retention_records(settings=None, reference_time=None):
 
 
 def maintenance_health_status(limit=6):
-    db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+    database_storage = database_storage_status()
+    db_size = database_storage["database_bytes"]
     smtp_settings = smtp_email_settings()
     bulk_status_func = globals().get("scryfall_bulk_status")
     price_status_func = globals().get("scryfall_price_refresh_status")
@@ -327,6 +705,7 @@ def maintenance_health_status(limit=6):
             "path": str(DB_PATH),
             "size": db_size,
             "size_label": bytes_label(db_size),
+            **database_storage,
             "counts": [
                 ("Users", table_count("users")),
                 ("Collection cards", table_count("collection_items")),
@@ -660,6 +1039,7 @@ def maintenance_setup_warnings(health):
     scryfall_prices = scryfall.get("prices", {})
     notifications = health.get("notifications", {})
     counts = health.get("job_counts", {})
+    database = health.get("database", {})
 
     if not backups.get("archives"):
         add("warning", "No backups found", "Create a backup before making major site changes.", "Open backup tools", "/admin")
@@ -689,6 +1069,14 @@ def maintenance_setup_warnings(health):
         add("error", "Scryfall bulk data needs attention", scryfall_bulk.get("error") or "The local Scryfall bulk cache is not healthy.", "Open jobs", "/admin/jobs")
     if scryfall_prices.get("status") in ("error", "failed") or scryfall_prices.get("error"):
         add("error", "Scryfall price refresh needs attention", scryfall_prices.get("error") or "The automatic price refresh is not healthy.", "Open jobs", "/admin/jobs")
+    if float(database.get("reusable_percent", 0) or 0) >= 20:
+        add(
+            "info",
+            "Database has reusable free pages",
+            f"{database.get('reusable_size_label', 'Some space')} ({database.get('reusable_percent', 0)}%) can be reclaimed from the database file with VACUUM.",
+            "Open database tools",
+            "/admin/database",
+        )
     if not config_str("BINDERBRIDGE_PUBLIC_BASE_URL", "PUBLIC_BASE_URL", default="", section="server", key="public_base_url").strip():
         add("info", "Public base URL is not set", "Email and webhook links may be relative until a public base URL is configured.", "Open admin panel", "/admin")
 
@@ -1330,8 +1718,23 @@ __all__ = [
     "DEFAULT_DATA_RETENTION_WEBHOOK_DAYS",
     "AUTOMATIC_BACKUP_WORKER_CHECK_SECONDS",
     "JOB_DASHBOARD_RETRY_STATUSES",
+    "DATABASE_MAINTENANCE_ACTIONS",
+    "INDEX_USAGE_SAMPLE_QUERIES",
     "backup_directory",
     "bytes_label",
+    "database_related_file_size",
+    "database_storage_status",
+    "record_database_storage_snapshot",
+    "database_storage_history",
+    "database_maintenance_run_rows",
+    "record_database_maintenance_run",
+    "database_maintenance_connection",
+    "run_database_maintenance",
+    "run_database_storage_snapshot",
+    "quote_sqlite_identifier",
+    "database_index_usage",
+    "database_migration_history",
+    "database_maintenance_dashboard",
     "backup_archive_paths",
     "backup_status",
     "status_count_rows",

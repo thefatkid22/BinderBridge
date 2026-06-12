@@ -111,10 +111,13 @@ class BinderBridgeTest(unittest.TestCase):
         passkey_challenge_indexes = {item["name"] for item in app.rows("PRAGMA index_list(passkey_challenges)")}
         csv_preset_indexes = {item["name"] for item in app.rows("PRAGMA index_list(csv_import_mapping_presets)")}
         privacy_link_indexes = {item["name"] for item in app.rows("PRAGMA index_list(privacy_share_links)")}
+        storage_snapshot_indexes = {item["name"] for item in app.rows("PRAGMA index_list(database_storage_snapshots)")}
+        maintenance_run_indexes = {item["name"] for item in app.rows("PRAGMA index_list(database_maintenance_runs)")}
         user_indexes = {item["name"] for item in app.rows("PRAGMA index_list(users)")}
         dispute_columns = {item["name"] for item in app.rows("PRAGMA table_info(trade_disputes)")}
         evidence_indexes = {item["name"] for item in app.rows("PRAGMA index_list(trade_dispute_evidence)")}
         triggers = {item["name"] for item in app.rows("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+        migration_history = app.rows("SELECT * FROM schema_migration_history ORDER BY version")
         with app.db() as conn:
             busy_timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
             journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
@@ -135,6 +138,8 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("idx_csv_import_mapping_presets_user", csv_preset_indexes)
         self.assertIn("idx_csv_import_mapping_presets_shared", csv_preset_indexes)
         self.assertIn("idx_privacy_share_links_target", privacy_link_indexes)
+        self.assertIn("idx_database_storage_snapshots_recorded", storage_snapshot_indexes)
+        self.assertIn("idx_database_maintenance_runs_completed", maintenance_run_indexes)
         self.assertIn("idx_users_role_status", user_indexes)
         self.assertIn("trg_collection_privacy_legacy_update", triggers)
         self.assertIn("trg_collection_privacy_visibility_update", triggers)
@@ -142,6 +147,8 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("trg_want_share_links_delete", triggers)
         self.assertIn("resolution_note", dispute_columns)
         self.assertIn("idx_trade_dispute_evidence_dispute", evidence_indexes)
+        self.assertEqual(len(migration_history), app.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(migration_history[-1]["version"], app.CURRENT_SCHEMA_VERSION)
 
     def test_scryfall_helpers_live_in_focused_modules(self):
         self.assertEqual(app.scryfall_get.__module__, "binderbridge.scryfall_client")
@@ -532,6 +539,40 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("SMTP refused", html)
         self.assertIn("Price refresh unavailable", html)
         self.assertTrue(health["setup_warnings"])
+
+    def test_admin_database_maintenance_tracks_storage_indexes_and_migrations(self):
+        admin = factory.user_row("databaseadmin", display_name="Database Admin", is_admin=True)
+        factory.create_collection_item(admin["id"], "Database Test Card", quantity=2, quantity_for_trade=1)
+
+        first_snapshot = app.record_database_storage_snapshot(force=True, source="test")
+        reused_snapshot = app.record_database_storage_snapshot(force=False, source="test")
+        analyze = app.run_database_maintenance("analyze")
+        vacuum = app.run_database_maintenance("vacuum")
+        dashboard = app.database_maintenance_dashboard()
+        html = app.render_admin_database(admin)
+
+        self.assertEqual(first_snapshot["id"], reused_snapshot["id"])
+        self.assertEqual(analyze["status"], "completed")
+        self.assertEqual(vacuum["status"], "completed")
+        self.assertGreaterEqual(len(dashboard["storage_history"]), 3)
+        self.assertGreaterEqual(len(dashboard["runs"]), 2)
+        self.assertGreater(dashboard["indexes"]["summary"]["total"], 0)
+        self.assertGreater(dashboard["indexes"]["summary"]["with_stats"], 0)
+        self.assertTrue(dashboard["indexes"]["sample_plans"])
+        self.assertEqual(dashboard["migrations"]["current_version"], app.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(len(dashboard["migrations"]["migrations"]), app.CURRENT_SCHEMA_VERSION)
+        self.assertTrue(hasattr(app.App, "admin_database_page"))
+        self.assertTrue(hasattr(app.App, "admin_database_analyze"))
+        self.assertTrue(hasattr(app.App, "admin_database_vacuum"))
+        self.assertIn("Database maintenance", html)
+        self.assertIn("Storage growth", html)
+        self.assertIn("Index visibility", html)
+        self.assertIn("Migration history", html)
+        self.assertIn("/admin/database/analyze", html)
+        self.assertIn("/admin/database/vacuum", html)
+        self.assertIn("/admin/database/snapshot", html)
+        self.assertIn("SQLite does not expose cumulative index-use counters", html)
+        self.assertIn("/admin/database", app.render_admin_health(admin))
 
     def test_admin_collection_health_dashboard_tracks_quality_and_privacy(self):
         admin = factory.user_row("collectionhealthadmin", display_name="Collection Health Admin", is_admin=True)

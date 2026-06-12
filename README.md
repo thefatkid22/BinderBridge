@@ -18,6 +18,7 @@ BinderBridge is a self-hostable trading card collection app for small communitie
 - Admin-managed registration invites with optional invite-only registration mode and manual-link fallback
 - SQLite storage with no external service dependency
 - Versioned SQLite schema migrations with hot-path indexes for collection, browse, wishlist, trade, and Scryfall lookup pages
+- Admin database maintenance tools with guarded ANALYZE/VACUUM actions, index-planner visibility, storage-growth snapshots, and migration history
 - Admin backup and restore tools with scheduled automatic backups, retention settings, and pre-restore safety snapshots
 - Admin maintenance health dashboard for database size, backup status, Scryfall refresh status, queued jobs, email configuration, failed notifications, setup warnings, and needs-attention grouping
 - Admin collection health dashboard for duplicate rows, missing Scryfall data, invalid finishes, stale prices, per-user issue concentration, and public/private coverage
@@ -220,7 +221,7 @@ python -m unittest discover -s tests
 - `components.py`: shared HTML controls such as sort bars, active filter chips, pagination, and trade-picker paging
 - `trade_service.py`: trade validation, comments, counters, notifications, and completion logic
 - `collection_queries.py`, `want_queries.py`, `matchmaking_queries.py`, `trade_queries.py`: SQL-heavy list, detail, picker, availability, and matchmaking queries
-- `maintenance.py`: admin backup and restore helpers
+- `maintenance.py`: admin backup, restore, retention, database maintenance, storage history, and index visibility helpers
 - `exports.py`: collection, group, wishlist, and account export helpers
 - `cleanup.py`: duplicate detection, duplicate merge, and collection hygiene audit helpers
 - `collection_health.py`: site-wide collection quality, price freshness, Scryfall coverage, and privacy coverage metrics
@@ -235,6 +236,33 @@ python -m unittest discover -s tests
 - `ui_helpers.py`: compatibility facade that re-exports the helper modules while older imports continue to work
 
 The facade wires these modules back into the `app` namespace for compatibility while the codebase continues to move toward smaller modules.
+
+## Database Maintenance and Migrations
+
+Admins with maintenance access can open `Admin -> Database maintenance` to:
+
+- Run `ANALYZE` and `PRAGMA optimize` to refresh SQLite query-planner statistics
+- Run a guarded `VACUUM` after `quick_check` to rebuild the database and reclaim reusable pages
+- Record storage snapshots and review database, WAL, and shared-memory growth over time
+- Inspect application indexes, indexed columns, planner statistics, storage footprint when SQLite `dbstat` is available, and representative query plans that currently choose each index
+- Review the current schema version and recorded migration history
+
+SQLite does not expose cumulative per-index usage counters. BinderBridge therefore labels index usage as representative planner evidence rather than claiming to measure every query executed by the application.
+
+Create a backup before running `VACUUM` on an important installation. `VACUUM` needs temporary free disk space and can temporarily block writes. `ANALYZE` is the routine, lower-risk maintenance action.
+
+Schema migrations run automatically during startup. Migration history introduced in version 8 backfills earlier applied versions with the time history tracking was enabled.
+
+| Version | Migration |
+| --- | --- |
+| 1 | Hot-path indexes for collection, browse, wishlist, trades, and Scryfall lookups |
+| 2 | Trade dispute evidence storage and moderation trend indexes |
+| 3 | Saved CSV import mapping presets |
+| 4 | User roles and hierarchy |
+| 5 | Granular privacy controls and group share links |
+| 6 | Private collection-card share links |
+| 7 | Private wanted-card share links |
+| 8 | Database maintenance history, storage snapshots, and recorded migration history |
 
 ## Demo Data
 
@@ -381,7 +409,6 @@ Imports and integrations:
 Security, operations, and maintenance:
 
 - Passkey policy controls, recovery guidance, and admin-facing enrollment visibility for self-hosted groups
-- Database maintenance tools for vacuum/analyze, index usage visibility, storage growth charts, and migration-history documentation
 - Background job runner abstraction with scheduling controls for imports, Scryfall refreshes, backups, webhooks, and email delivery
 - Deployment hardening guide with HTTPS reverse proxy, SMTP setup, backup restore drills, Docker volume notes, scheduled job expectations, and recommended production settings
 - Theme and accessibility polish such as high-contrast mode, reduced motion, and larger tap targets
