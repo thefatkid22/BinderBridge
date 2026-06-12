@@ -33,6 +33,12 @@ def admin_health_page(self, user):
     return self.html(render_admin_health(user))
 
 
+def admin_collection_health_page(self, user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
+        return self.not_found(user)
+    return self.html(render_admin_collection_health(user))
+
+
 def admin_health_retry_jobs(self, user):
     if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
@@ -659,6 +665,7 @@ __all__ = [
     "admin_page",
     "admin_logs_page",
     "admin_health_page",
+    "admin_collection_health_page",
     "admin_health_retry_jobs",
     "admin_health_replay_notifications",
     "admin_health_check_backups",

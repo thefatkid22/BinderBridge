@@ -532,6 +532,56 @@ class BinderBridgeTest(unittest.TestCase):
         self.assertIn("Price refresh unavailable", html)
         self.assertTrue(health["setup_warnings"])
 
+    def test_admin_collection_health_dashboard_tracks_quality_and_privacy(self):
+        admin = factory.user_row("collectionhealthadmin", display_name="Collection Health Admin", is_admin=True)
+        collector = factory.user_row("healthcollector", display_name="Health Collector")
+        app.execute("UPDATE users SET collection_value_visibility = 'private' WHERE id = ?", (collector["id"],))
+        current = app.now_iso()
+        stale = (datetime.now(timezone.utc) - timedelta(hours=72)).replace(microsecond=0).isoformat()
+        complete = {
+            "scryfall_id": "known-card",
+            "scryfall_uri": "https://scryfall.com/card/test/1",
+            "type_line": "Artifact",
+            "price_usd": "1.00",
+            "price_source": "scryfall",
+            "price_refreshed_at": current,
+        }
+        factory.create_collection_item(collector["id"], "Duplicate Card")
+        factory.create_collection_item(collector["id"], "Duplicate Card")
+        factory.create_collection_item(collector["id"], "Missing Card")
+        factory.create_collection_item(collector["id"], "Invalid Finish", finish="Glitter", visibility="private", **complete)
+        factory.create_collection_item(
+            collector["id"],
+            "Stale Price",
+            visibility="trusted",
+            price_refreshed_at=stale,
+            **{key: value for key, value in complete.items() if key != "price_refreshed_at"},
+        )
+        factory.create_collection_item(collector["id"], "Healthy Card", visibility="link", **complete)
+
+        dashboard = app.collection_health_dashboard()
+        summary = dashboard["summary"]
+        collector_health = next(item for item in dashboard["users"] if item["user_id"] == collector["id"])
+        html = app.render_admin_collection_health(admin)
+
+        self.assertEqual(summary["total_cards"], 6)
+        self.assertEqual(summary["healthy_cards"], 1)
+        self.assertEqual(summary["affected_cards"], 5)
+        self.assertEqual(summary["duplicate_rows"], 1)
+        self.assertEqual(summary["missing_scryfall"], 3)
+        self.assertEqual(summary["invalid_finishes"], 1)
+        self.assertEqual(summary["stale_prices"], 1)
+        self.assertEqual(summary["visibility"], {"members": 3, "trusted": 1, "link": 1, "private": 1})
+        self.assertEqual(summary["value_visibility"]["private"], 1)
+        self.assertEqual(collector_health["health_percent"], 16)
+        self.assertEqual(collector_health["severity"], "error")
+        self.assertTrue(hasattr(app.App, "admin_collection_health_page"))
+        self.assertIn("Collection health", html)
+        self.assertIn("Public/private coverage", html)
+        self.assertIn("Health Collector", html)
+        self.assertIn("Missing Scryfall: 3", html)
+        self.assertIn("/admin/collection-health", app.render_admin(admin))
+
     def test_admin_jobs_dashboard_shows_imports_retries_and_failed_emails(self):
         admin = factory.user_row("jobadmin", display_name="Job Admin")
         user_id = factory.create_user("jobuser", display_name="Job User", email="jobuser@example.com")

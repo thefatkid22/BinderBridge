@@ -136,6 +136,7 @@ def render_admin(user, notice=None, status="info", invite_result=None):
         </div>
         <div class="actions">
             <a class="button secondary" href="/admin/jobs">Import and jobs</a>
+            <a class="button secondary" href="/admin/collection-health">Collection health</a>
             <a class="button secondary" href="/admin/health">Maintenance health</a>
         </div>
     </section>
@@ -563,6 +564,94 @@ def render_setup_warning_item(warning):
     """
 
 
+def render_collection_health_issue(label, count, severe=False):
+    status_class = "declined" if count and severe else "pending" if count else "accepted"
+    return f'<span class="status {status_class}">{e(label)}: {e(count)}</span>'
+
+
+def render_collection_health_visibility(counts):
+    return "".join(
+        f'<span class="pill">{e(VISIBILITY_LABELS[key])}: {e(counts.get(key, 0))}</span>'
+        for key in VISIBILITY_LABELS
+    )
+
+
+def render_collection_health_user_row(item):
+    issue_statuses = "".join(
+        (
+            render_collection_health_issue("Duplicates", item["duplicate_rows"], severe=True),
+            render_collection_health_issue("Missing Scryfall", item["missing_scryfall"]),
+            render_collection_health_issue("Invalid finishes", item["invalid_finishes"], severe=True),
+            render_collection_health_issue("Stale prices", item["stale_prices"]),
+        )
+    )
+    banned = '<span class="status declined">Banned</span>' if item["is_banned"] else ""
+    return f"""
+    <tr class="job-row {health_severity_class(item["severity"])}">
+        <td data-label="User"><strong>{e(item["display_name"])}</strong><span class="subtle">@{e(item["username"])} - {e(role_label(item["role"]))}</span>{banned}</td>
+        <td data-label="Health">
+            <div class="collection-health-meter">
+                <strong>{e(item["health_percent"])}% healthy</strong>
+                <progress max="100" value="{e(item["health_percent"])}">{e(item["health_percent"])}%</progress>
+                <span class="subtle">{e(item["affected_cards"])} of {e(item["total_cards"])} entries need attention</span>
+            </div>
+        </td>
+        <td data-label="Issues"><div class="status-stack health-issue-stack">{issue_statuses}</div></td>
+        <td data-label="Sharing"><div class="status-row">{render_collection_health_visibility(item["visibility"])}</div><span class="subtle">Values: {e(VALUE_VISIBILITY_LABELS.get(item["collection_value_visibility"], "All members"))}</span></td>
+        <td data-label="Actions" class="table-actions"><a class="button secondary small" href="/members/{e(item["user_id"])}">Open profile</a></td>
+    </tr>
+    """
+
+
+def render_admin_collection_health(user, notice=None, status="info"):
+    dashboard = collection_health_dashboard()
+    summary = dashboard["summary"]
+    user_rows = "".join(render_collection_health_user_row(item) for item in dashboard["users"])
+    user_rows = user_rows or '<tr><td class="empty-state" colspan="5">No collection cards have been added yet.</td></tr>'
+    visibility_metrics = "".join(
+        f'<article class="metric"><span>{e(summary["visibility"][key])}</span><p>{e(label)}</p></article>'
+        for key, label in VISIBILITY_OPTIONS
+    )
+    value_visibility_metrics = "".join(
+        f'<span class="pill">{e(label)}: {e(summary["value_visibility"][key])}</span>'
+        for key, label in VALUE_VISIBILITY_OPTIONS
+    )
+    content = f"""
+    <section class="section-heading">
+        <div><p class="eyebrow">Admin</p><h1>Collection health</h1><p class="muted">Review collection quality, Scryfall coverage, price freshness, and sharing choices across the site.</p></div>
+        <div class="actions"><a class="button secondary" href="/admin">Back to admin</a><a class="button secondary" href="/admin/jobs">Import and jobs</a><a class="button secondary" href="/admin/health">Maintenance health</a></div>
+    </section>
+    <section class="metric-grid collection-health-summary">
+        <article class="{health_card_class('metric', 'ok' if summary["health_percent"] == 100 else 'warning')}"><span>{e(summary["health_percent"])}%</span><p>healthy collection entries</p></article>
+        <article class="{health_card_class('metric', 'error' if summary["duplicate_rows"] else 'ok')}"><span>{e(summary["duplicate_rows"])}</span><p>duplicate extra rows</p></article>
+        <article class="{health_card_class('metric', 'warning' if summary["missing_scryfall"] else 'ok')}"><span>{e(summary["missing_scryfall"])}</span><p>missing Scryfall data</p></article>
+        <article class="{health_card_class('metric', 'error' if summary["invalid_finishes"] else 'ok')}"><span>{e(summary["invalid_finishes"])}</span><p>invalid finishes</p></article>
+        <article class="{health_card_class('metric', 'warning' if summary["stale_prices"] else 'ok')}"><span>{e(summary["stale_prices"])}</span><p>stale prices</p></article>
+        <article class="{health_card_class('metric', 'warning' if summary["users_needing_attention"] else 'ok')}"><span>{e(summary["users_needing_attention"])}</span><p>users needing attention</p></article>
+    </section>
+    <section class="admin-settings-grid">
+        <article class="panel span-2">
+            <div class="panel-heading"><div><h2>Public/private coverage</h2><p class="muted compact">Collection item visibility and user-level collection value sharing choices.</p></div><span class="pill">{e(summary["total_cards"])} entries</span></div>
+            <div class="metric-grid compact-stats privacy-coverage-grid">{visibility_metrics}</div><div class="status-row">{value_visibility_metrics}</div>
+        </article>
+        <article class="panel span-2">
+            <div class="panel-heading"><div><h2>Health definitions</h2><p class="muted compact">Issues can overlap; the health percentage counts each affected card only once.</p></div><a class="button ghost small" href="/admin/jobs">Open jobs</a></div>
+            <div class="detail-grid">
+                <span>Duplicates</span><strong>Extra exact-match collection rows that can be merged by their owner.</strong>
+                <span>Missing Scryfall</span><strong>MTG entries missing a Scryfall ID, URL, or canonical type line.</strong>
+                <span>Invalid finishes</span><strong>Missing, malformed, non-canonical, or printing-incompatible finish values.</strong>
+                <span>Stale prices</span><strong>Identified MTG printings not refreshed within {e(dashboard["price_stale_after_hours"])} hours.</strong>
+            </div>
+        </article>
+    </section>
+    <section class="panel flush collection-health-users">
+        <div class="panel-heading padded"><div><h2>Health by user</h2><p class="muted compact">Users with the most affected cards appear first.</p></div><span class="pill">{e(summary["users_with_cards"])} collector{'s' if summary["users_with_cards"] != 1 else ''}</span></div>
+        <div class="table-wrap"><table class="admin-table responsive-card-table"><thead><tr><th>User</th><th>Health</th><th>Issues</th><th>Sharing</th><th>Actions</th></tr></thead><tbody>{user_rows}</tbody></table></div>
+    </section>
+    """
+    return render_layout(user, "Collection health", content, active="admin", notice=notice, status=status)
+
+
 def render_admin_health(user, notice=None, status="info"):
     health = maintenance_health_status()
     dashboard = maintenance_job_dashboard(limit=6)
@@ -655,6 +744,7 @@ def render_admin_health(user, notice=None, status="info"):
         </div>
         <div class="actions">
             <a class="button secondary" href="/admin">Back to admin</a>
+            <a class="button secondary" href="/admin/collection-health">Collection health</a>
             <a class="button secondary" href="/admin/logs">Activity log</a>
         </div>
     </section>
@@ -1617,4 +1707,13 @@ def render_admin_user_row(admin_user, managed_user):
     """
 
 
-__all__ = ['render_staff_admin', 'render_admin', 'render_admin_onboarding_action', 'render_admin_onboarding_item', 'render_admin_onboarding_checklist', 'health_time_label', 'health_status_class', 'render_health_status_counts', 'render_failed_notification_row', 'render_admin_health', 'admin_job_user_label', 'admin_job_time_label', 'admin_job_status_label', 'admin_job_retry_form', 'admin_job_import_target', 'admin_job_import_row', 'admin_job_scryfall_row', 'admin_job_price_row', 'admin_job_notification_row', 'render_admin_jobs', 'admin_audit_log_display_user', 'admin_audit_log_target_label', 'admin_audit_log_time_label', 'render_admin_audit_log_item', 'render_admin_audit_log_table_row', 'trade_dispute_user_label', 'trade_dispute_evidence_admin_preview', 'render_trade_dispute_summary_item', 'render_trade_dispute_admin_row', 'render_admin_trade_disputes', 'render_admin_logs', 'render_registration_invite_row', 'render_admin_user_row']
+__all__ = ['render_staff_admin', 'render_admin', 'render_admin_onboarding_action', 'render_admin_onboarding_item', 'render_admin_onboarding_checklist', 'health_time_label', 'health_status_class', 'render_health_status_counts', 'render_failed_notification_row', 'render_admin_health', 'render_admin_collection_health', 'admin_job_user_label', 'admin_job_time_label', 'admin_job_status_label', 'admin_job_retry_form', 'admin_job_import_target', 'admin_job_import_row', 'admin_job_scryfall_row', 'admin_job_price_row', 'admin_job_notification_row', 'render_admin_jobs', 'admin_audit_log_display_user', 'admin_audit_log_target_label', 'render_admin_audit_log_time_label', 'render_admin_dispute_summary_item', 'render_trade_dispute_admin_row', 'render_admin_trade_disputes', 'render_admin_logs', 'render_registration_invite_row', 'render_admin_user_row']
+__all__ = [
+    name
+    for name, value in globals().items()
+    if callable(value)
+    and (
+        name.startswith(("render_", "admin_job_", "admin_audit_log_", "trade_dispute_"))
+        or name in ("health_time_label", "health_status_class")
+    )
+]

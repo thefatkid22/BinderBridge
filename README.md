@@ -20,6 +20,7 @@ BinderBridge is a self-hostable trading card collection app for small communitie
 - Versioned SQLite schema migrations with hot-path indexes for collection, browse, wishlist, trade, and Scryfall lookup pages
 - Admin backup and restore tools with scheduled automatic backups, retention settings, and pre-restore safety snapshots
 - Admin maintenance health dashboard for database size, backup status, Scryfall refresh status, queued jobs, email configuration, failed notifications, setup warnings, and needs-attention grouping
+- Admin collection health dashboard for duplicate rows, missing Scryfall data, invalid finishes, stale prices, per-user issue concentration, and public/private coverage
 - Admin data retention controls for pruning read notifications, audit logs, completed webhook delivery records, and resolved dispute evidence
 - Admin onboarding checklist for SMTP, registration settings, backups, Scryfall sync, first invites, and first collection import
 - Admin import/job dashboard for CSV imports, Scryfall enrichment, Scryfall price refresh status, failed jobs, retries, and import undo
@@ -222,6 +223,7 @@ python -m unittest discover -s tests
 - `maintenance.py`: admin backup and restore helpers
 - `exports.py`: collection, group, wishlist, and account export helpers
 - `cleanup.py`: duplicate detection, duplicate merge, and collection hygiene audit helpers
+- `collection_health.py`: site-wide collection quality, price freshness, Scryfall coverage, and privacy coverage metrics
 - `import_profiles.py`: built-in collection/deck CSV source profiles, mappings, and header-based auto detection
 - `api.py`: API tokens, JSON API endpoints, webhooks, and webhook delivery helpers
 - `account_routes.py`, `collection_routes.py`, `group_routes.py`, `trade_routes.py`, `admin_routes.py`: feature-specific HTTP route handlers
@@ -370,10 +372,6 @@ Product features:
 - Collection/deck collaboration tools such as shared binders, shared wishlists, and group-curated trade boxes
 - Trade fulfillment checklist for accepted trades, such as packed, sent, received, and problem reported
 - Address or contact exchange controls for accepted trades with privacy safeguards
-
-Admin and moderation:
-
-- Collection health dashboard v2 for duplicates, missing Scryfall data, invalid finishes, stale prices, and public/private coverage
 
 Imports and integrations:
 

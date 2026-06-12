@@ -120,6 +120,8 @@ from binderbridge import maintenance as _maintenance
 _install_feature_module(_maintenance)
 from binderbridge import cleanup as _cleanup
 _install_feature_module(_cleanup)
+from binderbridge import collection_health as _collection_health
+_install_feature_module(_collection_health)
 from binderbridge import import_profiles as _import_profiles
 _install_feature_module(_import_profiles)
 
@@ -2046,6 +2048,8 @@ class App(BaseHTTPRequestHandler):
                 return self.admin_page(user)
             if path == "/admin/health":
                 return self.admin_health_page(user)
+            if path == "/admin/collection-health":
+                return self.admin_collection_health_page(user)
             if path == "/admin/health/jobs/retry" and method == "POST":
                 return self.admin_health_retry_jobs(user)
             if path == "/admin/health/notifications/replay" and method == "POST":
