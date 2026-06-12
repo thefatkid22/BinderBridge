@@ -221,6 +221,7 @@ python -m unittest discover -s tests
 - `components.py`: shared HTML controls such as sort bars, active filter chips, pagination, and trade-picker paging
 - `trade_service.py`: trade validation, comments, counters, notifications, and completion logic
 - `collection_queries.py`, `want_queries.py`, `matchmaking_queries.py`, `trade_queries.py`: SQL-heavy list, detail, picker, availability, and matchmaking queries
+- `import_mapping.py`, `import_batches.py`, `collection_imports.py`, `deck_import_service.py`: CSV mapping, preview batches, undo support, and collection/deck import orchestration
 - `maintenance.py`: admin backup, restore, retention, database maintenance, storage history, and index visibility helpers
 - `exports.py`: collection, group, wishlist, and account export helpers
 - `cleanup.py`: duplicate detection, duplicate merge, and collection hygiene audit helpers
@@ -235,7 +236,7 @@ python -m unittest discover -s tests
 - `formatting.py`: shared option lists, labels, money formatting, HTML escaping, suggestions, and collection stats
 - `ui_helpers.py`: compatibility facade that re-exports the helper modules while older imports continue to work
 
-The facade wires these modules back into the `app` namespace for compatibility while the codebase continues to move toward smaller modules.
+The facade wires these modules back into the `app` namespace for compatibility while the codebase continues to move toward smaller modules. Tests are grouped into feature-oriented suites under `tests/`, with shared setup and helpers in `tests/base.py`.
 
 ## Database Maintenance and Migrations
 
