@@ -1748,6 +1748,15 @@ Maybeboard
         self.assertEqual(archidekt_items[0]["collector_number"], "252")
         self.assertTrue(any("Excluded" in warning for warning in warnings))
 
+    def test_deck_url_candidates_include_known_text_export_adapters(self):
+        tappedout = app.deck_import_candidate_urls("https://tappedout.net/mtg-decks/example-deck/")
+        deckstats = app.deck_import_candidate_urls("https://deckstats.net/decks/12/34-example")
+
+        self.assertIn("fmt=txt", tappedout[0])
+        self.assertIn("export_txt=1", deckstats[0])
+        self.assertEqual(tappedout[-1], "https://tappedout.net/mtg-decks/example-deck/")
+        self.assertEqual(deckstats[-1], "https://deckstats.net/decks/12/34-example")
+
     def test_deck_import_review_detects_optional_sections(self):
         user_id = app.create_user("sectionreview", "password123", "Section Review")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
@@ -3766,6 +3775,82 @@ Deck
         self.assertEqual(result["inserted"], 1)
         self.assertEqual(result["updated"], 1)
         self.assertEqual(card["quantity"], 3)
+
+    def test_deckbox_source_profile_auto_detects_collection_columns(self):
+        user_id = app.create_user("deckboxer", "password123", "Deckboxer")
+        csv_bytes = (
+            "Count,Tradelist Count,Name,Edition,Card Number,Condition,Language,Foil,Notes\n"
+            "3,2,Sol Ring,Commander Masters,703,Near Mint,English,false,Trade binder\n"
+        ).encode("utf-8")
+
+        preview = app.preview_collection_import_csv(user_id, csv_bytes, source="auto", enrich_scryfall=False)
+        result = app.commit_collection_import_preview(user_id, preview["batch_id"])
+        card = app.row("SELECT * FROM collection_items WHERE user_id = ?", (user_id,))
+
+        self.assertEqual(
+            app.detect_csv_import_profile(
+                ["Count", "Tradelist Count", "Name", "Edition", "Card Number"],
+                "collection",
+            ),
+            "deckbox",
+        )
+        self.assertEqual(result["inserted"], 1)
+        self.assertEqual(card["card_name"], "Sol Ring")
+        self.assertEqual(card["collector_number"], "703")
+        self.assertEqual(card["quantity"], 3)
+        self.assertEqual(card["quantity_for_trade"], 2)
+        self.assertEqual(card["notes"], "Trade binder")
+
+    def test_dragonshield_source_profile_maps_collection_and_deck_exports(self):
+        csv_bytes = (
+            "Folder Name,Quantity,Trade Quantity,Card Name,Set Code,Set Name,Card Number,Printing,Condition,Language\n"
+            "Sideboard,2,1,Dispel,BFZ,Battle for Zendikar,76,Foil,Lightly Played,English\n"
+        ).encode("utf-8")
+
+        items, warnings = app.normalize_csv_rows(csv_bytes, source="dragonshield")
+        section_rows, deck_warnings = app.normalize_csv_rows_by_section(csv_bytes, source="dragonshield")
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(deck_warnings, [])
+        self.assertEqual(items[0]["card_name"], "Dispel")
+        self.assertEqual(items[0]["quantity_for_trade"], 1)
+        self.assertEqual(items[0]["finish"], "Foil")
+        self.assertEqual(items[0]["condition"], "LP")
+        self.assertEqual(section_rows["sideboard"][0]["set_code"], "BFZ")
+
+    def test_deckstats_source_profile_auto_detects_sections(self):
+        csv_bytes = (
+            "amount,name,set_code,set_name,collector_number,is_foil,section\n"
+            "1,Sol Ring,CMM,Commander Masters,703,0,main\n"
+            "2,Dispel,BFZ,Battle for Zendikar,76,1,sideboard\n"
+        ).encode("utf-8")
+
+        section_rows, warnings = app.normalize_csv_rows_by_section(csv_bytes, source="auto")
+
+        self.assertEqual(
+            app.detect_csv_import_profile(
+                ["amount", "name", "set_code", "set_name", "collector_number", "is_foil", "section"],
+                "deck",
+            ),
+            "deckstats",
+        )
+        self.assertEqual(section_rows["main"][0]["card_name"], "Sol Ring")
+        self.assertEqual(section_rows["sideboard"][0]["quantity"], 2)
+        self.assertEqual(section_rows["sideboard"][0]["finish"], "Foil")
+        self.assertTrue(app.deck_import_sections_need_review(section_rows))
+
+    def test_import_source_profile_options_are_visible(self):
+        user_id = app.create_user("profileviewer", "password123", "Profile Viewer")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        deck_id = app.create_card_group(user_id, "deck", "Profile deck")
+
+        collection_html = app.render_import(user)
+        deck_html = app.render_group_detail(user, deck_id)
+
+        self.assertIn('value="deckbox"', collection_html)
+        self.assertIn('value="dragonshield"', collection_html)
+        self.assertIn('value="deckstats"', deck_html)
+        self.assertIn('value="tappedout"', deck_html)
 
     def test_custom_csv_import_mapping_preset_applies_to_collection_import(self):
         user_id = app.create_user("mapper", "password123", "Mapper")

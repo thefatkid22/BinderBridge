@@ -589,6 +589,7 @@ def render_deck_import_panel(user, group, result=None, review=None):
         <form class="form-grid deck-import-form" method="post" action="/groups/{group["id"]}/import" enctype="multipart/form-data">
             <label>Source
                 <select name="source">{option_tags(DECK_IMPORT_SOURCE_OPTIONS, "decklist")}</select>
+                <small>Choose Auto detect for CSV exports, or the matching site profile when available.</small>
             </label>
             <label>CSV mapping preset
                 <select name="mapping_preset_id">{render_csv_import_mapping_preset_options(user, "deck")}</select>

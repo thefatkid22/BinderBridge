@@ -7,7 +7,7 @@ import ipaddress
 import json
 import re
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -86,11 +86,12 @@ def csv_row_deck_section(csv_row, field_mapping=None):
     return normalize_deck_import_section(section) or DECK_IMPORT_MAIN_SECTION
 
 
-def normalize_csv_rows_by_section(csv_bytes, default_game="mtg", default_trade_quantity=0, field_mapping=None):
+def normalize_csv_rows_by_section(csv_bytes, default_game="mtg", default_trade_quantity=0, field_mapping=None, source="auto"):
     text = decode_csv(csv_bytes)
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         raise ValueError("CSV file needs a header row.")
+    _resolved_source, field_mapping = csv_import_profile_mapping(source, reader.fieldnames, "deck", field_mapping)
     field_mapping = normalize_csv_import_mapping(field_mapping)
     section_rows = {}
     warnings = []
@@ -107,6 +108,8 @@ def normalize_csv_rows_by_section(csv_bytes, default_game="mtg", default_trade_q
                 default_game=default_game,
                 default_trade_quantity=default_trade_quantity,
                 field_mapping=field_mapping,
+                source="generic",
+                target="deck",
             )
         except ValueError:
             warnings.append(f"Row {row_index}: missing card name.")
@@ -541,8 +544,16 @@ def deck_import_candidate_urls(source_url):
         match = re.search(r"/decks/(?P<id>\d+)", path)
         if match:
             candidates.append(f"https://archidekt.com/api/decks/{match.group('id')}/")
+    if host.endswith("tappedout.net") and "/mtg-decks/" in path:
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query["fmt"] = "txt"
+        candidates.append(parsed._replace(query=urlencode(query), fragment="").geturl())
+    if host.endswith("deckstats.net") and "/decks/" in path:
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query["export_txt"] = "1"
+        candidates.append(parsed._replace(query=urlencode(query), fragment="").geturl())
     candidates.append(str(source_url).strip())
-    return candidates
+    return list(dict.fromkeys(candidates))
 
 
 def fetch_deck_import_url(source_url):
@@ -576,7 +587,7 @@ def deck_sections_from_url_content(source_url, content_type, content):
             raise ValueError("Deck URL returned invalid JSON.") from exc
         return decklist_sections_from_json(data)
     if "csv" in content_type or path.endswith(".csv"):
-        return normalize_csv_rows_by_section(content, default_game="mtg", default_trade_quantity=0)
+        return normalize_csv_rows_by_section(content, default_game="mtg", default_trade_quantity=0, source="auto")
     if "<html" in text[:1000].lower() or "<!doctype html" in text[:1000].lower():
         text = deck_text_from_html(text)
     return deck_import_sections_from_text(text)

@@ -1823,6 +1823,7 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
         <form class="panel form-grid" method="post" action="/import" enctype="multipart/form-data">
             <label>Source
                 <select name="source">{option_tags(CSV_SOURCE_OPTIONS, "auto")}</select>
+                <small>Auto detect recognizes common collection-app exports. Choose a profile when headers are ambiguous.</small>
             </label>
             <label>Default game
                 <select name="game">{option_tags(CARD_GAMES, "mtg")}</select>

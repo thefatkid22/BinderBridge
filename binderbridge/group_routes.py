@@ -185,12 +185,13 @@ def group_deck_import(self, user, group):
                 result_source = "decklist"
                 source_url = ""
             else:
-                result_source = source if source in dict(CSV_SOURCE_OPTIONS) else "auto"
+                result_source = source if source in dict(DECK_IMPORT_SOURCE_OPTIONS) and source != "decklist" else "auto"
                 section_rows, warnings = normalize_csv_rows_by_section(
                     upload["content"],
                     default_game="mtg",
                     default_trade_quantity=0,
                     field_mapping=field_mapping,
+                    source=result_source,
                 )
                 source_url = ""
         else:

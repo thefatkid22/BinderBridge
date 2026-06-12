@@ -120,6 +120,8 @@ from binderbridge import maintenance as _maintenance
 _install_feature_module(_maintenance)
 from binderbridge import cleanup as _cleanup
 _install_feature_module(_cleanup)
+from binderbridge import import_profiles as _import_profiles
+_install_feature_module(_import_profiles)
 
 
 
@@ -615,11 +617,12 @@ def parse_trade_quantity(raw_value, owned_quantity, default_trade_quantity):
     return min(clamp_quantity(text, 0), owned_quantity)
 
 
-def normalize_csv_rows(csv_bytes, default_game="mtg", default_trade_quantity=0, field_mapping=None):
+def normalize_csv_rows(csv_bytes, default_game="mtg", default_trade_quantity=0, field_mapping=None, source="auto", target="collection"):
     text = decode_csv(csv_bytes)
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         raise ValueError("CSV file needs a header row.")
+    _resolved_source, field_mapping = csv_import_profile_mapping(source, reader.fieldnames, target, field_mapping)
     field_mapping = normalize_csv_import_mapping(field_mapping)
     items = []
     warnings = []
@@ -1061,7 +1064,14 @@ def preview_collection_import_csv(
     allow_scryfall_finish_mismatch=False,
     field_mapping=None,
 ):
-    items, warnings = normalize_csv_rows(csv_bytes, default_game, default_trade_quantity, field_mapping=field_mapping)
+    items, warnings = normalize_csv_rows(
+        csv_bytes,
+        default_game,
+        default_trade_quantity,
+        field_mapping=field_mapping,
+        source=source,
+        target="collection",
+    )
     preview = collection_import_preview_from_items(
         user_id,
         items,
@@ -1181,7 +1191,14 @@ def import_collection_csv(
     allow_scryfall_finish_mismatch=False,
     field_mapping=None,
 ):
-    items, warnings = normalize_csv_rows(csv_bytes, default_game, default_trade_quantity, field_mapping=field_mapping)
+    items, warnings = normalize_csv_rows(
+        csv_bytes,
+        default_game,
+        default_trade_quantity,
+        field_mapping=field_mapping,
+        source=source,
+        target="collection",
+    )
     batch_id = create_import_batch(
         user_id,
         "collection_csv",
@@ -1741,6 +1758,7 @@ def import_deck_group_csv(user_id, group_id, csv_bytes, source="auto", enrich_sc
         default_game="mtg",
         default_trade_quantity=0,
         field_mapping=field_mapping,
+        source=source,
     )
     return import_deck_group_sections(
         user_id,

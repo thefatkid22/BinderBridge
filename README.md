@@ -85,7 +85,7 @@ Data is stored in `data/binderbridge.sqlite3` by default. Set `BINDERBRIDGE_DATA
 
 ## CSV Import
 
-Open `My Cards -> Import` in the app and upload a CSV export. BinderBridge recognizes common ManaBox, Archidekt, and generic headers including:
+Open `My Cards -> Import` in the app and upload a CSV export. Built-in source profiles support ManaBox, Archidekt, Deckbox, Moxfield, Dragon Shield, and Delver Lens exports. Auto detect selects a profile from the file headers, while `Generic CSV` handles common headers including:
 
 - `Name`
 - `Quantity`
@@ -99,7 +99,7 @@ Open `My Cards -> Import` in the app and upload a CSV export. BinderBridge recog
 
 Uploads default to a preview step that shows how many rows will be inserted, updated, queued, or skipped before anything is written. Applied import batches can be undone from the import history, which removes newly imported rows and restores rows that were merged during the batch.
 
-Users can save custom CSV mapping presets from the import page when a source uses unusual column names. Presets can target collection imports or deck CSV imports, and admins can share presets with every user on the site.
+Users can save custom CSV mapping presets from the import page when a source uses unusual column names. Presets can target collection imports or deck CSV imports, override the selected built-in source profile, and admins can share presets with every user on the site.
 
 When `Scryfall lookup` is enabled, MTG imports are enriched with canonical card names, set data, type line, oracle text, image URL, Scryfall URL, rarity, colors, and current USD price when available. Imports first use the local Scryfall bulk-data cache and existing SQLite lookup cache so large CSV files do not make one live request per row. Rows that cannot be matched locally are imported immediately and queued for background Scryfall enrichment after the preview is confirmed. CSV price columns are ignored; BinderBridge uses Scryfall as the only pricing source.
 
@@ -123,7 +123,7 @@ Collection add/edit, wanted-card add/edit, and CSV imports also use the same Scr
 
 ## Deck Group Import
 
-Open a deck group from `My Cards -> Decks & Binders` and use `Bulk import deck`. Deck imports can use the same ManaBox, Archidekt, and generic CSV headers as collection imports, or common plain-text deck-list formats such as:
+Open a deck group from `My Cards -> Decks & Binders` and use `Bulk import deck`. Deck imports can use the collection-app CSV profiles plus Deckstats, TappedOut, and AetherHub deck CSV profiles, or common plain-text deck-list formats such as:
 
 ```text
 1 Sol Ring
@@ -131,7 +131,7 @@ Open a deck group from `My Cards -> Decks & Binders` and use `Bulk import deck`.
 1 Arcane Signet [C20] #252
 ```
 
-Public deck-list URLs are supported on a best-effort basis. BinderBridge tries known public JSON endpoints for Moxfield and Archidekt, then falls back to plain text, CSV, or readable HTML deck-list content. If a site blocks automated URL export or changes its private endpoint, export the deck as plain text or CSV and upload or paste it into the deck group.
+Public deck-list URLs are supported on a best-effort basis. BinderBridge tries known public JSON endpoints for Moxfield and Archidekt, text-export candidates for TappedOut and Deckstats, then falls back to plain text, CSV, or readable HTML deck-list content. If a site blocks automated URL export or changes its private endpoint, export the deck as plain text or CSV and upload or paste it into the deck group.
 
 Deck imports compare the parsed list against cards already in your collection and show a preview before adding owned cards to the group. Applied deck import batches can be undone from the deck import history. Owned copies are added to the deck group up to the quantity you have, and any shortage is shown as a missing-card prompt. From that prompt you can add selected missing cards to an existing wishlist group or create a new grouped wishlist for the deck.
 
@@ -222,6 +222,7 @@ python -m unittest discover -s tests
 - `maintenance.py`: admin backup and restore helpers
 - `exports.py`: collection, group, wishlist, and account export helpers
 - `cleanup.py`: duplicate detection, duplicate merge, and collection hygiene audit helpers
+- `import_profiles.py`: built-in collection/deck CSV source profiles, mappings, and header-based auto detection
 - `api.py`: API tokens, JSON API endpoints, webhooks, and webhook delivery helpers
 - `account_routes.py`, `collection_routes.py`, `group_routes.py`, `trade_routes.py`, `admin_routes.py`: feature-specific HTTP route handlers
 - `db.py`: SQLite connection helpers, schema bootstrapping, migrations, and settings
@@ -365,7 +366,7 @@ Product features:
 - Broader game support with per-game card metadata, source adapters, condition labels, finish labels, and pricing/display rules
 - Saved searches and reusable filter presets for collection, wishlist, browse, and trade-building views
 - Trade packages for bundling named groups of cards into reusable offers
-- Additional import adapters and source profiles for deck-list sites and collection apps
+- Import source profile editor and community-shareable adapter packs
 - Collection/deck collaboration tools such as shared binders, shared wishlists, and group-curated trade boxes
 - Trade fulfillment checklist for accepted trades, such as packed, sent, received, and problem reported
 - Address or contact exchange controls for accepted trades with privacy safeguards

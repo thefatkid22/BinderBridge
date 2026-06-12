@@ -21,6 +21,7 @@ from email.message import EmailMessage
 from urllib.parse import quote
 
 from binderbridge.config import config_bool, config_float, config_int, config_str
+from binderbridge.import_profiles import CSV_IMPORT_PROFILES
 from binderbridge.migrations import (
     CURRENT_SCHEMA_VERSION,
     SCHEMA_MIGRATIONS,
@@ -108,14 +109,18 @@ TRADE_DISPUTE_STATUS_OPTIONS = (
     ("dismissed", "Dismissed"),
 )
 
-CSV_SOURCE_OPTIONS = [
-    ("auto", "Auto detect"),
-    ("manabox", "ManaBox"),
-    ("archidekt", "Archidekt"),
-    ("generic", "Generic CSV"),
-]
+CSV_SOURCE_OPTIONS = [("auto", "Auto detect")] + [
+    (source, profile["label"])
+    for source, profile in CSV_IMPORT_PROFILES.items()
+    if "collection" in profile["targets"]
+] + [("generic", "Generic CSV")]
 
-DECK_IMPORT_SOURCE_OPTIONS = CSV_SOURCE_OPTIONS + [
+DECK_IMPORT_SOURCE_OPTIONS = [("auto", "Auto detect")] + [
+    (source, profile["label"])
+    for source, profile in CSV_IMPORT_PROFILES.items()
+    if "deck" in profile["targets"]
+] + [
+    ("generic", "Generic CSV"),
     ("decklist", "Deck list text/link"),
 ]
 
