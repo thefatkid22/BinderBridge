@@ -68,6 +68,7 @@ class TradeWorkflowTests(BinderBridgeTestCase):
             f"Unsafe\x00 Bolt,{app.MAX_CARD_QUANTITY * 10},hello\x01 world\n"
         ).encode("utf-8")
 
+        self.assertNotIn("\x00", app.decode_csv(csv_data))
         result = app.import_collection_csv(user_id, csv_data, enrich_scryfall=False, merge=False)
         item = app.row("SELECT * FROM collection_items WHERE user_id = ?", (user_id,))
 

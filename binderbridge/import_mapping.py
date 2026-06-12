@@ -223,13 +223,13 @@ def csv_import_mapping_from_form(form):
 
 def decode_csv(csv_bytes):
     if isinstance(csv_bytes, str):
-        return csv_bytes
+        return csv_bytes.replace("\x00", "")
     for encoding in ("utf-8-sig", "utf-8", "latin-1"):
         try:
-            return csv_bytes.decode(encoding)
+            return csv_bytes.decode(encoding).replace("\x00", "")
         except UnicodeDecodeError:
             continue
-    return csv_bytes.decode("utf-8", errors="replace")
+    return csv_bytes.decode("utf-8", errors="replace").replace("\x00", "")
 
 def parse_nonnegative_int(value, default=0):
     try:
