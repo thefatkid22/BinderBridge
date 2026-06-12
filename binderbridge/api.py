@@ -1239,7 +1239,7 @@ def api_notifications_list(self, user, query):
 
 def api_dispatch(self, method, path, query):
     if path == "/api/v1/health" and method == "GET":
-        return self.api_json({"ok": True, "app": APP_NAME})
+        return self.api_json({"ok": True, "app": APP_NAME, "version": APP_VERSION})
     required_scope = "write" if method in ("POST", "PUT", "PATCH", "DELETE") else "read"
     user, token_row, error = self.api_authenticate(required_scope)
     if error:

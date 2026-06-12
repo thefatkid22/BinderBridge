@@ -378,5 +378,8 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertIn(">Wishlist</a>", html)
         self.assertIn('href="/browse"', html)
         self.assertIn(">Browse</a>", html)
+        self.assertIn(app.APP_VERSION, html)
+        self.assertIn("AGPL-3.0 license", html)
+        self.assertIn(app.SOURCE_URL, html)
         self.assertNotIn(">Import</a>", html)
         self.assertNotIn(">Groups</a>", html)

@@ -361,6 +361,18 @@ td strong {
     padding: 2.25rem 0 4.5rem;
 }
 
+.app-footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem 1rem;
+    width: min(1280px, calc(100% - 5vw));
+    margin: 0 auto;
+    padding: 0 0 2rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
 .auth-page .page-shell {
     width: min(1120px, calc(100% - 6vw));
 }

@@ -9,6 +9,7 @@ ENV BINDERBRIDGE_DATA=/data
 WORKDIR /app
 
 COPY app.py /app/app.py
+COPY binderbridge /app/binderbridge
 COPY static /app/static
 
 EXPOSE 8000

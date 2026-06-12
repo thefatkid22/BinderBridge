@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile
+        run: python -m compileall -q app.py binderbridge tests scripts
+      - name: Test
+        run: python -m unittest discover -s tests
+      - name: Release smoke checks
+        env:
+          BINDERBRIDGE_RELEASE_IMPORT_ROWS: "1000"
+        run: python scripts/release_smoke.py
+
+  docker:
+    name: Docker startup smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t binderbridge:ci .
+      - name: Start container
+        run: docker run --detach --name binderbridge-ci --publish 18000:8000 binderbridge:ci
+      - name: Wait for sign-in page
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18000/login | grep --quiet "Sign in"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs binderbridge-ci
+          exit 1
+      - name: Stop container
+        if: always()
+        run: docker rm --force binderbridge-ci

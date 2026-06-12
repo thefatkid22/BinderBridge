@@ -120,6 +120,11 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
         {flash}
         {content}
     </main>
+    <footer class="app-footer">
+        <span>{APP_NAME} {APP_VERSION}</span>
+        <a href="{e(SOURCE_URL)}" target="_blank" rel="noreferrer">Source</a>
+        <a href="{e(SOURCE_URL)}/blob/HEAD/LICENSE" target="_blank" rel="noreferrer">AGPL-3.0 license</a>
+    </footer>
     <script>
         (function () {{
             var button = document.getElementById("theme-toggle");

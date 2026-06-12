@@ -30,15 +30,16 @@ from urllib.parse import parse_qs, urlencode, unquote, urlparse
 from urllib.request import Request, urlopen
 
 from binderbridge.config import config_bool, config_int, config_str
+from binderbridge.version import APP_NAME, APP_VERSION, DEFAULT_SOURCE_URL
 
 
-APP_NAME = "BinderBridge"
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(config_str("BINDERBRIDGE_DATA", default=str(BASE_DIR / "data"), section="app", key="data_dir"))
 DB_PATH = DATA_DIR / "binderbridge.sqlite3"
 STATIC_DIR = BASE_DIR / "static"
 HOST = config_str("BINDERBRIDGE_HOST", "HOST", default="127.0.0.1", section="server", key="host")
 PORT = config_int("BINDERBRIDGE_PORT", "PORT", default=8000, section="server", key="port")
+SOURCE_URL = config_str("BINDERBRIDGE_SOURCE_URL", default=DEFAULT_SOURCE_URL, section="app", key="source_url")
 SESSION_COOKIE = "binderbridge_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 PBKDF2_ITERATIONS = 310_000
@@ -405,7 +406,7 @@ _install_feature_module(_exports)
 # Additional trade service functions live in binderbridge.trade_service.
 
 class App(BaseHTTPRequestHandler):
-    server_version = "BinderBridge/0.1"
+    server_version = f"{APP_NAME}/{APP_VERSION}"
 
     def do_GET(self):
         self.dispatch("GET")

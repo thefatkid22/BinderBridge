@@ -2,6 +2,10 @@
 
 BinderBridge is a self-hostable trading card collection app for small communities. The current app is focused on Magic: The Gathering while keeping each card entry tagged by game so Pokemon, Lorcana, and other TCG support can be expanded later.
 
+Current release: **v0.1.0-alpha.1**
+
+License: **GNU AGPL-3.0**
+
 ## Features
 
 - Username and password accounts
@@ -78,12 +82,17 @@ BinderBridge is a self-hostable trading card collection app for small communitie
 Requires Python 3.10 or newer.
 
 ```powershell
+git clone https://github.com/thefatkid22/BinderBridge.git
+cd BinderBridge
+git checkout v0.1.0-alpha.1
 python app.py
 ```
 
 Open `http://127.0.0.1:8000`.
 
 Data is stored in `data/binderbridge.sqlite3` by default. Set `BINDERBRIDGE_DATA` to choose another directory.
+
+The first registered user becomes the site owner. For upgrades, create a backup first, stop BinderBridge, update the checkout, and restart it. SQLite migrations run automatically on startup.
 
 ## CSV Import
 
@@ -298,9 +307,10 @@ public_base_url = https://cards.example.com
 [app]
 data_dir = ./data
 demo = false
+source_url = https://github.com/thefatkid22/BinderBridge
 
 [scryfall]
-user_agent = BinderBridge/0.1 self-hosted collection manager
+user_agent = BinderBridge/0.1.0-alpha.1 self-hosted collection manager
 delay_seconds = 0.12
 search_limit = 24
 bulk_type = default_cards
@@ -345,6 +355,7 @@ Supported environment variables:
 - `BINDERBRIDGE_CONFIG`: path to an INI config file
 - `BINDERBRIDGE_DATA`: database directory, default `./data`
 - `BINDERBRIDGE_DEMO`: seed sample data when set to `1`, `true`, or `yes`
+- `BINDERBRIDGE_SOURCE_URL`: source repository shown in the app footer; modified public deployments should point this to their corresponding source
 - `SCRYFALL_USER_AGENT`: custom User-Agent header for Scryfall requests
 - `SCRYFALL_DELAY_SECONDS`: delay between live Scryfall requests, default `0.12`
 - `SCRYFALL_SEARCH_LIMIT`: Scryfall search result limit, default `24`
@@ -390,6 +401,27 @@ docker compose up --build
 
 The compose file stores SQLite data in a named volume.
 
+## Release Validation
+
+Run the full automated suite and release-critical smoke checks:
+
+```powershell
+python -m unittest discover -s tests
+python scripts/release_smoke.py
+```
+
+The smoke checks use temporary data directories to verify fresh initialization, a schema upgrade, backup/restore, and a large CSV import. GitHub Actions also builds and starts the Docker image.
+
+## Known Alpha Limitations
+
+- This alpha is intended primarily for trusted small groups and evaluation.
+- Background jobs and in-memory rate limits run inside the web process and assume one BinderBridge app instance.
+- Internet-facing installs need an HTTPS reverse proxy, persistent operational monitoring, and regular restore drills.
+- Deck-list URL imports are best effort because third-party sites can change or block export endpoints.
+- Magic: The Gathering has the deepest metadata and pricing support; other games currently use generic card records.
+- Confirmed large collection imports can take several minutes while the applied rows are written.
+- Alpha upgrades should always begin with a verified backup.
+
 ## Roadmap Ideas
 
 Product features:
@@ -423,3 +455,7 @@ Profile changes require the current password. Password changes keep the current 
 The first registered user is made an admin automatically. If an existing database has users but no admin yet, startup promotes the earliest user to admin. Admins can ban users, unban users, reset user passwords, manage admin access, manage trusted trade status, set the completed-trade threshold for earning trust, and save private moderation notes.
 
 Successful admin actions are recorded in the admin activity log. The log covers account moderation, role changes, trusted-status overrides, two-factor resets, invite and registration settings, trade fairness settings, trade issue reviews, and backup or restore actions.
+
+## License
+
+BinderBridge is licensed under the [GNU Affero General Public License v3.0](LICENSE). Operators running modified public versions should provide users access to the corresponding source and set `BINDERBRIDGE_SOURCE_URL` to that source repository.

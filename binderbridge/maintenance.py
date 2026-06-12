@@ -1283,6 +1283,7 @@ def create_backup_archive(created_by_user_id=None, prefix="binderbridge-backup")
     temp_db_path = directory / f".{archive_path.stem}.sqlite3.tmp"
     metadata = {
         "app": APP_NAME,
+        "version": APP_VERSION,
         "created_at": now_iso(),
         "created_by_user_id": created_by_user_id or "",
         "database_name": BACKUP_DATABASE_NAME,

@@ -4,6 +4,15 @@ from tests.base import *  # noqa: F401,F403
 
 
 class CoreAdminTests(BinderBridgeTestCase):
+    def test_release_metadata_is_centralized(self):
+        from binderbridge import APP_NAME, APP_VERSION, RELEASE_TAG, __version__
+
+        self.assertEqual(APP_NAME, app.APP_NAME)
+        self.assertEqual(APP_VERSION, app.APP_VERSION)
+        self.assertEqual(__version__, app.APP_VERSION)
+        self.assertEqual(RELEASE_TAG, f"v{app.APP_VERSION}")
+        self.assertEqual(app.App.server_version, f"{app.APP_NAME}/{app.APP_VERSION}")
+
     def test_config_file_values_are_loaded_with_environment_override(self):
         original = {
             "BINDERBRIDGE_CONFIG": os.environ.get("BINDERBRIDGE_CONFIG"),
@@ -803,6 +812,7 @@ class CoreAdminTests(BinderBridgeTestCase):
             self.assertIn(app.BACKUP_DATABASE_NAME, archive.namelist())
             metadata = json.loads(archive.read("metadata.json").decode("utf-8"))
         self.assertEqual(metadata["app"], app.APP_NAME)
+        self.assertEqual(metadata["version"], app.APP_VERSION)
         self.assertEqual(metadata["created_by_user_id"], admin_id)
 
     def test_automatic_backup_settings_run_and_due_state(self):

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import quote
 from binderbridge.config import config_bool, config_float, config_int, config_str
+from binderbridge.version import DEFAULT_USER_AGENT
 from binderbridge.migrations import (
     CURRENT_SCHEMA_VERSION,
     SCHEMA_MIGRATIONS,
@@ -64,7 +65,7 @@ def env_str(*names, default=""):
 
 
 SCRYFALL_DELAY_SECONDS = config_float("SCRYFALL_DELAY_SECONDS", default=0.12, section="scryfall", key="delay_seconds")
-SCRYFALL_USER_AGENT = config_str("SCRYFALL_USER_AGENT", default="BinderBridge/0.1 self-hosted collection manager", section="scryfall", key="user_agent")
+SCRYFALL_USER_AGENT = config_str("SCRYFALL_USER_AGENT", default=DEFAULT_USER_AGENT, section="scryfall", key="user_agent")
 SCRYFALL_ACCEPT = "application/json;q=0.9,*/*;q=0.8"
 DECK_IMPORT_ACCEPT = "application/json;q=0.9,text/plain;q=0.8,text/csv;q=0.7,text/html;q=0.4,*/*;q=0.1"
 DECK_IMPORT_MAX_BYTES = max(64_000, config_int("DECK_IMPORT_MAX_BYTES", default=1_500_000, section="imports", key="deck_import_max_bytes"))
