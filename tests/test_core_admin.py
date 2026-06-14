@@ -75,6 +75,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         privacy_link_indexes = {item["name"] for item in app.rows("PRAGMA index_list(privacy_share_links)")}
         storage_snapshot_indexes = {item["name"] for item in app.rows("PRAGMA index_list(database_storage_snapshots)")}
         maintenance_run_indexes = {item["name"] for item in app.rows("PRAGMA index_list(database_maintenance_runs)")}
+        password_request_indexes = {item["name"] for item in app.rows("PRAGMA index_list(password_recovery_requests)")}
+        password_token_indexes = {item["name"] for item in app.rows("PRAGMA index_list(password_reset_tokens)")}
         user_indexes = {item["name"] for item in app.rows("PRAGMA index_list(users)")}
         dispute_columns = {item["name"] for item in app.rows("PRAGMA table_info(trade_disputes)")}
         evidence_indexes = {item["name"] for item in app.rows("PRAGMA index_list(trade_dispute_evidence)")}
@@ -102,6 +104,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn("idx_privacy_share_links_target", privacy_link_indexes)
         self.assertIn("idx_database_storage_snapshots_recorded", storage_snapshot_indexes)
         self.assertIn("idx_database_maintenance_runs_completed", maintenance_run_indexes)
+        self.assertIn("idx_password_recovery_requests_status", password_request_indexes)
+        self.assertIn("idx_password_reset_tokens_active", password_token_indexes)
         self.assertIn("idx_users_role_status", user_indexes)
         self.assertIn("trg_collection_privacy_legacy_update", triggers)
         self.assertIn("trg_collection_privacy_visibility_update", triggers)
@@ -379,6 +383,14 @@ class CoreAdminTests(BinderBridgeTestCase):
             app.email_delivery_configured = original_email_configured
 
         self.assertIn("User control panel", html)
+        self.assertIn('aria-label="Admin control panel"', html)
+        self.assertIn('id="admin-overview"', html)
+        self.assertIn('id="admin-policies"', html)
+        self.assertIn('id="admin-access"', html)
+        self.assertIn('id="admin-operations"', html)
+        self.assertIn('id="admin-users"', html)
+        self.assertIn('<table class="admin-table responsive-card-table">', html)
+        self.assertIn('data-label="Controls"', html)
         self.assertIn("Onboarding checklist", html)
         self.assertIn("0 of 5 complete", html)
         self.assertIn("Configure SMTP", html)
@@ -393,7 +405,9 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn("Integration access", html)
         self.assertIn('name="api_access_policy"', html)
         self.assertIn('name="webhook_access_policy"', html)
-        self.assertIn("Reset password", html)
+        self.assertIn("Issue reset link", html)
+        self.assertIn('name="current_password"', html)
+        self.assertNotIn('name="new_password"', html)
         self.assertIn("Ban", html)
         self.assertIn("Change role", html)
         self.assertIn(">Moderator</option>", html)
@@ -535,6 +549,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn("Storage growth", html)
         self.assertIn("Index visibility", html)
         self.assertIn("Migration history", html)
+        self.assertIn('<table class="admin-table responsive-card-table database-index-table">', html)
+        self.assertIn('data-label="Sample planner use"', html)
         self.assertIn("/admin/database/analyze", html)
         self.assertIn("/admin/database/vacuum", html)
         self.assertIn("/admin/database/snapshot", html)
@@ -912,23 +928,38 @@ class CoreAdminTests(BinderBridgeTestCase):
         with self.assertRaisesRegex(ValueError, "own account"):
             app.admin_set_user_ban(admin_id, admin_id, True, "nope")
 
-    def test_admin_password_reset_changes_password_and_clears_sessions(self):
+    def test_admin_password_recovery_issues_link_without_learning_password(self):
         admin_id = app.create_user("admin", "password123", "Admin")
         target_id = app.create_user("target", "password123", "Target")
         token, _ = app.create_session(target_id)
-
-        app.admin_reset_user_password(admin_id, target_id, "temporary123", "temporary123")
+        original_configured = app.email_delivery_configured
+        app.email_delivery_configured = lambda: False
+        try:
+            result = app.admin_issue_user_password_recovery(admin_id, target_id, "password123", "https://cards.example.test")
+        finally:
+            app.email_delivery_configured = original_configured
         target = app.row("SELECT * FROM users WHERE id = ?", (target_id,))
+        stored = app.row("SELECT * FROM password_reset_tokens WHERE user_id = ?", (target_id,))
 
-        self.assertTrue(app.verify_password("temporary123", target["password_hash"]))
+        self.assertTrue(app.verify_password("password123", target["password_hash"]))
         self.assertIsNone(app.get_user_by_session(token))
+        self.assertFalse(result["sent"])
+        self.assertIn("/password/reset?token=", result["link"])
+        self.assertNotEqual(stored["token_hash"], result["token"])
+        with self.assertRaisesRegex(ValueError, "current password"):
+            app.admin_issue_user_password_recovery(admin_id, target_id, "wrong")
 
     def test_admin_actions_are_written_to_audit_log(self):
         admin_id = app.create_user("admin", "password123", "Admin")
         target_id = app.create_user("target", "password123", "Target")
 
+        original_configured = app.email_delivery_configured
+        app.email_delivery_configured = lambda: False
+        try:
+            app.admin_issue_user_password_recovery(admin_id, target_id, "password123")
+        finally:
+            app.email_delivery_configured = original_configured
         app.admin_set_user_ban(admin_id, target_id, True, "spam")
-        app.admin_reset_user_password(admin_id, target_id, "temporary123", "temporary123")
         app.admin_set_user_role(admin_id, target_id, True)
         app.admin_update_notes(target_id, "Private note", admin_id)
         app.admin_set_user_trust(target_id, "trust", admin_id)
@@ -938,10 +969,10 @@ class CoreAdminTests(BinderBridgeTestCase):
 
         self.assertEqual(
             actions,
-            ["user_banned", "password_reset", "admin_granted", "admin_notes_updated", "trust_granted"],
+            ["password_recovery_issued", "user_banned", "admin_granted", "admin_notes_updated", "trust_granted"],
         )
-        self.assertIn("spam", logs[0]["details"])
-        self.assertNotIn("temporary123", " ".join(item["details"] for item in logs))
+        self.assertIn("spam", logs[1]["details"])
+        self.assertNotIn("password123", " ".join(item["details"] for item in logs))
         self.assertTrue(all(item["admin_user_id"] == admin_id for item in logs))
         self.assertTrue(all(item["target_user_id"] == target_id for item in logs))
 

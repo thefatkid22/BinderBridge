@@ -470,6 +470,7 @@ def render_trade_matchmaking(user, query=None, notice=None, status="info"):
         """
     pagination = render_pagination("/trades/matches", query, total_count, page, per_page, page_count)
     content = f"""
+    {render_trades_subnav("matches")}
     <section class="section-heading">
         <div>
             <p class="eyebrow">Trades</p>
@@ -485,6 +486,16 @@ def render_trade_matchmaking(user, query=None, notice=None, status="info"):
     {pagination}
     """
     return render_layout(user, "Trade matchmaking", content, active="trades", notice=notice, status=status)
+
+
+def want_list_filter_chip_specs():
+    return (
+        {"key": "q", "label": "Search"},
+        {"key": "priority", "label": "Priority", "formatter": want_priority_label},
+        {"key": "game", "label": "Game", "formatter": game_label},
+        {"key": "visibility", "label": "Visibility", "formatter": lambda value: VISIBILITY_LABELS.get(value, value.title())},
+        {"key": "matched_only", "label": "Trade matches only", "standalone": True},
+    )
 
 
 def render_preference_summary(want):
@@ -658,7 +669,7 @@ def render_want_share_link_row(want, link):
     if not revoked:
         revoke_form = f"""
         <form method="post" action="/wants/{want["id"]}/share-links/{link["id"]}/revoke">
-            <button class="button danger small" type="submit" onclick="return confirm('Revoke this private wanted-card link?')">Revoke</button>
+                <button class="button danger small" type="submit" data-confirm="Revoke this private wanted-card link?">Revoke</button>
         </form>
         """
     expires = row_value(link, "expires_at", "")
@@ -934,7 +945,15 @@ def render_wants(
         default="priority",
         fallback=("card_name COLLATE NOCASE", "set_name COLLATE NOCASE", "collector_number COLLATE NOCASE"),
     )
-    wants = want_rows_for_user(user["id"], order_clause)
+    filters = want_list_filter_values(query)
+    total_count = want_count_for_user(user["id"], filters)
+    page, per_page, page_count, offset = pagination_state(query, total_count)
+    if edit_want_id:
+        wants = want_rows_for_user(user["id"], order_clause)
+        pagination = ""
+    else:
+        wants = want_page_rows(user["id"], filters, order_clause, per_page, offset)
+        pagination = render_pagination("/wants", query, total_count, page, per_page, page_count)
     want_cards = "".join(
         render_want_card(
             user,
@@ -961,29 +980,76 @@ def render_wants(
         scryfall_picker_title=scryfall_picker_title,
         scryfall_picker_multiple=scryfall_picker_multiple if not edit_want_id else False,
     )
+    priority_options = "".join(
+        f'<option value="{e(value)}"{selected(filters["priority"], value)}>{e(label)}</option>'
+        for value, label in WANT_PRIORITY_OPTIONS
+    )
+    visibility_options = "".join(
+        f'<option value="{e(value)}"{selected(filters["visibility"], value)}>{e(label)}</option>'
+        for value, label in VISIBILITY_OPTIONS
+    )
+    active_filters = render_active_filter_chips("/wants", query, filters, want_list_filter_chip_specs())
+    want_datalist = render_datalist("want-search-suggestions", want_search_suggestions(user["id"]))
     content = f"""
     {render_wishlist_subnav("wants")}
     <section class="section-heading">
         <div>
             <p class="eyebrow">Wishlist</p>
             <h1>Cards you want</h1>
+            <p class="lead">Track priorities and printing preferences, then focus on wants that other members can fill.</p>
         </div>
         <div class="actions">
             <a class="button secondary" href="/cleanup">Cleanup duplicates</a>
             <a class="button secondary" href="/wants/export">Export CSV</a>
         </div>
     </section>
-    {render_sort_bar("/wants", query, WANT_SORT_OPTIONS, current_sort, current_dir)}
+    {render_workspace_nav([
+        ("#add-want", "Add a wanted card", "Search Scryfall or enter details"),
+        ("#tracked-wants", "Tracked wants", "Filter, sort, edit, and find matches"),
+    ], label="Wishlist workspace")}
+    <form class="filter-bar wants-filter-bar" method="get" action="/wants">
+        <div class="filter-primary-row">
+            <label class="search-field">Search
+                <input name="q" value="{e(filters["q"])}" placeholder="Card name, type, or set" list="want-search-suggestions">
+            </label>
+            <label>Priority
+                <select name="priority"><option value="">All priorities</option>{priority_options}</select>
+            </label>
+            <label class="checkbox-line">
+                <input type="checkbox" name="matched_only" value="1"{checked(filters["matched_only"])}>
+                Trade matches only
+            </label>
+            <div class="actions filter-actions">
+                <button class="button secondary" type="submit">Filter</button>
+                <a class="button ghost" href="/wants">Reset</a>
+            </div>
+        </div>
+        <details class="advanced-filter"{" open" if filters["game"] or filters["visibility"] else ""}>
+            <summary><span>More filters and sorting</span><span class="advanced-filter-count">Game, visibility, order</span></summary>
+            <div class="advanced-filter-grid">
+                <label>Game
+                    <select name="game"><option value="">All games</option>{option_tags(CARD_GAMES, filters["game"])}</select>
+                </label>
+                <label>Visibility
+                    <select name="visibility"><option value="">All visibility</option>{visibility_options}</select>
+                </label>
+                {render_sort_controls(WANT_SORT_OPTIONS, current_sort, current_dir)}
+            </div>
+        </details>
+    </form>
+    {active_filters}
     <section class="content-grid wants-grid">
-        {add_form}
-        <article class="panel wants-panel">
+        <div id="add-want">{add_form}</div>
+        <article class="panel wants-panel" id="tracked-wants">
             <div class="panel-heading">
                 <h2>Tracked wants</h2>
-                <span class="muted">{e(len(wants))} cards</span>
+                <span class="muted">{e(total_count)} matching card{"s" if total_count != 1 else ""}</span>
             </div>
             {want_list}
+            {pagination}
         </article>
     </section>
+    {want_datalist}
     {render_preference_select_all_script()}
     """
     return render_layout(user, "Wishlist", content, active="wants", notice=notice, status=status)

@@ -156,6 +156,60 @@ def register(self, method, user, query=None):
     token, expires_at = create_session(user_id)
     self.redirect_with_session("/", token, expires_at)
 
+def password_recovery(self, method, user):
+    if user:
+        return self.redirect("/account")
+    if method == "GET":
+        return self.html(render_password_recovery())
+    if method != "POST":
+        return self.redirect("/login")
+    form = self.read_form()
+    identifier = form.get("identifier", [""])[0]
+    self.enforce_rate_limit(
+        "password_recovery",
+        self.rate_limit_key("password-recovery"),
+        "Too many recovery requests. Try again later.",
+    )
+    request_password_recovery(identifier, self.public_base_url())
+    notice = (
+        "If an account matches, a one-time password reset link has been emailed. "
+        "If email delivery is unavailable, an administrator has been notified."
+        if email_delivery_configured()
+        else "If an account matches, an administrator has been notified and can provide a one-time password reset link."
+    )
+    return self.html(render_password_recovery(notice=notice))
+
+def password_reset(self, method, user, query=None):
+    query = query or {}
+    token = query.get("token", [""])[0]
+    if method == "GET":
+        return self.html(render_password_reset(token, valid=bool(password_reset_from_token(token))))
+    if method != "POST":
+        return self.redirect("/login")
+    form = self.read_form()
+    token = form.get("token", [""])[0]
+    self.enforce_rate_limit(
+        "password_reset",
+        self.rate_limit_key("password-reset"),
+        "Too many password reset attempts. Try again shortly.",
+    )
+    try:
+        complete_password_reset(
+            token,
+            form.get("new_password", [""])[0],
+            form.get("confirm_password", [""])[0],
+        )
+    except ValueError as exc:
+        return self.html(
+            render_password_reset(token, valid=bool(password_reset_from_token(token)), notice=str(exc), status="error"),
+            HTTPStatus.BAD_REQUEST,
+        )
+    return self.html(
+        render_login(
+            notice="Password reset complete. Sign in with your new password. Two-factor authentication remains enabled.",
+        )
+    )
+
 def redirect_with_session(self, location, token, expires_at):
     self.send_response(HTTPStatus.SEE_OTHER)
     self.send_header("Location", safe_local_redirect_path(location, default="/"))
@@ -386,6 +440,8 @@ ACCOUNT_ROUTE_METHODS = (
     'login_passkey_options',
     'login_passkey_complete',
     'register',
+    'password_recovery',
+    'password_reset',
     'redirect_with_session',
     'logout',
     'public_base_url',

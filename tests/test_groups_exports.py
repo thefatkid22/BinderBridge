@@ -54,6 +54,13 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertIn("Sharing defaults", deck_html)
         self.assertIn("Private share links", deck_html)
         self.assertIn(f'/groups/{deck_id}/export', deck_html)
+        self.assertIn('id="group-cards"', deck_html)
+        self.assertIn('id="group-sharing"', deck_html)
+        self.assertIn('id="group-import"', deck_html)
+        self.assertIn('id="group-danger"', deck_html)
+        self.assertLess(deck_html.index('id="group-cards"'), deck_html.index('id="group-sharing"'))
+        self.assertLess(deck_html.index('id="group-sharing"'), deck_html.index('id="group-import"'))
+        self.assertNotIn('id="group-import"', wishlist_html)
         self.assertIn("Rhystic Study", wishlist_html)
         self.assertIn("Add want", wishlist_html)
         with self.assertRaisesRegex(ValueError, "Deck and binder"):
@@ -369,6 +376,92 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertIn('value="qty" selected', wishlist_html)
         self.assertLess(wishlist_html.index("Big Group Want"), wishlist_html.index("Small Group Want"))
 
+    def test_group_contents_filter_paginate_and_bulk_remove_links_only(self):
+        user_id = app.create_user("largegroup", "password123", "Large Group")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        deck_id = app.create_card_group(user_id, "deck", "Large deck")
+        card_ids = []
+        group_item_ids = []
+        for index in range(30):
+            card_id = factory.create_collection_item(
+                user_id,
+                f'Group Card {index:02d}',
+                set_name="Filtered Set" if index >= 28 else "Main Set",
+                condition="LP" if index >= 28 else "NM",
+                finish="Foil" if index >= 28 else "Regular",
+            )
+            app.add_collection_item_to_group(user_id, deck_id, card_id, 1)
+            card_ids.append(card_id)
+        group_item_ids = [item["group_item_id"] for item in app.collection_group_items(deck_id)]
+
+        first_page = app.render_group_detail(user, deck_id)
+        second_page = app.render_group_detail(user, deck_id, query={"page": ["2"]})
+        filtered = app.render_group_detail(
+            user,
+            deck_id,
+            query={"q": ["Filtered Set"], "condition": ["LP"], "finish": ["Foil"]},
+        )
+        removed = app.remove_group_items(user_id, deck_id, group_item_ids[:2])
+
+        self.assertIn("Showing 1-25 of 30", first_page)
+        self.assertNotIn("<strong>1 x Group Card 29</strong>", first_page)
+        self.assertIn("Showing 26-30 of 30", second_page)
+        self.assertIn("<strong>1 x Group Card 29</strong>", second_page)
+        self.assertIn('class="filter-bar group-item-filter-bar"', filtered)
+        self.assertIn("Search: Filtered Set", filtered)
+        self.assertIn("Condition: LP", filtered)
+        self.assertIn("Finish: Foil", filtered)
+        self.assertIn("Showing 1-2 of 2", filtered)
+        self.assertIn(f'action="/groups/{deck_id}/items/bulk-delete"', filtered)
+        self.assertIn("Select page", filtered)
+        self.assertEqual(removed, 2)
+        self.assertEqual(app.collection_group_item_count(deck_id), 28)
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM collection_items WHERE user_id = ?", (user_id,))["count"], 30)
+
+        remaining_group_item = app.collection_group_items(deck_id)[0]
+
+        class RouteHarness:
+            def read_form(self):
+                return {
+                    "group_item_id": [str(remaining_group_item["group_item_id"])],
+                    "redirect_to": [f"/groups/{deck_id}?q=Group#group-cards"],
+                }
+
+            def redirect(self, location):
+                return location
+
+            def not_found(self, current_user):
+                raise AssertionError(f"Unexpected not found for {current_user['id']}")
+
+        redirect = app.group_action(
+            RouteHarness(),
+            "POST",
+            user,
+            f"/groups/{deck_id}/items/bulk-delete",
+        )
+        self.assertEqual(redirect, f"/groups/{deck_id}?q=Group#group-cards")
+        self.assertEqual(app.collection_group_item_count(deck_id), 27)
+
+    def test_wishlist_group_filters_by_priority_and_paginates(self):
+        user_id = app.create_user("groupwants", "password123", "Group Wants")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        wishlist_id = app.create_card_group(user_id, "wishlist", "Large wishlist")
+        for index in range(27):
+            want_id = factory.create_want_item(
+                user_id,
+                f'Wanted Group Card {index:02d}',
+                priority="urgent" if index >= 25 else "normal",
+            )
+            app.add_want_item_to_group(user_id, wishlist_id, want_id)
+
+        filtered = app.render_group_detail(user, wishlist_id, query={"priority": ["urgent"]})
+
+        self.assertEqual(app.wishlist_group_item_count(wishlist_id), 27)
+        self.assertEqual(app.wishlist_group_item_count(wishlist_id, {"priority": "urgent"}), 2)
+        self.assertIn("Priority: Urgent", filtered)
+        self.assertIn("Showing 1-2 of 2", filtered)
+        self.assertNotIn("<strong>Wanted Group Card 00</strong>", filtered)
+
     def test_deck_group_bulk_imports_csv_and_deck_text(self):
         user_id = app.create_user("deckimport", "password123", "Deck Import")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
@@ -549,6 +642,8 @@ Considering
         self.assertEqual(before_commit, [])
         self.assertIn("Preview deck import", preview_html)
         self.assertIn("Import deck cards", preview_html)
+        self.assertIn('<table class="responsive-card-table import-preview-card-table">', preview_html)
+        self.assertIn('data-label="Quality"', preview_html)
         self.assertEqual(result["grouped"], 1)
         self.assertEqual(result["missing"], 1)
         self.assertEqual(len(grouped), 1)

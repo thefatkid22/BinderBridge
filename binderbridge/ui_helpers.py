@@ -90,10 +90,13 @@ DEFAULT_DISPUTE_ESCALATION_DAYS = 7
 DEFAULT_DISPUTE_EVIDENCE_RETENTION_DAYS = 0
 INVITE_ONLY_REGISTRATION_KEY = "invite_only_registration"
 REGISTRATION_INVITE_EXPIRY_DAYS = max(1, config_int("BINDERBRIDGE_REGISTRATION_INVITE_EXPIRY_DAYS", "REGISTRATION_INVITE_EXPIRY_DAYS", default=14, section="registration", key="invite_expiry_days"))
+PASSWORD_RESET_EXPIRY_MINUTES = max(10, config_int("BINDERBRIDGE_PASSWORD_RESET_EXPIRY_MINUTES", "PASSWORD_RESET_EXPIRY_MINUTES", default=60, section="security", key="password_reset_expiry_minutes"))
 ADMIN_AUDIT_ACTION_LABELS = {
     "user_banned": "User banned",
     "user_unbanned": "User unbanned",
-    "password_reset": "Password reset",
+    "password_recovery_issued": "Password recovery issued",
+    "password_recovery_completed": "Password recovery completed",
+    "password_reset": "Legacy password reset",
     "admin_granted": "Admin access granted",
     "admin_removed": "Admin access removed",
     "admin_notes_updated": "Admin notes updated",
@@ -847,6 +850,7 @@ __all__ = [
     "SCHEMA_VERSION_KEY",
     "CURRENT_SCHEMA_VERSION",
     "REGISTRATION_INVITE_EXPIRY_DAYS",
+    "PASSWORD_RESET_EXPIRY_MINUTES",
     "ADMIN_AUDIT_ACTION_LABELS",
     "ADMIN_AUDIT_ACTION_OPTIONS",
     "SCRYFALL_BULK_STATUS_KEY",
@@ -1044,6 +1048,11 @@ __all__ = [
     "notification_worker_pass",
     "notification_worker_loop",
     "start_notification_worker",
+    "NOTIFICATION_LIST_CATEGORY_KINDS",
+    "notification_filter_values",
+    "notification_list_where",
+    "notification_count",
+    "notification_page_rows",
     "notification_rows",
     "mark_notification_read",
     "mark_all_notifications_read",

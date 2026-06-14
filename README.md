@@ -33,7 +33,8 @@ License: **GNU AGPL-3.0**
 - Personal collection tracking
 - Collection statistics for value totals, rarity mix, condition, finish, language, visibility, and card-data coverage
 - Sortable collection, browse, wishlist, deck/binder group, and trade-building card lists by name, set, game, quantity, trade quantity, condition, finish, value, and update time
-- Responsive collection, browse, trade, and admin-log layouts with mobile-friendly card views
+- Searchable, filterable, paginated deck/binder/wishlist group contents with current-page selection and bulk group-link removal
+- Responsive collection, browse, group, trade, and admin layouts with mobile-friendly card views, compact mobile navigation, and shared accessible confirmation dialogs
 - Active removable filter chips for collection, browse, and trade-picker results
 - Tradeable quantity per card
 - Per-card condition details and photo galleries that are preserved in trade offers
@@ -180,6 +181,14 @@ Registration remains open by default so a fresh self-hosted install can create i
 
 If SMTP is configured, BinderBridge sends the invite email automatically. Without SMTP, the admin panel shows a copyable invite link.
 
+## Password Recovery
+
+Users can request password recovery from the sign-in page using their username or account email. BinderBridge always returns a generic response so the recovery form cannot be used to discover which accounts exist.
+
+When SMTP is configured and the account has an email address, BinderBridge sends a hashed, single-use password reset link. Without SMTP, or when email delivery fails, the request appears in the admin user panel so an administrator can issue a manually shared reset link.
+
+Administrators do not choose or learn a user's replacement password. Issuing an administrator-assisted reset requires the administrator's current password, signs out the affected user, and creates a one-time link. Completing any password reset signs out active sessions while leaving two-factor authentication enabled. Reset links expire after 60 minutes by default.
+
 ## Notification Preferences
 
 Users can configure in-app notification categories from `Account -> Notification preferences`, including trade offers, comments, counteroffers, trade status, price alerts, watchlist alerts, import completion, and admin notices.
@@ -273,6 +282,7 @@ Schema migrations run automatically during startup. Migration history introduced
 | 6 | Private collection-card share links |
 | 7 | Private wanted-card share links |
 | 8 | Database maintenance history, storage snapshots, and recorded migration history |
+| 9 | Secure password recovery requests and one-time reset tokens |
 
 ## Demo Data
 
@@ -370,6 +380,7 @@ Supported environment variables:
 - `BINDERBRIDGE_SMTP_FROM`: email sender, defaults to the SMTP username or `noreply@localhost`
 - `BINDERBRIDGE_SMTP_TLS`: use STARTTLS, default enabled unless SMTP SSL is enabled
 - `BINDERBRIDGE_SMTP_SSL`: use SMTP over SSL, default disabled
+- `BINDERBRIDGE_PASSWORD_RESET_EXPIRY_MINUTES`: one-time password reset link lifetime, default `60`
 - `BINDERBRIDGE_NOTIFICATION_WORKER_INTERVAL_SECONDS`: interval for scheduled email and stale-trade reminder processing, default `60`
 - `BINDERBRIDGE_REGISTRATION_INVITE_EXPIRY_DAYS`: invite expiration window, default `14`
 - `BINDERBRIDGE_BACKUP_AUTO_ENABLED`: set to `0`, `false`, `no`, or `off` to pause automatic backups by default
@@ -448,11 +459,11 @@ Security, operations, and maintenance:
 
 ## Security Notes
 
-Passwords are hashed with PBKDF2-HMAC-SHA256 and sessions use HttpOnly cookies. Authenticated browser forms include CSRF tokens, and sensitive routes use simple in-memory rate limits. Users can enable TOTP two-factor authentication from the Account page using an authenticator app, and BinderBridge generates one-time recovery codes for account recovery. Users can also register passkeys for passwordless login; passkeys work on localhost for development, but self-hosted deployments should use HTTPS and set `BINDERBRIDGE_PUBLIC_BASE_URL` to the public site origin. API tokens are stored as hashes and webhooks are signed with per-endpoint secrets. This self-hosted build is suitable for trusted small groups, but a public internet deployment should add HTTPS, persistent/distributed rate limiting, regular restore drills, and stricter production hardening.
+Passwords are hashed with PBKDF2-HMAC-SHA256 and sessions use HttpOnly cookies. Authenticated browser forms include CSRF tokens, and sensitive routes use simple in-memory rate limits. Password reset tokens are stored as hashes, expire, and work once. Users can enable TOTP two-factor authentication from the Account page using an authenticator app, and BinderBridge generates one-time recovery codes for account recovery. Users can also register passkeys for passwordless login; passkeys work on localhost for development, but self-hosted deployments should use HTTPS and set `BINDERBRIDGE_PUBLIC_BASE_URL` to the public site origin. API tokens are stored as hashes and webhooks are signed with per-endpoint secrets. This self-hosted build is suitable for trusted small groups, but a public internet deployment should add HTTPS, persistent/distributed rate limiting, regular restore drills, and stricter production hardening.
 
 Profile changes require the current password. Password changes keep the current session active and sign out other active sessions.
 
-The first registered user is made an admin automatically. If an existing database has users but no admin yet, startup promotes the earliest user to admin. Admins can ban users, unban users, reset user passwords, manage admin access, manage trusted trade status, set the completed-trade threshold for earning trust, and save private moderation notes.
+The first registered user is made an admin automatically. If an existing database has users but no admin yet, startup promotes the earliest user to admin. Admins can ban users, unban users, issue secure password recovery links, reset two-factor authentication, manage admin access, manage trusted trade status, set the completed-trade threshold for earning trust, and save private moderation notes.
 
 Successful admin actions are recorded in the admin activity log. The log covers account moderation, role changes, trusted-status overrides, two-factor resets, invite and registration settings, trade fairness settings, trade issue reviews, and backup or restore actions.
 

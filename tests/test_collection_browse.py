@@ -81,6 +81,9 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn("Update all", html)
         self.assertIn("Delete selected", html)
         self.assertIn("Delete all", html)
+        self.assertIn("bulk-danger-zone", html)
+        self.assertIn("<summary>Remove cards</summary>", html)
+        self.assertLess(html.index("Update selected"), html.index("<summary>Remove cards</summary>"))
         self.assertIn('name="quantity_for_trade"', html)
         self.assertIn("Visibility", html)
         self.assertIn('<option value="">No change</option>', html)
@@ -96,6 +99,52 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn("page=2", html)
         self.assertIn('name="sort"', html)
         self.assertIn('name="dir"', html)
+
+    def test_trade_list_filters_and_paginates_offers(self):
+        alice_id = factory.create_user("trade-list-alice", display_name="Trade List Alice")
+        bob_id = factory.create_user("trade-list-bob", display_name="Trade List Bob")
+        carol_id = factory.create_user("trade-list-carol", display_name="Trade List Carol")
+        alice = app.row("SELECT * FROM users WHERE id = ?", (alice_id,))
+        wanted_trade_id = factory.create_trade(bob_id, alice_id, status="pending")
+        factory.create_trade(alice_id, carol_id, status="accepted")
+        for _ in range(11):
+            factory.create_trade(carol_id, alice_id, status="completed")
+
+        filtered_html = app.render_trades(
+            alice,
+            query={"direction": ["needs_action"], "status": ["pending"], "q": [str(wanted_trade_id)]},
+        )
+        paged_html = app.render_trades(alice, query={"per_page": ["10"], "page": ["1"]})
+
+        self.assertIn(f"Trade #{wanted_trade_id}", filtered_html)
+        self.assertNotIn("Trade List Carol", filtered_html)
+        self.assertIn("Active filters", filtered_html)
+        self.assertIn("Needs my response", filtered_html)
+        self.assertIn("Showing 1-10 of 13", paged_html)
+        self.assertIn('name="status"', paged_html)
+        self.assertIn('name="direction"', paged_html)
+
+    def test_wishlist_filters_trade_matches_and_paginates(self):
+        user_id = factory.create_user("want-list-owner", display_name="Want List Owner")
+        trader_id = factory.create_user("want-list-trader", display_name="Want List Trader")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        factory.create_want_item(user_id, "Matched Card", priority="urgent", type_line="Artifact")
+        factory.create_want_item(user_id, "Unmatched Card", priority="urgent", type_line="Artifact")
+        for index in range(10):
+            factory.create_want_item(user_id, f"Other Want {index:02d}", priority="low")
+        factory.create_collection_item(trader_id, "Matched Card", quantity_for_trade=1)
+
+        matched_html = app.render_wants(user, query={"matched_only": ["1"], "priority": ["urgent"]})
+        paged_html = app.render_wants(user, query={"per_page": ["10"], "page": ["1"]})
+        matched_results_html = matched_html.split('<datalist id="want-search-suggestions">', 1)[0]
+
+        self.assertIn("Matched Card", matched_results_html)
+        self.assertNotIn("Unmatched Card", matched_results_html)
+        self.assertIn("Trade matches only", matched_html)
+        self.assertIn("Active filters", matched_html)
+        self.assertIn("Showing 1-10 of 12", paged_html)
+        self.assertIn('list="want-search-suggestions"', paged_html)
+        self.assertIn('<datalist id="want-search-suggestions">', paged_html)
 
     def test_mobile_card_table_markup_is_available_for_wide_lists(self):
         alice_id = factory.create_user("mobilealice", display_name="Mobile Alice")

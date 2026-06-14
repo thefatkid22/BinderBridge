@@ -75,6 +75,7 @@ class CleanupAuditTests(BinderBridgeTestCase):
             """,
             (second_card_id, alice_id, timestamp),
         )
+        history_html = app.render_price_history_panel(alice_id, second_card_id)
         for card_id, lookup_key in ((first_card_id, "keep"), (second_card_id, "duplicate")):
             app.execute(
                 """
@@ -117,6 +118,8 @@ class CleanupAuditTests(BinderBridgeTestCase):
         self.assertEqual(result, {"groups": 1, "merged": 1})
         self.assertIn("/cleanup/collection", html)
         self.assertIn("Sol Ring", html)
+        self.assertIn('<table class="responsive-card-table price-history-table">', history_html)
+        self.assertIn('data-label="Observed"', history_html)
         self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0]["id"], first_card_id)
         self.assertEqual(cards[0]["quantity"], 5)
@@ -244,6 +247,8 @@ class CleanupAuditTests(BinderBridgeTestCase):
         self.assertIn("Condition &amp; finish audit", html)
         self.assertIn("/cleanup/audit/normalize", html)
         self.assertIn("Apply all matching", html)
+        self.assertIn('<table class="responsive-card-table audit-table">', html)
+        self.assertIn('data-label="Condition"', html)
         self.assertEqual(normalized, 1)
         self.assertEqual(sol_ring["condition"], "NM")
         self.assertEqual(sol_ring["finish"], "Regular")

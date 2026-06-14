@@ -6,15 +6,49 @@ This module is wired by binderbridge.views; shared app helpers are injected at r
 from binderbridge.trade_queries import *
 
 
-def render_trades(user, notice=None, status="info"):
-    trades = trade_rows_for_user(user["id"])
+def trade_list_filter_chip_specs():
+    direction_labels = {
+        "incoming": "Incoming",
+        "outgoing": "Outgoing",
+        "needs_action": "Needs my response",
+    }
+    return (
+        {"key": "q", "label": "Search"},
+        {"key": "status", "label": "Status", "formatter": lambda value: TRADE_STATUS_LABELS.get(value, value.title())},
+        {"key": "direction", "label": "View", "formatter": lambda value: direction_labels.get(value, value.title())},
+    )
+
+
+def render_trades(user, query=None, notice=None, status="info"):
+    query = query or {}
+    filters = trade_list_filter_values(query)
+    total_count = trade_count_for_user(user["id"], filters)
+    page, per_page, page_count, offset = pagination_state(query, total_count)
+    trades = trade_page_rows(user["id"], filters, per_page, offset)
+    needs_action_count = trade_count_for_user(user["id"], {"direction": "needs_action"})
     unread_trade_count = unread_trade_notification_count(user["id"])
-    table = render_trade_table(user, trades) if trades else '<div class="empty-state">No trades yet.</div>'
+    table = render_trade_table(user, trades) if trades else '<div class="empty-state">No trades match these filters.</div>'
+    status_options = "".join(
+        f'<option value="{e(value)}"{selected(filters["status"], value)}>{e(label)}</option>'
+        for value, label in TRADE_STATUS_LABELS.items()
+    )
+    direction_options = "".join(
+        f'<option value="{e(value)}"{selected(filters["direction"], value)}>{e(label)}</option>'
+        for value, label in (
+            ("incoming", "Incoming"),
+            ("outgoing", "Outgoing"),
+            ("needs_action", "Needs my response"),
+        )
+    )
+    active_filters = render_active_filter_chips("/trades", query, filters, trade_list_filter_chip_specs())
+    pagination = render_pagination("/trades", query, total_count, page, per_page, page_count)
     content = f"""
+    {render_trades_subnav("offers")}
     <section class="section-heading">
         <div>
             <p class="eyebrow">Trades</p>
             <h1>Trade offers</h1>
+            <p class="lead">Review active offers, follow conversations, and find past trades without digging through one long list.</p>
         </div>
         <div class="actions">
             {f'<a class="button secondary trade-inbox-button" href="/notifications">{e(unread_trade_count)} unread trade update{"s" if unread_trade_count != 1 else ""}</a>' if unread_trade_count else ''}
@@ -22,7 +56,31 @@ def render_trades(user, notice=None, status="info"):
             <a class="button secondary" href="/browse">Browse cards</a>
         </div>
     </section>
+    <section class="metric-grid compact-metrics trade-list-metrics">
+        <article class="metric"><span>{e(total_count)}</span><p>matching offers</p></article>
+        <article class="metric"><span>{e(needs_action_count)}</span><p>need your response</p></article>
+        <article class="metric"><span>{e(unread_trade_count)}</span><p>unread updates</p></article>
+    </section>
+    <form class="filter-bar trade-list-filter-bar" method="get" action="/trades">
+        <div class="filter-primary-row">
+            <label class="search-field">Search
+                <input name="q" value="{e(filters["q"])}" placeholder="Trade number or member">
+            </label>
+            <label>Status
+                <select name="status"><option value="">All statuses</option>{status_options}</select>
+            </label>
+            <label>View
+                <select name="direction"><option value="">All trades</option>{direction_options}</select>
+            </label>
+            <div class="actions filter-actions">
+                <button class="button secondary" type="submit">Filter</button>
+                <a class="button ghost" href="/trades">Reset</a>
+            </div>
+        </div>
+    </form>
+    {active_filters}
     <section class="panel flush">{table}</section>
+    {pagination}
     """
     return render_layout(user, "Trades", content, active="trades", notice=notice, status=status)
 
@@ -406,6 +464,7 @@ def render_trade_review(user, recipient_id, form, offered, requested, notice=Non
     fairness_notice = render_trade_fairness_notice(offered, requested, include_acknowledgement=True)
     send_disabled = " disabled" if fairness["severity"] == "blocked" else ""
     content = f"""
+    {render_trades_subnav("offers")}
     <section class="section-heading">
         <div>
             <p class="eyebrow">Review trade</p>
@@ -794,6 +853,7 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
         trust_message = "One-directional trades require trusted status. Select cards on both sides to propose a trade."
         trust_class = "standard"
     content = f"""
+    {render_trades_subnav("offers")}
     <section class="section-heading">
         <div>
             <p class="eyebrow">{"Counter offer" if counter_source else "New trade"}</p>
@@ -801,6 +861,18 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
         </div>
         <a class="button secondary" href="/members/{recipient["id"]}">Back to binder</a>
     </section>
+    <div class="trade-builder-steps" aria-label="Trade builder steps">
+        <span><strong>1</strong>Select cards</span>
+        <span><strong>2</strong>Add a message</span>
+        <span><strong>3</strong>Review and send</span>
+    </div>
+    {render_workspace_nav([
+        ("#trade-selected", "Selected cards", "See the live offer and request"),
+        ("#trade-recommendations", "Recommendations", "Use wishlist and value suggestions"),
+        ("#trade-offer", "Your offer", "Choose cards from your collection"),
+        ("#trade-request", "Your request", f"Choose cards from {recipient['display_name']}"),
+        ("#trade-message", "Message", "Add context before review"),
+    ], label="Trade builder")}
     <form id="trade-submit-form" method="post" action="/trades/new">
         <input type="hidden" name="recipient_id" value="{recipient["id"]}">
         <input type="hidden" name="price_source_preference" value="scryfall">
@@ -810,11 +882,11 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
     <div class="trade-builder">
         {render_counter_context_panel(counter_source)}
         <div class="trade-trust-note {trust_class}">{e(trust_message)}</div>
-        {selection_summary}
-        {recommendation_panel}
-        {mine_picker}
-        {theirs_picker}
-        <label class="panel note-panel">Message
+        <div id="trade-selected">{selection_summary}</div>
+        <div id="trade-recommendations">{recommendation_panel}</div>
+        <div id="trade-offer">{mine_picker}</div>
+        <div id="trade-request">{theirs_picker}</div>
+        <label class="panel note-panel" id="trade-message">Message
             <textarea form="trade-submit-form" name="proposer_note" rows="4" maxlength="1200" placeholder="Optional note">{e(proposer_note)}</textarea>
         </label>
         <div class="form-actions">
@@ -1324,6 +1396,7 @@ def render_trade_detail(user, trade_id, notice=None, status="info"):
         </form>
         """
     content = f"""
+    {render_trades_subnav("offers")}
     <section class="section-heading">
         <div>
             <p class="eyebrow">Trade #{trade["id"]}</p>
@@ -1331,11 +1404,34 @@ def render_trade_detail(user, trade_id, notice=None, status="info"):
         </div>
         <span class="status {e(trade["status"])}">{e(TRADE_STATUS_LABELS.get(trade["status"], trade["status"]))}</span>
     </section>
-    {trade_links}
-    <section class="trade-link-panel">
-        <strong>Price basis: {e(price_basis_label(row_value(trade, "price_source_preference", "")))}</strong>
+    {render_workspace_nav([
+        ("#trade-response", "Status and response", "Notes, warnings, and available actions"),
+        ("#trade-cards", "Cards", "Review both sides of the trade"),
+        ("#trade-issues", "Issues", "Report or review a problem"),
+        ("#trade-feedback", "Feedback", "Leave feedback after completion"),
+        ("#trade-comments", "Comments", "Continue the trade conversation"),
+    ], label="Trade details")}
+    <section id="trade-response" class="panel trade-response-panel">
+        <div class="panel-heading">
+            <div>
+                <p class="eyebrow">Current status</p>
+                <h2>{e(TRADE_STATUS_LABELS.get(trade["status"], trade["status"]))}</h2>
+            </div>
+            <span class="status {e(trade["status"])}">{e(TRADE_STATUS_LABELS.get(trade["status"], trade["status"]))}</span>
+        </div>
+        {trade_links}
+        <div class="trade-link-panel compact-trade-link-panel">
+            <strong>Price basis: {e(price_basis_label(row_value(trade, "price_source_preference", "")))}</strong>
+        </div>
+        <div class="note-log">
+            <p><strong>Offer note:</strong> {e(trade["proposer_note"] or "No note.")}</p>
+            <p><strong>Response note:</strong> {e(trade["response_note"] or "No response yet.")}</p>
+        </div>
+        {fairness_notice if not (trade["status"] == "pending" and trade["recipient_id"] == user["id"]) else ""}
+        {one_way_warning}
+        {actions}
     </section>
-    <section class="trade-detail-grid">
+    <section class="trade-detail-grid" id="trade-cards">
         <article class="panel">
             <h2>{e(trade["proposer_name"])} offers</h2>
             {offered_html}
@@ -1346,19 +1442,9 @@ def render_trade_detail(user, trade_id, notice=None, status="info"):
         </article>
     </section>
     {render_trade_value_panel(trade_entries_offered, trade_entries_requested, "Offer value", "Request value")}
-    <section class="panel">
-        <h2>Notes</h2>
-        <div class="note-log">
-            <p><strong>Offer:</strong> {e(trade["proposer_note"] or "No note.")}</p>
-            <p><strong>Response:</strong> {e(trade["response_note"] or "No response yet.")}</p>
-        </div>
-        {fairness_notice if not (trade["status"] == "pending" and trade["recipient_id"] == user["id"]) else ""}
-        {one_way_warning}
-        {actions}
-    </section>
-    {disputes_html}
-    {feedback_html}
-    {comments_html}
+    <div id="trade-issues">{disputes_html}</div>
+    <div id="trade-feedback">{feedback_html}</div>
+    <div id="trade-comments">{comments_html}</div>
     """
     return render_layout(user, f"Trade #{trade_id}", content, active="trades", notice=notice, status=status)
 

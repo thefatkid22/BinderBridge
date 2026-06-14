@@ -412,9 +412,64 @@ def trade_fairness_entries_for_trade_conn(conn, trade_id):
 
 
 
-def trade_rows_for_user(user_id):
+def trade_list_filter_values(query):
+    query = query or {}
+    q = str(query.get("q", [""])[0] or "").strip()
+    status = str(query.get("status", [""])[0] or "").strip().lower()
+    direction = str(query.get("direction", [""])[0] or "").strip().lower()
+    if status not in ("", *TRADE_STATUS_LABELS.keys()):
+        status = ""
+    if direction not in ("", "incoming", "outgoing", "needs_action"):
+        direction = ""
+    return {"q": q, "status": status, "direction": direction}
+
+
+def trade_list_where(user_id, filters):
+    where = ["(trades.proposer_id = ? OR trades.recipient_id = ?)"]
+    params = [user_id, user_id]
+    q = filters.get("q", "")
+    if q:
+        term = f"%{q}%"
+        q_parts = ["proposer.display_name LIKE ?", "recipient.display_name LIKE ?"]
+        params.extend([term, term])
+        if q.isdigit():
+            q_parts.append("trades.id = ?")
+            params.append(int(q))
+        where.append(f"({' OR '.join(q_parts)})")
+    if filters.get("status"):
+        where.append("trades.status = ?")
+        params.append(filters["status"])
+    direction = filters.get("direction", "")
+    if direction == "incoming":
+        where.append("trades.recipient_id = ?")
+        params.append(user_id)
+    elif direction == "outgoing":
+        where.append("trades.proposer_id = ?")
+        params.append(user_id)
+    elif direction == "needs_action":
+        where.append("trades.recipient_id = ? AND trades.status = 'pending'")
+        params.append(user_id)
+    return where, params
+
+
+def trade_count_for_user(user_id, filters):
+    where, params = trade_list_where(user_id, filters)
+    return row(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM trades
+        JOIN users proposer ON proposer.id = trades.proposer_id
+        JOIN users recipient ON recipient.id = trades.recipient_id
+        WHERE {' AND '.join(where)}
+        """,
+        params,
+    )["count"]
+
+
+def trade_page_rows(user_id, filters, limit, offset):
+    where, params = trade_list_where(user_id, filters)
     return rows(
-        """
+        f"""
         SELECT trades.*, proposer.display_name AS proposer_name, recipient.display_name AS recipient_name,
             (
                 SELECT COUNT(*)
@@ -427,11 +482,18 @@ def trade_rows_for_user(user_id):
         FROM trades
         JOIN users proposer ON proposer.id = trades.proposer_id
         JOIN users recipient ON recipient.id = trades.recipient_id
-        WHERE trades.proposer_id = ? OR trades.recipient_id = ?
-        ORDER BY trades.updated_at DESC
+        WHERE {' AND '.join(where)}
+        ORDER BY
+            CASE WHEN trades.status = 'pending' AND trades.recipient_id = ? THEN 0 ELSE 1 END,
+            trades.updated_at DESC
+        LIMIT ? OFFSET ?
         """,
-        (user_id, user_id, user_id),
+        [user_id, *params, user_id, int(limit), int(offset)],
     )
+
+
+def trade_rows_for_user(user_id):
+    return trade_page_rows(user_id, {}, 1_000_000, 0)
 
 
 def trade_detail_for_user(trade_id, user_id):
@@ -544,6 +606,10 @@ __all__ = [
     'trade_dispute_category_trends',
     'trade_dispute_admin_rows',
     'trade_fairness_entries_for_trade_conn',
+    'trade_list_filter_values',
+    'trade_list_where',
+    'trade_count_for_user',
+    'trade_page_rows',
     'trade_rows_for_user',
     'trade_detail_for_user',
     'trade_item_rows',

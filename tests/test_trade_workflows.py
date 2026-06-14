@@ -139,6 +139,10 @@ class TradeWorkflowTests(BinderBridgeTestCase):
         self.assertIn("request_page=2", html)
         self.assertIn('form="trade-submit-form"', html)
         self.assertIn("Review trade", html)
+        self.assertIn("trade-builder-steps", html)
+        self.assertIn('href="#trade-selected"', html)
+        self.assertIn('id="trade-offer"', html)
+        self.assertIn('id="trade-request"', html)
 
     def test_new_trade_screen_recommends_wishlist_matches(self):
         alice_id = app.create_user("alice", "password123", "Alice")
@@ -407,6 +411,9 @@ class TradeWorkflowTests(BinderBridgeTestCase):
         detail_html = app.render_trade_detail(bob, trade_id)
 
         self.assertIn("Trade fairness warning", detail_html)
+        self.assertIn('id="trade-response"', detail_html)
+        self.assertIn('href="#trade-cards"', detail_html)
+        self.assertLess(detail_html.index('id="trade-response"'), detail_html.index('id="trade-cards"'))
         with self.assertRaisesRegex(ValueError, "Acknowledge"):
             app.update_trade_response(trade_id, bob_id, "accepted")
         app.update_trade_response(trade_id, bob_id, "accepted", fairness_acknowledged=True)
@@ -709,6 +716,8 @@ class TradeWorkflowTests(BinderBridgeTestCase):
         self.assertIn("Attach evidence", trade_html)
         self.assertIn("corner.png", admin_html)
         self.assertIn("Image preview", admin_html)
+        self.assertIn('<table class="admin-table responsive-card-table admin-dispute-table">', admin_html)
+        self.assertIn('data-label="Admin review"', admin_html)
         self.assertIn(f'/trades/{trade_id}/disputes/{dispute_id}/evidence/{evidence["id"]}', admin_html)
 
         second_id = app.add_trade_dispute_evidence(

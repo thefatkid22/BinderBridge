@@ -4,6 +4,30 @@ from tests.base import *  # noqa: F401,F403
 
 
 class NotificationsReputationTests(BinderBridgeTestCase):
+    def test_notification_inbox_filters_categories_state_and_paginates(self):
+        user_id = factory.create_user("notification-inbox", display_name="Notification Inbox")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        for index in range(12):
+            app.create_notification(user_id, "trade_status", f"Trade update {index:02d}", "Trade activity")
+        price_id = app.create_notification(user_id, "price_alert", "Sol Ring moved", "Price activity")
+        app.execute("UPDATE user_notifications SET is_read = 1 WHERE id = ?", (price_id,))
+
+        trade_html = app.render_notifications(
+            user,
+            query={"category": ["trade"], "state": ["unread"], "per_page": ["10"], "page": ["1"]},
+        )
+        price_html = app.render_notifications(user, query={"category": ["price"], "state": ["read"]})
+
+        self.assertIn("Showing 1-10 of 12", trade_html)
+        self.assertIn("Trade update 11", trade_html)
+        self.assertNotIn("Sol Ring moved", trade_html)
+        self.assertIn("Active filters", trade_html)
+        self.assertIn('name="state"', trade_html)
+        self.assertIn("Sol Ring moved", price_html)
+        self.assertNotIn("Trade update 11", price_html)
+        self.assertIn('id="notification-inbox"', price_html)
+        self.assertIn('id="notification-values"', price_html)
+
     def test_trade_events_create_notifications(self):
         alice_id = app.create_user("alice", "password123", "Alice")
         bob_id = app.create_user("bob", "password123", "Bob")
@@ -383,6 +407,15 @@ class NotificationsReputationTests(BinderBridgeTestCase):
         self.assertIn("Your response needed", trades_html)
         self.assertIn("1 unread", trades_html)
         self.assertIn("trade-nav-badge", layout_html)
+        self.assertIn('class="skip-link" href="#main-content"', layout_html)
+        self.assertIn('id="main-content" tabindex="-1"', layout_html)
+        self.assertIn('aria-current="page"', layout_html)
+        self.assertIn('class="mobile-nav-toggle"', layout_html)
+        self.assertIn('id="primary-navigation"', layout_html)
+        self.assertIn('id="confirm-dialog"', layout_html)
+        self.assertIn('data-confirm="Delete test records?"', app.render_layout(recipient, "Test", '<button data-confirm="Delete test records?">Delete</button>'))
+        self.assertIn('role="status" aria-live="polite"', app.render_layout(recipient, "Test", "<p>Body</p>", notice="Saved"))
+        self.assertIn('role="alert"', app.render_layout(recipient, "Test", "<p>Body</p>", notice="Failed", status="error"))
 
     def test_notifications_can_be_deleted_by_owner(self):
         alice_id = app.create_user("alice", "password123", "Alice")
@@ -562,3 +595,8 @@ class NotificationsReputationTests(BinderBridgeTestCase):
         self.assertIn(f'name="request_{public_card_id}"', html)
         self.assertIn(f'value="{member_id}"', html)
         self.assertIn("Propose trade", html)
+        self.assertIn('aria-label="Public profile sections"', html)
+        self.assertIn('href="#member-trades"', html)
+        self.assertIn('id="member-reputation"', html)
+        self.assertIn('id="member-groups"', html)
+        self.assertIn('id="member-wants"', html)

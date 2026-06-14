@@ -51,7 +51,7 @@ def render_group_card(group):
         <div class="actions">
             <a class="button secondary small" href="/groups/{group["id"]}">Open</a>
             <form method="post" action="/groups/{group["id"]}/delete">
-                <button class="button danger small" type="submit" onclick="return confirm('Delete this group? Cards stay in your collection and wants.')">Delete</button>
+                <button class="button danger small" type="submit" data-confirm="Delete this group? Cards stay in your collection and wants.">Delete</button>
             </form>
         </div>
     </article>
@@ -170,11 +170,77 @@ def want_item_option_tags(user_id):
     )
 
 
-def render_group_collection_items(group, items, sort_bar=""):
+def group_item_filter_values(query, wishlist=False):
+    filters = {
+        "q": query_value(query, "q"),
+        "game": query_value(query, "game"),
+        "condition": query_value(query, "condition"),
+        "finish": query_value(query, "finish"),
+        "priority": query_value(query, "priority") if wishlist else "",
+    }
+    if filters["game"] and filters["game"] not in dict(CARD_GAMES):
+        filters["game"] = ""
+    if filters["condition"] and filters["condition"] not in CONDITION_OPTIONS:
+        filters["condition"] = ""
+    if filters["finish"] and filters["finish"] not in FINISH_OPTIONS:
+        filters["finish"] = ""
+    if filters["priority"] and filters["priority"] not in WANT_PRIORITY_LABELS:
+        filters["priority"] = ""
+    return filters
+
+
+def group_item_filter_chip_specs(wishlist=False):
+    specs = [
+        {"key": "q", "label": "Search"},
+        {"key": "game", "label": "Game", "formatter": game_label},
+        {"key": "condition", "label": "Condition"},
+        {"key": "finish", "label": "Finish"},
+    ]
+    if wishlist:
+        specs.append({"key": "priority", "label": "Priority", "formatter": want_priority_label})
+    return tuple(specs)
+
+
+def render_group_item_controls(group, query, filters, current_sort, current_dir):
+    wishlist = group["group_type"] == "wishlist"
+    priority_control = (
+        f'<label>Priority<select name="priority"><option value="">All priorities</option>{option_tags(WANT_PRIORITY_OPTIONS, filters["priority"])}</select></label>'
+        if wishlist
+        else ""
+    )
+    suggestion_values = want_search_suggestions(group["user_id"]) if wishlist else collection_search_suggestions(group["user_id"])
+    path = f'/groups/{group["id"]}'
+    return f"""
+    <form class="filter-bar group-item-filter-bar" method="get" action="{path}">
+        <div class="filter-primary-row">
+            <label class="search-field">Search group
+                <input name="q" value="{e(filters["q"])}" placeholder="Card name, type, or set" list="group-item-search-suggestions">
+            </label>
+            <label>Game<select name="game"><option value="">All games</option>{option_tags(CARD_GAMES, filters["game"])}</select></label>
+            <label>Condition<select name="condition"><option value="">All conditions</option>{simple_option_tags(CONDITION_OPTIONS, filters["condition"])}</select></label>
+            <label>Finish<select name="finish"><option value="">All finishes</option>{simple_option_tags(FINISH_OPTIONS, filters["finish"])}</select></label>
+            {priority_control}
+        </div>
+        <div class="group-filter-sort-row">
+            {render_sort_controls(WANT_SORT_OPTIONS if wishlist else CARD_SORT_OPTIONS, current_sort, current_dir)}
+            <div class="actions filter-actions">
+                <button class="button primary" type="submit">Apply</button>
+                <a class="button ghost" href="{path}#group-cards">Clear</a>
+            </div>
+        </div>
+        {render_datalist("group-item-search-suggestions", suggestion_values)}
+    </form>
+    {render_active_filter_chips(path, query, filters, group_item_filter_chip_specs(wishlist), class_name="group-filter-chips")}
+    """
+
+
+def render_group_collection_items(group, items, controls="", pagination="", total_count=0, redirect_to=""):
+    bulk_disabled = "" if items else " disabled"
     if items:
         rendered = "".join(
             f"""
             <li class="group-item">
+                <label class="group-item-select"><input type="checkbox" name="group_item_id" value="{e(item["group_item_id"])}"><span class="sr-only">Select {e(item["card_name"])}</span></label>
                 <div class="card-cell">
                     {f'<img class="card-thumb" src="{e(item["image_url"])}" alt="">' if item["image_url"] else '<span class="card-thumb placeholder"></span>'}
                     <div>
@@ -185,9 +251,7 @@ def render_group_collection_items(group, items, sort_bar=""):
                         <span class="subtle">{e(item["quantity"])} owned{price_pill(item)}</span>
                     </div>
                 </div>
-                <form method="post" action="/groups/{group["id"]}/items/{item["group_item_id"]}/delete">
-                    <button class="button ghost small" type="submit">Remove</button>
-                </form>
+                <button class="button ghost small" type="submit" formaction="/groups/{group["id"]}/items/{item["group_item_id"]}/delete">Remove</button>
             </li>
             """
             for item in items
@@ -214,16 +278,25 @@ def render_group_collection_items(group, items, sort_bar=""):
     <section class="panel">
         <div class="panel-heading">
             <h2>{e(group_type_label(group["group_type"]))} cards</h2>
-            <span class="pill">{e(sum(item["group_quantity"] for item in items))} total</span>
+            <span class="pill">{e(total_count)} matching</span>
         </div>
-        {sort_bar}
-        <ul class="group-item-list">{rendered}</ul>
+        {controls}
+        <form method="post" action="/groups/{group["id"]}/items/bulk-delete">
+            <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
+            <div class="group-bulk-bar">
+                <label class="select-all-control"><input type="checkbox"{bulk_disabled} onclick="this.form.querySelectorAll('input[name=group_item_id]').forEach((box) => box.checked = this.checked)"><span>Select page</span></label>
+                <button class="button danger small" type="submit"{bulk_disabled} data-confirm="Remove selected cards from this group? Source collection cards will remain.">Remove selected</button>
+            </div>
+            <ul class="group-item-list selectable-group-list">{rendered}</ul>
+        </form>
+        {pagination}
         {add_form}
     </section>
     """
 
 
-def render_group_want_items(group, wants, sort_bar=""):
+def render_group_want_items(group, wants, controls="", pagination="", total_count=0, redirect_to=""):
+    bulk_disabled = "" if wants else " disabled"
     if wants:
         rows = []
         for want in wants:
@@ -240,6 +313,7 @@ def render_group_want_items(group, wants, sort_bar=""):
             printing_note = f'<span class="subtle"><strong>Preferred printing:</strong> {e(row_value(want, "preferred_printing_notes", ""))}</span>' if row_value(want, "preferred_printing_notes", "") else ""
             rows.append(f"""
             <li class="group-item">
+                <label class="group-item-select"><input type="checkbox" name="group_item_id" value="{e(want["group_item_id"])}"><span class="sr-only">Select {e(want["card_name"])}</span></label>
                 <div>
                     <strong>{e(want["card_name"])}</strong>
                     <span>{e(want["set_name"] or "Any set")} - want {e(want["desired_quantity"])}</span>
@@ -247,9 +321,7 @@ def render_group_want_items(group, wants, sort_bar=""):
                     <span class="subtle">{e(want_priority_label(row_value(want, "priority", "normal")))} priority{e(budget_text)} - {e(preference_text)}</span>
                     {printing_note}
                 </div>
-                <form method="post" action="/groups/{group["id"]}/items/{want["group_item_id"]}/delete">
-                    <button class="button ghost small" type="submit">Remove</button>
-                </form>
+                <button class="button ghost small" type="submit" formaction="/groups/{group["id"]}/items/{want["group_item_id"]}/delete">Remove</button>
             </li>
             """)
         rendered = "".join(rows)
@@ -272,10 +344,18 @@ def render_group_want_items(group, wants, sort_bar=""):
     <section class="panel">
         <div class="panel-heading">
             <h2>Wishlist cards</h2>
-            <span class="pill">{e(len(wants))}</span>
+            <span class="pill">{e(total_count)} matching</span>
         </div>
-        {sort_bar}
-        <ul class="group-item-list">{rendered}</ul>
+        {controls}
+        <form method="post" action="/groups/{group["id"]}/items/bulk-delete">
+            <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
+            <div class="group-bulk-bar">
+                <label class="select-all-control"><input type="checkbox"{bulk_disabled} onclick="this.form.querySelectorAll('input[name=group_item_id]').forEach((box) => box.checked = this.checked)"><span>Select page</span></label>
+                <button class="button danger small" type="submit"{bulk_disabled} data-confirm="Remove selected wanted cards from this group? Your source wishlist will remain.">Remove selected</button>
+            </div>
+            <ul class="group-item-list selectable-group-list">{rendered}</ul>
+        </form>
+        {pagination}
         {add_form}
     </section>
     """
@@ -330,22 +410,22 @@ def render_import_preview_rows(preview):
     rows_html = "".join(
         f"""
         <tr>
-            <td><span class="pill">{e(item.get("action", ""))}</span></td>
-            <td>
+            <td data-label="Action"><span class="pill">{e(item.get("action", ""))}</span></td>
+            <td data-label="Card">
                 <strong>{e(item.get("card_name", ""))}</strong>
                 <span class="subtle">{e(item.get("set_name", "") or "Any set")} {e("(" + item.get("set_code", "") + ")" if item.get("set_code") else "")}</span>
             </td>
-            <td>{e(item.get("quantity", 0))}</td>
-            <td>{e(item.get("quantity_for_trade", 0))}</td>
-            <td>{e(item.get("condition", ""))} {e(item.get("finish", ""))}</td>
-            <td>{e(item.get("note", ""))}</td>
+            <td data-label="Qty">{e(item.get("quantity", 0))}</td>
+            <td data-label="Trade">{e(item.get("quantity_for_trade", 0))}</td>
+            <td data-label="Quality">{e(item.get("condition", ""))} {e(item.get("finish", ""))}</td>
+            <td data-label="Note">{e(item.get("note", ""))}</td>
         </tr>
         """
         for item in preview_rows
     )
     return f"""
     <div class="table-wrap import-preview-table">
-        <table>
+        <table class="responsive-card-table import-preview-card-table">
             <thead>
                 <tr>
                     <th>Action</th>
@@ -378,7 +458,7 @@ def render_import_batch_list(batches, redirect_to):
             undo_form = f"""
             <form method="post" action="/imports/{batch["id"]}/undo">
                 <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
-                <button class="button danger small" type="submit" onclick="return confirm('Undo this import batch? Imported rows/group links from the batch will be reverted.')">Undo</button>
+                <button class="button danger small" type="submit" data-confirm="Undo this import batch? Imported rows/group links from the batch will be reverted.">Undo</button>
             </form>
             """
         rendered.append(
@@ -636,7 +716,7 @@ def render_group_share_link_row(group, link):
     if not revoked:
         revoke_form = f"""
         <form method="post" action="/groups/{group["id"]}/share-links/{link["id"]}/revoke">
-            <button class="button danger small" type="submit" onclick="return confirm('Revoke this private share link?')">Revoke</button>
+            <button class="button danger small" type="submit" data-confirm="Revoke this private share link?">Revoke</button>
         </form>
         """
     expires = row_value(link, "expires_at", "")
@@ -704,6 +784,7 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         return None
     query = query or {}
     if group["group_type"] == "wishlist":
+        filters = group_item_filter_values(query, wishlist=True)
         current_sort, current_dir = sort_state(query, WANT_SORT_OPTIONS)
         order_clause = sort_order_clause(
             query,
@@ -711,12 +792,20 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
             GROUP_WANT_SORT_SQL,
             fallback=("want_items.card_name COLLATE NOCASE",),
         )
-        sort_bar = render_sort_bar(f"/groups/{group_id}", query, WANT_SORT_OPTIONS, current_sort, current_dir)
-        items_html = render_group_want_items(group, wishlist_group_items(group_id, order_clause), sort_bar)
+        filtered_count = wishlist_group_item_count(group_id, filters)
+        page, per_page, page_count, offset = pagination_state(query, filtered_count)
+        group_items = wishlist_group_items(group_id, order_clause, filters, per_page, offset)
+        controls = render_group_item_controls(group, query, filters, current_sort, current_dir)
+        pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count)
+        redirect_to = page_url(f"/groups/{group_id}", query, page, per_page) + "#group-cards"
+        items_html = render_group_want_items(group, group_items, controls, pagination, filtered_count, redirect_to)
+        group_item_count = wishlist_group_item_count(group_id)
+        group_item_label = "wanted cards"
         subnav = render_wishlist_subnav("groups")
         layout_active = "wants"
         back_label = "Wishlist groups"
     else:
+        filters = group_item_filter_values(query)
         current_sort, current_dir = sort_state(query, CARD_SORT_OPTIONS)
         order_clause = sort_order_clause(
             query,
@@ -724,13 +813,27 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
             GROUP_COLLECTION_SORT_SQL,
             fallback=("collection_items.card_name COLLATE NOCASE",),
         )
-        sort_bar = render_sort_bar(f"/groups/{group_id}", query, CARD_SORT_OPTIONS, current_sort, current_dir)
-        items_html = render_group_collection_items(group, collection_group_items(group_id, order_clause), sort_bar)
+        filtered_count = collection_group_item_count(group_id, filters)
+        page, per_page, page_count, offset = pagination_state(query, filtered_count)
+        group_items = collection_group_items(group_id, order_clause, filters, per_page, offset)
+        controls = render_group_item_controls(group, query, filters, current_sort, current_dir)
+        pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count)
+        redirect_to = page_url(f"/groups/{group_id}", query, page, per_page) + "#group-cards"
+        items_html = render_group_collection_items(group, group_items, controls, pagination, filtered_count, redirect_to)
+        group_item_count = collection_group_quantity(group_id)
+        group_item_label = "cards in group"
         subnav = render_cards_subnav("groups")
         layout_active = "cards"
         back_label = "Decks & Binders"
     deck_import_html = render_deck_import_panel(user, group, import_result, import_review) if group["group_type"] == "deck" else ""
     description = f'<p class="lead">{e(group["description"])}</p>' if group["description"] else ""
+    workspace_items = [
+        ("#group-cards", "Cards", f"Manage {group_type_label(group['group_type']).lower()} contents"),
+        ("#group-sharing", "Sharing", "Audience, defaults, and private links"),
+    ]
+    if group["group_type"] == "deck":
+        workspace_items.append(("#group-import", "Import", "Add a deck list and review recent imports"))
+    workspace_items.append(("#group-danger", "Group settings", "Export or remove this group"))
     content = f"""
     {subnav}
     <section class="section-heading">
@@ -742,15 +845,46 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         </div>
         <div class="actions">
             <a class="button secondary" href="{e(group_listing_url(group))}">{e(back_label)}</a>
-            <a class="button secondary" href="/groups/{group["id"]}/export">Export CSV</a>
-            <form method="post" action="/groups/{group["id"]}/delete">
-                <button class="button danger" type="submit" onclick="return confirm('Delete this group? Cards stay in your collection and wants.')">Delete group</button>
-            </form>
+            <a class="button primary" href="#group-cards">Manage cards</a>
         </div>
     </section>
-    {items_html}
-    {render_group_privacy_panel(group, share_result=share_result)}
-    {deck_import_html}
+    <section class="metric-grid compact-metrics group-detail-metrics">
+        <article class="metric"><span>{e(group_item_count)}</span><p>{e(group_item_label)}</p></article>
+        <article class="metric"><span>{e(visibility_label(group))}</span><p>group audience</p></article>
+        <article class="metric"><span>{e("Shown" if row_value(group, "show_values", 1) else "Hidden")}</span><p>card values</p></article>
+        <article class="metric"><span>{e("Shown" if row_value(group, "show_photos", 1) else "Hidden")}</span><p>condition photos</p></article>
+    </section>
+    {render_workspace_nav(workspace_items, label="Group workspace")}
+    <section class="workspace-section group-workspace-section" id="group-cards">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Contents</p><h2>Manage cards</h2><p class="muted compact">Sort the group, add cards, or remove cards without changing the source collection or wishlist.</p></div>
+        </div>
+        {items_html}
+    </section>
+    <section class="workspace-section group-workspace-section" id="group-sharing">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Sharing</p><h2>Audience and private links</h2><p class="muted compact">Control who can view the group and what details appear.</p></div>
+        </div>
+        {render_group_privacy_panel(group, share_result=share_result)}
+    </section>
+    {f'<section class="workspace-section group-workspace-section" id="group-import"><div class="workspace-section-heading"><div><p class="eyebrow">Import</p><h2>Bulk import deck</h2><p class="muted compact">Bring in a deck list, review detected sections, and undo recent imports when needed.</p></div></div>{deck_import_html}</section>' if deck_import_html else ''}
+    <section class="workspace-section group-workspace-section" id="group-danger">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Group settings</p><h2>Export or remove group</h2><p class="muted compact">Export a portable copy or remove this organizational group. Source cards and wants remain untouched.</p></div>
+        </div>
+        <article class="panel group-danger-panel">
+            <div>
+                <strong>Group data</strong>
+                <span class="muted compact">Exporting is safe. Deleting removes this group and its organization only.</span>
+            </div>
+            <div class="actions">
+                <a class="button secondary" href="/groups/{group["id"]}/export">Export CSV</a>
+                <form method="post" action="/groups/{group["id"]}/delete">
+                    <button class="button danger" type="submit" data-confirm="Delete this group? Cards stay in your collection and wants.">Delete group</button>
+                </form>
+            </div>
+        </article>
+    </section>
     """
     return render_layout(user, group["name"], content, active=layout_active, notice=notice, status=status)
 

@@ -3,12 +3,25 @@
 This module is wired by binderbridge.views; shared app helpers are injected at runtime.
 """
 
+
+def current_page_attr(is_current):
+    return ' aria-current="page"' if is_current else ""
+
+
 def render_subnav(items, active_key, label="Section"):
     links = "".join(
-        f'<a class="section-tab {"active" if key == active_key else ""}" href="{href}">{e(text)}</a>'
+        f'<a class="section-tab {"active" if key == active_key else ""}" href="{href}"{current_page_attr(key == active_key)}>{e(text)}</a>'
         for key, href, text in items
     )
     return f'<nav class="section-tabs" aria-label="{e(label)}">{links}</nav>'
+
+
+def render_workspace_nav(items, label="On this page"):
+    links = "".join(
+        f'<a class="workspace-nav-link" href="{e(href)}"><strong>{e(text)}</strong><span>{e(detail)}</span></a>'
+        for href, text, detail in items
+    )
+    return f'<nav class="workspace-nav" aria-label="{e(label)}">{links}</nav>'
 
 
 def render_cards_subnav(active_key):
@@ -32,6 +45,19 @@ def render_wishlist_subnav(active_key):
         ],
         active_key,
         label="Wishlist",
+    )
+
+
+def render_trades_subnav(active_key):
+    return render_subnav(
+        [
+            ("offers", "/trades", "Offers"),
+            ("matches", "/trades/matches", "Matches"),
+            ("browse", "/browse", "Browse Cards"),
+            ("updates", "/notifications", "Trade Updates"),
+        ],
+        active_key,
+        label="Trades",
     )
 
 
@@ -62,11 +88,15 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             staff_label = "Admin" if user_role(user) in (ROLE_OWNER, ROLE_ADMIN) else "Staff"
             nav_items.append(("admin", "/admin", staff_label))
         nav = "".join(
-            f'<a class="nav-link {"active" if active == key else ""}" href="{href}">{label}</a>'
+            f'<a class="nav-link {"active" if active == key else ""}" href="{href}"{current_page_attr(active == key)}>{label}</a>'
             for key, href, label in nav_items
         )
         auth_links = f"""
-            <nav class="app-nav" aria-label="Primary">{nav}</nav>
+            <button class="mobile-nav-toggle" id="mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation">
+                <span class="mobile-nav-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+                <span>Menu</span>
+            </button>
+            <nav class="app-nav" id="primary-navigation" aria-label="Primary">{nav}</nav>
             <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" aria-label="Switch to light mode">
                 <span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-knob"></span></span>
                 <span class="theme-toggle-label">Light mode</span>
@@ -78,10 +108,16 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             </div>
         """
     else:
-        auth_links = """
-            <nav class="app-nav" aria-label="Primary">
-                <a class="nav-link active" href="/login">Sign in</a>
-                <a class="nav-link" href="/register">Create account</a>
+        login_current = ' aria-current="page"' if active != "register" else ""
+        register_current = ' aria-current="page"' if active == "register" else ""
+        auth_links = f"""
+            <button class="mobile-nav-toggle" id="mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation">
+                <span class="mobile-nav-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+                <span>Menu</span>
+            </button>
+            <nav class="app-nav" id="primary-navigation" aria-label="Primary">
+                <a class="nav-link{" active" if active != "register" else ""}" href="/login"{login_current}>Sign in</a>
+                <a class="nav-link{" active" if active == "register" else ""}" href="/register"{register_current}>Create account</a>
             </nav>
             <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" aria-label="Switch to light mode">
                 <span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-knob"></span></span>
@@ -89,7 +125,8 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             </button>
         """
 
-    flash = f'<div class="notice {status}">{e(notice)}</div>' if notice else ""
+    flash_role = 'role="alert"' if status == "error" else 'role="status" aria-live="polite"'
+    flash = f'<div class="notice {status}" {flash_role}>{e(notice)}</div>' if notice else ""
     body_class = "auth-page" if not user else "app-page"
     return f"""<!doctype html>
 <html lang="en">
@@ -99,6 +136,7 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
     <title>{e(title)} - {APP_NAME}</title>
     <script>
         (function () {{
+            document.documentElement.classList.add("js");
             try {{
                 if (localStorage.getItem("binderbridge_theme") === "light") {{
                     document.documentElement.dataset.theme = "light";
@@ -109,6 +147,7 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="{body_class}">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <header class="topbar">
         <a class="brand" href="/">
             <span class="brand-mark">BB</span>
@@ -116,7 +155,7 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
         </a>
         {auth_links}
     </header>
-    <main class="page-shell">
+    <main class="page-shell" id="main-content" tabindex="-1">
         {flash}
         {content}
     </main>
@@ -125,6 +164,19 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
         <a href="{e(SOURCE_URL)}" target="_blank" rel="noreferrer">Source</a>
         <a href="{e(SOURCE_URL)}/blob/HEAD/LICENSE" target="_blank" rel="noreferrer">AGPL-3.0 license</a>
     </footer>
+    <dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-message">
+        <div class="confirm-dialog-content">
+            <div>
+                <p class="eyebrow">Please confirm</p>
+                <h2 id="confirm-dialog-title">Confirm action</h2>
+                <p id="confirm-dialog-message"></p>
+            </div>
+            <div class="confirm-dialog-actions">
+                <button class="button secondary" id="confirm-dialog-cancel" type="button">Cancel</button>
+                <button class="button danger" id="confirm-dialog-confirm" type="button">Confirm</button>
+            </div>
+        </div>
+    </dialog>
     <script>
         (function () {{
             var button = document.getElementById("theme-toggle");
@@ -157,6 +209,102 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
                 applyTheme(currentTheme() === "light" ? "dark" : "light");
             }});
         }})();
+        (function () {{
+            var topbar = document.querySelector(".topbar");
+            var button = document.getElementById("mobile-nav-toggle");
+            var nav = document.getElementById("primary-navigation");
+            if (!topbar || !button || !nav) return;
+
+            function setOpen(open) {{
+                topbar.classList.toggle("mobile-nav-open", open);
+                button.setAttribute("aria-expanded", open ? "true" : "false");
+            }}
+
+            button.addEventListener("click", function () {{
+                setOpen(button.getAttribute("aria-expanded") !== "true");
+            }});
+            nav.addEventListener("click", function (event) {{
+                if (event.target.closest("a")) setOpen(false);
+            }});
+            document.addEventListener("keydown", function (event) {{
+                if (event.key === "Escape") setOpen(false);
+            }});
+        }})();
+        (function () {{
+            var dialog = document.getElementById("confirm-dialog");
+            var message = document.getElementById("confirm-dialog-message");
+            var confirmButton = document.getElementById("confirm-dialog-confirm");
+            var cancelButton = document.getElementById("confirm-dialog-cancel");
+            if (!dialog || !message || !confirmButton || !cancelButton) return;
+            var pendingAction = null;
+            var lastTrigger = null;
+            var bypass = new WeakSet();
+
+            function openConfirmation(text, trigger, action) {{
+                pendingAction = action;
+                lastTrigger = trigger;
+                message.textContent = text;
+                var dangerous = trigger.classList.contains("danger") || /delete|remove|revoke|reset|restore|vacuum|cannot be undone/i.test(text);
+                confirmButton.className = dangerous ? "button danger" : "button primary";
+                confirmButton.textContent = dangerous ? "Confirm action" : "Continue";
+                if (typeof dialog.showModal === "function") {{
+                    dialog.showModal();
+                    cancelButton.focus();
+                }} else if (window.confirm(text)) {{
+                    action();
+                }}
+            }}
+
+            document.addEventListener("click", function (event) {{
+                var trigger = event.target.closest("[data-confirm]");
+                if (!trigger || trigger.tagName === "FORM") return;
+                if (bypass.has(trigger)) {{
+                    bypass.delete(trigger);
+                    return;
+                }}
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                openConfirmation(trigger.getAttribute("data-confirm"), trigger, function () {{
+                    bypass.add(trigger);
+                    trigger.click();
+                }});
+            }}, true);
+
+            document.addEventListener("submit", function (event) {{
+                var form = event.target.closest("form[data-confirm]");
+                if (!form) return;
+                if (bypass.has(form)) {{
+                    bypass.delete(form);
+                    return;
+                }}
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                var submitter = event.submitter;
+                openConfirmation(form.getAttribute("data-confirm"), form, function () {{
+                    bypass.add(form);
+                    if (submitter && typeof form.requestSubmit === "function") form.requestSubmit(submitter);
+                    else form.submit();
+                }});
+            }}, true);
+
+            cancelButton.addEventListener("click", function () {{
+                pendingAction = null;
+                dialog.close();
+            }});
+            confirmButton.addEventListener("click", function () {{
+                var action = pendingAction;
+                pendingAction = null;
+                dialog.close();
+                if (action) action();
+            }});
+            dialog.addEventListener("cancel", function () {{
+                pendingAction = null;
+            }});
+            dialog.addEventListener("close", function () {{
+                if (lastTrigger && typeof lastTrigger.focus === "function") lastTrigger.focus();
+                lastTrigger = null;
+            }});
+        }})();
     </script>
 </body>
 </html>"""
@@ -179,6 +327,7 @@ def render_login(user=None, notice=None, status="info"):
                 <input required name="password" type="password" autocomplete="current-password">
             </label>
             <button class="button primary full" type="submit">Sign in</button>
+            <p class="muted compact"><a href="/password/forgot">Forgot your password?</a></p>
             <div class="auth-divider"><span>or</span></div>
             <button class="button secondary full" type="button" id="passkey-login-button">Sign in with passkey</button>
             <p class="muted compact" id="passkey-login-status"></p>
@@ -267,6 +416,71 @@ def render_login(user=None, notice=None, status="info"):
     </script>
     """
     return render_layout(user, "Sign in", content, active="login", notice=notice, status=status)
+
+
+def render_password_recovery(notice=None, status="info"):
+    delivery_detail = (
+        "Enter your username or account email. BinderBridge will email a one-time reset link when possible."
+        if email_delivery_configured()
+        else "Enter your username or account email. An administrator will be notified and can provide a one-time reset link."
+    )
+    content = f"""
+    <section class="auth-grid">
+        <div class="auth-copy">
+            <p class="eyebrow">Account recovery</p>
+            <h1>Recover access without sharing a password.</h1>
+            <p class="lead">{e(delivery_detail)}</p>
+        </div>
+        <form class="panel auth-panel" method="post" action="/password/forgot">
+            <h2>Request password reset</h2>
+            <label>Username or email
+                <input required name="identifier" maxlength="254" autocomplete="username">
+            </label>
+            <button class="button primary full" type="submit">Request recovery</button>
+            <p class="muted compact">For privacy, the response will not confirm whether an account exists.</p>
+            <p class="muted compact"><a href="/login">Back to sign in</a></p>
+        </form>
+    </section>
+    """
+    return render_layout(None, "Password recovery", content, active="login", notice=notice, status=status)
+
+
+def render_password_reset(token, valid=True, notice=None, status="info"):
+    if not valid:
+        form_panel = """
+        <article class="panel auth-panel">
+            <h2>Reset link unavailable</h2>
+            <p class="muted">This password reset link is invalid, expired, or has already been used.</p>
+            <a class="button primary full" href="/password/forgot">Request another link</a>
+            <p class="muted compact"><a href="/login">Back to sign in</a></p>
+        </article>
+        """
+    else:
+        form_panel = f"""
+        <form class="panel auth-panel" method="post" action="/password/reset">
+            <input type="hidden" name="token" value="{e(token)}">
+            <h2>Choose a new password</h2>
+            <label>New password
+                <input required name="new_password" type="password" minlength="8" autocomplete="new-password">
+            </label>
+            <label>Confirm new password
+                <input required name="confirm_password" type="password" minlength="8" autocomplete="new-password">
+            </label>
+            <button class="button primary full" type="submit">Reset password</button>
+            <p class="muted compact">This link works once. Resetting your password signs out active sessions but keeps two-factor authentication enabled.</p>
+        </form>
+        """
+    content = f"""
+    <section class="auth-grid">
+        <div class="auth-copy">
+            <p class="eyebrow">Secure reset</p>
+            <h1>Set a new account password.</h1>
+            <p class="lead">Password reset links expire after {e(PASSWORD_RESET_EXPIRY_MINUTES)} minutes and cannot be reused.</p>
+        </div>
+        {form_panel}
+    </section>
+    """
+    return render_layout(None, "Reset password", content, active="login", notice=notice, status=status)
 
 
 def render_two_factor_login(challenge_token, notice=None, status="info"):
@@ -384,7 +598,7 @@ def render_two_factor_account_panel(user, recovery_codes=None):
                 <label>Current password
                     <input required name="current_password" type="password" autocomplete="current-password">
                 </label>
-                <button class="button danger" type="submit" onclick="return confirm('Turn off two-factor authentication for this account?')">Disable 2FA</button>
+            <button class="button danger" type="submit" data-confirm="Turn off two-factor authentication for this account?">Disable 2FA</button>
             </form>
         """
     elif setup:
@@ -456,7 +670,7 @@ def render_passkey_account_panel(user):
             </div>
             <form class="inline-admin-form" method="post" action="/account/passkeys/{credential["id"]}/delete">
                 <input required name="current_password" type="password" autocomplete="current-password" placeholder="Current password">
-                <button class="button danger small" type="submit" onclick="return confirm('Remove this passkey from your account?')">Remove</button>
+                    <button class="button danger small" type="submit" data-confirm="Remove this passkey from your account?">Remove</button>
             </form>
         </li>
         """
@@ -700,128 +914,114 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
         else ""
     )
     integration_panel = "" if user_role(user) == ROLE_READ_ONLY else render_api_access_panel(user)
+    workspace_items = [
+        ("#account-profile", "Profile", "Identity and visibility"),
+        ("#account-notifications", "Notifications", "Alerts and delivery"),
+        ("#account-security", "Security", "Password, 2FA, and passkeys"),
+    ]
+    if integration_panel:
+        workspace_items.append(("#account-integrations", "Integrations", "API tokens and webhooks"))
+    workspace_items.append(("#account-data", "Data", "Export and cleanup"))
     content = f"""
     <section class="section-heading">
         <div>
             <p class="eyebrow">Account</p>
-            <h1>Control panel</h1>
-            <p class="muted compact">Role: <strong>{e(role_label(user))}</strong></p>
+            <h1>Account settings</h1>
+            <p class="muted compact">Manage your profile, alerts, sign-in security, integrations, and account data. Role: <strong>{e(role_label(user))}</strong></p>
         </div>
     </section>
+    {render_workspace_nav(workspace_items, label="Account settings")}
     {role_notice}
-    <section class="content-grid account-grid">
-        <form class="panel form-grid compact-form" method="post" action="/account/profile">
-            <div class="span-2 panel-heading">
-                <h2>Profile</h2>
+    <form class="account-settings-form" method="post" action="/account/profile">
+        <section class="workspace-section" id="account-profile">
+            <div class="workspace-section-heading">
+                <div><p class="eyebrow">Profile</p><h2>Identity and sharing</h2><p class="muted compact">Choose how other members see you and your collection values.</p></div>
             </div>
-            <label>Display name
-                <input required name="display_name" maxlength="80" value="{e(user["display_name"])}">
-            </label>
-            <label>Username
-                <input required name="username" maxlength="40" pattern="[A-Za-z0-9_\\-]{{3,40}}" value="{e(user["username"])}">
-            </label>
-            <label class="span-2">Email
-                <input name="email" type="email" maxlength="254" value="{e(user["email"])}">
-            </label>
-            <label class="checkbox-line span-2">
-                <input type="checkbox" name="public_email" value="1"{public_email_checked}>
-                Show email on my member profile
-            </label>
-            <label class="span-2">Who can see collection values
-                <select name="collection_value_visibility">{value_visibility_options}</select>
-            </label>
-            <label class="span-2">Bio
-                <textarea name="bio" rows="5" maxlength="1000">{e(user["bio"])}</textarea>
-            </label>
-            <div class="span-2 panel-heading with-gap">
-                <h2>Notification preferences</h2>
+            <article class="panel form-grid compact-form">
+                <label>Display name
+                    <input required name="display_name" maxlength="80" value="{e(user["display_name"])}">
+                </label>
+                <label>Username
+                    <input required name="username" maxlength="40" pattern="[A-Za-z0-9_\\-]{{3,40}}" value="{e(user["username"])}">
+                </label>
+                <label class="span-2">Email
+                    <input name="email" type="email" maxlength="254" value="{e(user["email"])}">
+                </label>
+                <label class="checkbox-line span-2">
+                    <input type="checkbox" name="public_email" value="1"{public_email_checked}>
+                    Show email on my member profile
+                </label>
+                <label class="span-2">Who can see collection values
+                    <select name="collection_value_visibility">{value_visibility_options}</select>
+                </label>
+                <label class="span-2">Bio
+                    <textarea name="bio" rows="5" maxlength="1000">{e(user["bio"])}</textarea>
+                </label>
+            </article>
+        </section>
+        <section class="workspace-section" id="account-notifications">
+            <div class="workspace-section-heading">
+                <div><p class="eyebrow">Notifications</p><h2>Notification preferences</h2><p class="muted compact">Control which activity deserves your attention and how often email arrives.</p></div>
             </div>
-            <fieldset class="preference-checks span-2">
-                <legend>In-app notifications</legend>
-                <div class="preference-option-grid">
-                    <label class="checkbox-line preference-option">
-                        <input type="checkbox" name="notify_trade_offer_enabled" value="1"{notify_trade_offer_checked}>
-                        Trade offers
+            <article class="panel form-grid compact-form">
+                <fieldset class="preference-checks span-2">
+                    <legend>In-app notifications</legend>
+                    <div class="preference-option-grid">
+                        <label class="checkbox-line preference-option"><input type="checkbox" name="notify_trade_offer_enabled" value="1"{notify_trade_offer_checked}>Trade offers</label>
+                        <label class="checkbox-line preference-option"><input type="checkbox" name="notify_trade_comment_enabled" value="1"{notify_trade_comment_checked}>Comments</label>
+                        <label class="checkbox-line preference-option"><input type="checkbox" name="notify_trade_counter_enabled" value="1"{notify_trade_counter_checked}>Counter offers</label>
+                        <label class="checkbox-line preference-option"><input type="checkbox" name="notify_trade_status_enabled" value="1"{notify_trade_status_checked}>Trade status</label>
+                        <label class="checkbox-line preference-option"><input type="checkbox" name="price_alerts_enabled" value="1"{price_alert_checked}>Price alerts</label>
+                        <label class="checkbox-line preference-option"><input type="checkbox" name="watchlist_alerts_enabled" value="1"{watchlist_alert_checked}>Watchlist alerts</label>
+                        <label class="checkbox-line preference-option"><input type="checkbox" name="notify_import_complete_enabled" value="1"{notify_import_complete_checked}>Import completion</label>
+                        <label class="checkbox-line preference-option"><input type="checkbox" name="notify_admin_notice_enabled" value="1"{notify_admin_notice_checked}>Admin notices</label>
+                    </div>
+                </fieldset>
+                <label>Minimum price change percent
+                    <input name="price_alert_threshold_percent" type="number" min="0" step="0.1" value="{e(price_alert_threshold)}">
+                </label>
+                <label>Pending trade reminder days
+                    <input name="stale_trade_reminder_days" type="number" min="0" max="90" step="1" value="{e(stale_trade_reminder_days)}">
+                </label>
+                <p class="muted compact span-2">Price alerts use the minimum change percent. Watchlist alerts trigger when another user lists a wanted card for trade. Set pending trade reminders to 0 to turn them off.</p>
+                {trade_email_controls}
+                <div class="account-save-bar span-2">
+                    <div><strong>Save profile and notification settings</strong><span>Enter your current password to confirm these account changes.</span></div>
+                    <label>Current password
+                        <input required name="current_password" type="password" autocomplete="current-password">
                     </label>
-                    <label class="checkbox-line preference-option">
-                        <input type="checkbox" name="notify_trade_comment_enabled" value="1"{notify_trade_comment_checked}>
-                        Comments
-                    </label>
-                    <label class="checkbox-line preference-option">
-                        <input type="checkbox" name="notify_trade_counter_enabled" value="1"{notify_trade_counter_checked}>
-                        Counter offers
-                    </label>
-                    <label class="checkbox-line preference-option">
-                        <input type="checkbox" name="notify_trade_status_enabled" value="1"{notify_trade_status_checked}>
-                        Trade status
-                    </label>
-                    <label class="checkbox-line preference-option">
-                        <input type="checkbox" name="price_alerts_enabled" value="1"{price_alert_checked}>
-                        Price alerts
-                    </label>
-                    <label class="checkbox-line preference-option">
-                        <input type="checkbox" name="watchlist_alerts_enabled" value="1"{watchlist_alert_checked}>
-                        Watchlist alerts
-                    </label>
-                    <label class="checkbox-line preference-option">
-                        <input type="checkbox" name="notify_import_complete_enabled" value="1"{notify_import_complete_checked}>
-                        Import completion
-                    </label>
-                    <label class="checkbox-line preference-option">
-                        <input type="checkbox" name="notify_admin_notice_enabled" value="1"{notify_admin_notice_checked}>
-                        Admin notices
-                    </label>
+                    <button class="button primary" type="submit">Save account settings</button>
                 </div>
-            </fieldset>
-            <label class="span-2">Minimum change percent
-                <input name="price_alert_threshold_percent" type="number" min="0" step="0.1" value="{e(price_alert_threshold)}">
-            </label>
-            <label class="span-2">Remind me about pending trade offers after
-                <input name="stale_trade_reminder_days" type="number" min="0" max="90" step="1" value="{e(stale_trade_reminder_days)}">
-            </label>
-            <p class="muted compact span-2">Price alerts use the minimum change percent. Watchlist alerts trigger when another user lists a wanted card for trade. Set pending trade reminders to 0 to turn them off.</p>
-            {trade_email_controls}
-            <label class="span-2">Current password
-                <input required name="current_password" type="password" autocomplete="current-password">
-            </label>
-            <div class="form-actions span-2">
-                <button class="button primary" type="submit">Save profile</button>
-            </div>
-        </form>
-
-        <form class="panel form-grid compact-form" method="post" action="/account/password">
-            <div class="span-2 panel-heading">
-                <h2>Password</h2>
-            </div>
-            <label class="span-2">Current password
-                <input required name="current_password" type="password" autocomplete="current-password">
-            </label>
-            <label class="span-2">New password
-                <input required name="new_password" type="password" minlength="8" autocomplete="new-password">
-            </label>
-            <label class="span-2">Confirm new password
-                <input required name="confirm_password" type="password" minlength="8" autocomplete="new-password">
-            </label>
-            <div class="form-actions span-2">
-                <button class="button primary" type="submit">Change password</button>
-            </div>
-            <p class="muted compact span-2">Changing your password signs out other active sessions.</p>
-        </form>
-
-        {render_two_factor_account_panel(user, recovery_codes=recovery_codes)}
-
-        {render_passkey_account_panel(user)}
-
-        {integration_panel}
-
+            </article>
+        </section>
+    </form>
+    <section class="workspace-section" id="account-security">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Security</p><h2>Sign-in protection</h2><p class="muted compact">Manage your password and add stronger ways to protect or access your account.</p></div>
+        </div>
+        <div class="account-section-grid">
+            <form class="panel form-grid compact-form" method="post" action="/account/password">
+                <div class="span-2 panel-heading"><h2>Password</h2></div>
+                <label class="span-2">Current password<input required name="current_password" type="password" autocomplete="current-password"></label>
+                <label class="span-2">New password<input required name="new_password" type="password" minlength="8" autocomplete="new-password"></label>
+                <label class="span-2">Confirm new password<input required name="confirm_password" type="password" minlength="8" autocomplete="new-password"></label>
+                <div class="form-actions span-2"><button class="button primary" type="submit">Change password</button></div>
+                <p class="muted compact span-2">Changing your password signs out other active sessions.</p>
+            </form>
+            {render_two_factor_account_panel(user, recovery_codes=recovery_codes)}
+            {render_passkey_account_panel(user)}
+        </div>
+    </section>
+    {f'<section class="workspace-section" id="account-integrations"><div class="workspace-section-heading"><div><p class="eyebrow">Integrations</p><h2>API and webhooks</h2><p class="muted compact">Connect approved tools and inspect recent delivery activity.</p></div></div>{integration_panel}</section>' if integration_panel else ''}
+    <section class="workspace-section" id="account-data">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Data</p><h2>Export and collection hygiene</h2><p class="muted compact">Take your data with you or review collection records that need attention.</p></div>
+        </div>
         <article class="panel export-panel">
-            <div class="panel-heading">
-                <h2>Account export</h2>
-                <span class="pill">JSON</span>
-            </div>
+            <div class="panel-heading"><h2>Account export</h2><span class="pill">JSON</span></div>
             <p class="muted">Download your collection, wants, groups, trades, notifications, and price history in one portable account file.</p>
             <div class="form-actions">
-                <a class="button secondary" href="/account/export">Download account data</a>
+                <a class="button primary" href="/account/export">Download account data</a>
                 <a class="button secondary" href="/cleanup">Open cleanup tools</a>
                 <a class="button secondary" href="/cleanup/audit">Audit condition/finish</a>
             </div>
@@ -831,4 +1031,4 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
     return render_layout(user, "Account", content, active="account", notice=notice, status=status)
 
 
-__all__ = ['render_subnav', 'render_cards_subnav', 'render_wishlist_subnav', 'group_listing_url', 'render_layout', 'render_login', 'render_two_factor_login', 'render_register', 'render_recovery_code_panel', 'render_two_factor_account_panel', 'render_passkey_account_panel', 'render_account']
+__all__ = ['render_subnav', 'render_workspace_nav', 'render_cards_subnav', 'render_wishlist_subnav', 'render_trades_subnav', 'group_listing_url', 'render_layout', 'render_login', 'render_password_recovery', 'render_password_reset', 'render_two_factor_login', 'render_register', 'render_recovery_code_panel', 'render_two_factor_account_panel', 'render_passkey_account_panel', 'render_account']

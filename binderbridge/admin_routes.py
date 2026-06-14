@@ -661,6 +661,7 @@ def admin_user_action(self, user, path):
         return self.not_found(user)
     action = parts[3]
     form = self.read_form()
+    recovery_result = None
     try:
         if action == "ban":
             if not require_capability(user, CAP_MODERATE_USERS):
@@ -675,13 +676,22 @@ def admin_user_action(self, user, path):
         elif action == "password":
             if not require_capability(user, CAP_MANAGE_USERS):
                 return self.not_found(user)
-            admin_reset_user_password(
+            self.enforce_rate_limit(
+                "password_reset",
+                self.rate_limit_key("admin-password-reset", str(user["id"])),
+                "Too many administrator password recovery attempts. Try again shortly.",
+            )
+            recovery_result = admin_issue_user_password_recovery(
                 user["id"],
                 target_user_id,
-                form.get("new_password", [""])[0],
-                form.get("confirm_password", [""])[0],
+                form.get("current_password", [""])[0],
+                self.public_base_url(),
             )
-            notice = "Password reset and active sessions cleared."
+            notice = (
+                "Password recovery link emailed and active sessions cleared."
+                if recovery_result["sent"]
+                else "Manual password recovery link created and active sessions cleared."
+            )
         elif action == "2fa":
             if not require_capability(user, CAP_MANAGE_USERS):
                 return self.not_found(user)
@@ -717,7 +727,7 @@ def admin_user_action(self, user, path):
     except ValueError as exc:
         return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_admin(updated, notice=notice))
+    return self.html(render_admin(updated, notice=notice, recovery_result=recovery_result))
 
 
 __all__ = [

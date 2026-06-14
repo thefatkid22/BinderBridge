@@ -89,6 +89,67 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         with self.assertRaisesRegex(ValueError, "Current password"):
             app.change_user_password(user_id, "wrong", "newpassword123", "newpassword123")
 
+    def test_password_recovery_without_smtp_creates_one_admin_request(self):
+        admin_id = app.create_user("owner", "password123", "Owner")
+        user_id = app.create_user("recoverme", "password123", "Recover Me")
+        original_configured = app.email_delivery_configured
+        app.email_delivery_configured = lambda: False
+        try:
+            first = app.request_password_recovery("recoverme", "https://cards.example.test")
+            second = app.request_password_recovery("recoverme", "https://cards.example.test")
+            missing = app.request_password_recovery("missing", "https://cards.example.test")
+            recovery_html = app.render_password_recovery()
+        finally:
+            app.email_delivery_configured = original_configured
+
+        requests = app.rows("SELECT * FROM password_recovery_requests WHERE user_id = ?", (user_id,))
+        notifications = app.rows(
+            "SELECT * FROM user_notifications WHERE user_id = ? AND title = 'Password recovery assistance requested'",
+            (admin_id,),
+        )
+
+        self.assertEqual(first["delivery"], "admin")
+        self.assertEqual(second["delivery"], "admin")
+        self.assertFalse(missing["matched"])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["status"], "pending")
+        self.assertEqual(len(notifications), 1)
+        self.assertIn("administrator will be notified", recovery_html)
+        self.assertIn("Forgot your password?", app.render_login())
+
+    def test_emailed_password_reset_is_hashed_single_use_and_preserves_two_factor(self):
+        user_id = app.create_user("emailreset", "password123", "Email Reset", email="reset@example.test")
+        setup = app.start_user_totp_setup(user_id)
+        app.enable_user_totp(user_id, app.totp_code(setup["secret"]))
+        session_token, _ = app.create_session(user_id)
+        sent = []
+        original_configured = app.email_delivery_configured
+        original_sender = app.send_email_message
+        app.email_delivery_configured = lambda: True
+        app.send_email_message = lambda to_email, subject, body: (sent.append((to_email, subject, body)) or True, "Email sent.")
+        try:
+            result = app.request_password_recovery("reset@example.test", "https://cards.example.test")
+        finally:
+            app.email_delivery_configured = original_configured
+            app.send_email_message = original_sender
+        raw_token = sent[0][2].split("token=", 1)[1].split()[0]
+        stored = app.row("SELECT * FROM password_reset_tokens WHERE user_id = ?", (user_id,))
+
+        app.complete_password_reset(raw_token, "newpassword123", "newpassword123")
+        updated = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+
+        self.assertEqual(result["delivery"], "email")
+        self.assertTrue(result["sent"])
+        self.assertEqual(sent[0][0], "reset@example.test")
+        self.assertNotEqual(stored["token_hash"], raw_token)
+        self.assertNotIn(raw_token, stored["token_hash"])
+        self.assertTrue(app.verify_password("newpassword123", updated["password_hash"]))
+        self.assertTrue(app.two_factor_enabled(updated))
+        self.assertIsNone(app.get_user_by_session(session_token))
+        self.assertIsNone(app.password_reset_from_token(raw_token))
+        with self.assertRaisesRegex(ValueError, "invalid, expired, or already used"):
+            app.complete_password_reset(raw_token, "anotherpassword", "anotherpassword")
+
     def test_account_page_renders_profile_and_password_forms(self):
         user_id = app.create_user("vivien", "password123", "Vivien")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
@@ -101,6 +162,12 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
 
         self.assertIn('action="/account/profile"', html)
         self.assertIn('action="/account/password"', html)
+        self.assertIn('aria-label="Account settings"', html)
+        self.assertIn('id="account-profile"', html)
+        self.assertIn('id="account-notifications"', html)
+        self.assertIn('id="account-security"', html)
+        self.assertIn('id="account-integrations"', html)
+        self.assertIn('id="account-data"', html)
         self.assertIn('href="/account/export"', html)
         self.assertIn("Download account data", html)
         self.assertIn("API access", html)
