@@ -306,7 +306,14 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
             <a class="button secondary" href="/browse">Back to browse</a>
         </div>
     </section>
-    <section class="public-profile-summary">
+    {render_workspace_nav([
+        ("#member-profile", "Profile", "Member details and availability"),
+        ("#member-trades", "Trade cards", f'{stats["unique_trade_cards"]} shared entries'),
+        ("#member-reputation", "Reputation", "Feedback from completed trades"),
+        ("#member-groups", "Binders & lists", f'{stats["groups_count"]} shared groups'),
+        ("#member-wants", "Wishlist", f'{stats["wants_count"]} wanted cards'),
+    ], label="Public profile sections")}
+    <section class="public-profile-summary anchored-section" id="member-profile">
         <article class="panel public-profile-card">
             <div class="panel-heading">
                 <h2>Profile</h2>
@@ -327,7 +334,7 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
         </article>
     </section>
     <section class="public-profile-grid">
-        <article class="panel public-profile-main">
+        <article class="panel public-profile-main anchored-section" id="member-trades">
             <div class="panel-heading padded">
                 <div>
                     <h2>Trade availability</h2>
@@ -339,21 +346,27 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
             {collection_list}
             {pagination}
         </article>
-        <article class="panel">
+        <aside class="public-profile-support" aria-label="Member profile details">
+        <article class="panel anchored-section" id="member-reputation">
             <div class="panel-heading">
                 <h2>Reputation</h2>
             </div>
             {reputation_block}
-            <div class="panel-heading with-gap">
+        </article>
+        <article class="panel anchored-section" id="member-groups">
+            <div class="panel-heading">
                 <h2>Public binders and lists</h2>
             </div>
             <div class="public-group-list">{group_list}</div>
-            <div class="panel-heading with-gap">
+        </article>
+        <article class="panel anchored-section" id="member-wants">
+            <div class="panel-heading">
                 <h2>Wishlist</h2>
                 <a class="button secondary small" href="/trades/new?recipient_id={member["id"]}">Offer cards</a>
             </div>
             <ul class="stack-list">{want_list}</ul>
         </article>
+        </aside>
     </section>
     """
     return render_layout(user, member["display_name"], content, active="browse", notice=notice, status=status)

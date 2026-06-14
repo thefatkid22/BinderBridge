@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 def db_schema_version(conn):
@@ -379,6 +379,46 @@ def migrate_database_maintenance(conn):
     )
 
 
+def migrate_password_recovery(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS password_recovery_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'issued', 'completed', 'dismissed')),
+            handled_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            requested_at TEXT NOT NULL,
+            handled_at TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_password_recovery_requests_status
+            ON password_recovery_requests(status, requested_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_password_recovery_requests_user
+            ON password_recovery_requests(user_id, status, requested_at DESC);
+
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL UNIQUE,
+            token_hint TEXT NOT NULL DEFAULT '',
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            delivery_method TEXT NOT NULL DEFAULT 'manual',
+            sent_at TEXT NOT NULL DEFAULT '',
+            expires_at TEXT NOT NULL,
+            used_at TEXT NOT NULL DEFAULT '',
+            revoked_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
+            ON password_reset_tokens(user_id, expires_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_active
+            ON password_reset_tokens(expires_at, used_at, revoked_at);
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
@@ -388,6 +428,7 @@ SCHEMA_MIGRATIONS = (
     (6, "collection card share links", migrate_collection_share_links),
     (7, "wanted card share links", migrate_want_share_links),
     (8, "database maintenance history and storage snapshots", migrate_database_maintenance),
+    (9, "secure password recovery requests and reset tokens", migrate_password_recovery),
 )
 
 
@@ -435,6 +476,7 @@ __all__ = [
     "migrate_collection_share_links",
     "migrate_want_share_links",
     "migrate_database_maintenance",
+    "migrate_password_recovery",
     "SCHEMA_MIGRATIONS",
     "migration_timestamp",
     "record_schema_migration_history",

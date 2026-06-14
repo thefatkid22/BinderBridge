@@ -112,6 +112,15 @@ def group_action(self, method, user, path, query=None):
             return self.not_found(user)
         remove_group_item(user["id"], group_id, group_item_id)
         return self.redirect(f"/groups/{group_id}")
+    if len(parts) == 4 and parts[2] == "items" and parts[3] == "bulk-delete" and method == "POST":
+        form = self.read_form()
+        redirect_to = safe_local_redirect_path(
+            form.get("redirect_to", [f"/groups/{group_id}#group-cards"])[0],
+            default=f"/groups/{group_id}#group-cards",
+            allowed_prefix=f"/groups/{group_id}",
+        )
+        remove_group_items(user["id"], group_id, form.get("group_item_id", []))
+        return self.redirect(redirect_to)
     return self.not_found(user)
 
 def group_deck_import(self, user, group):

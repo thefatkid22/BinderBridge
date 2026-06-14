@@ -112,6 +112,115 @@ def want_trade_matches(user_id, want, limit=3):
 
 
 
+def want_list_filter_values(query):
+    query = query or {}
+    filters = {
+        "q": str(query.get("q", [""])[0] or "").strip(),
+        "priority": str(query.get("priority", [""])[0] or "").strip().lower(),
+        "game": str(query.get("game", [""])[0] or "").strip().lower(),
+        "visibility": str(query.get("visibility", [""])[0] or "").strip().lower(),
+        "matched_only": str(query.get("matched_only", [""])[0] or "").strip() == "1",
+    }
+    if filters["priority"] not in ("", *WANT_PRIORITY_LABELS.keys()):
+        filters["priority"] = ""
+    if filters["game"] not in ("", *dict(CARD_GAMES).keys()):
+        filters["game"] = ""
+    if filters["visibility"] not in ("", *VISIBILITY_LABELS.keys()):
+        filters["visibility"] = ""
+    return filters
+
+
+def want_list_where(user_id, filters):
+    where = ["want_items.user_id = ?"]
+    params = [user_id]
+    if filters.get("q"):
+        term = f"%{filters['q']}%"
+        where.append("(want_items.card_name LIKE ? OR want_items.type_line LIKE ? OR want_items.set_name LIKE ?)")
+        params.extend([term, term, term])
+    if filters.get("priority"):
+        where.append("want_items.priority = ?")
+        params.append(filters["priority"])
+    if filters.get("game"):
+        where.append("want_items.game = ?")
+        params.append(filters["game"])
+    if filters.get("visibility"):
+        where.append("want_items.visibility = ?")
+        params.append(filters["visibility"])
+    if filters.get("matched_only"):
+        privacy_clause, privacy_params = visibility_sql_for_user_id(
+            user_id, "collection_items.visibility", "collection_items.user_id"
+        )
+        where.append(
+            f"""
+            EXISTS (
+                SELECT 1
+                FROM collection_items
+                JOIN users match_owner ON match_owner.id = collection_items.user_id
+                WHERE collection_items.user_id != want_items.user_id
+                    AND match_owner.is_banned = 0
+                    AND collection_items.quantity_for_trade > 0
+                    AND {privacy_clause}
+                    AND collection_items.game = want_items.game
+                    AND (
+                        (want_items.scryfall_id != '' AND collection_items.scryfall_id = want_items.scryfall_id)
+                        OR (
+                            collection_items.card_name = want_items.card_name COLLATE NOCASE
+                            AND (want_items.set_code = '' OR collection_items.set_code = '' OR collection_items.set_code = want_items.set_code)
+                            AND (want_items.collector_number = '' OR collection_items.collector_number = '' OR collection_items.collector_number = want_items.collector_number)
+                        )
+                    )
+            )
+            """
+        )
+        params.extend(privacy_params)
+    return where, params
+
+
+def want_count_for_user(user_id, filters):
+    where, params = want_list_where(user_id, filters)
+    return row(
+        f"SELECT COUNT(*) AS count FROM want_items WHERE {' AND '.join(where)}",
+        params,
+    )["count"]
+
+
+def want_page_rows(user_id, filters, order_clause, limit, offset):
+    where, params = want_list_where(user_id, filters)
+    return rows(
+        f"""
+        SELECT *
+        FROM want_items
+        WHERE {' AND '.join(where)}
+        ORDER BY {order_clause}
+        LIMIT ? OFFSET ?
+        """,
+        [*params, int(limit), int(offset)],
+    )
+
+
+def want_search_suggestions(user_id, limit=100):
+    suggestions = rows(
+        """
+        SELECT value
+        FROM (
+            SELECT card_name AS value, MAX(updated_at) AS last_seen
+            FROM want_items
+            WHERE user_id = ? AND card_name != ''
+            GROUP BY card_name COLLATE NOCASE
+            UNION
+            SELECT type_line AS value, MAX(updated_at) AS last_seen
+            FROM want_items
+            WHERE user_id = ? AND type_line != ''
+            GROUP BY type_line COLLATE NOCASE
+        )
+        ORDER BY last_seen DESC, value COLLATE NOCASE
+        LIMIT ?
+        """,
+        (user_id, user_id, int(limit)),
+    )
+    return [item["value"] for item in suggestions]
+
+
 def want_rows_for_user(user_id, order_clause):
     return rows(
         f"""
@@ -125,5 +234,10 @@ def want_rows_for_user(user_id, order_clause):
 
 __all__ = [
     'want_trade_matches',
+    'want_list_filter_values',
+    'want_list_where',
+    'want_count_for_user',
+    'want_page_rows',
+    'want_search_suggestions',
     'want_rows_for_user',
 ]

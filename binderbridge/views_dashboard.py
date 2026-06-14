@@ -119,10 +119,30 @@ def notification_kind_label(kind):
     }.get(kind, "Notification")
 
 
-def render_notifications(user, notice=None, status="info"):
-    notifications = notification_rows(user["id"])
+def notification_filter_chip_specs():
+    category_labels = {
+        "trade": "Trades",
+        "price": "Prices",
+        "watchlist": "Watchlist",
+        "import": "Imports",
+        "admin": "Admin",
+    }
+    return (
+        {"key": "q", "label": "Search"},
+        {"key": "category", "label": "Category", "formatter": lambda value: category_labels.get(value, value.title())},
+        {"key": "state", "label": "State", "formatter": lambda value: value.title()},
+    )
+
+
+def render_notifications(user, query=None, notice=None, status="info"):
+    query = query or {}
+    filters = notification_filter_values(query)
+    total_count = notification_count(user["id"], filters)
+    page, per_page, page_count, offset = pagination_state(query, total_count)
+    notifications = notification_page_rows(user["id"], filters, per_page, offset)
+    all_count = notification_count(user["id"])
     unread_count = unread_notification_count(user["id"])
-    read_count = sum(1 for item in notifications if item["is_read"])
+    read_count = notification_count(user["id"], {"state": "read"})
     if notifications:
         notification_items = "".join(
             f"""
@@ -148,7 +168,7 @@ def render_notifications(user, notice=None, status="info"):
             for item in notifications
         )
     else:
-        notification_items = '<li class="empty-state compact-empty">No notifications yet.</li>'
+        notification_items = '<li class="empty-state compact-empty">No notifications match these filters.</li>'
 
     recent_changes = price_history_summary(user["id"])
     if recent_changes:
@@ -185,38 +205,87 @@ def render_notifications(user, notice=None, status="info"):
     delete_all = (
         f"""
         <form method="post" action="/notifications/delete-all">
-            <button class="button danger" type="submit" onclick="return confirm('Delete all {len(notifications)} notifications?')">Delete all</button>
+                <button class="button danger" type="submit" data-confirm="Delete all {all_count} notifications?">Delete all</button>
         </form>
         """
-        if notifications
+        if all_count
         else ""
     )
+    category_key = filters["category"] or "all"
+    category_nav = render_subnav(
+        [
+            ("all", "/notifications", "All Activity"),
+            ("trade", "/notifications?category=trade", "Trades"),
+            ("price", "/notifications?category=price", "Prices"),
+            ("watchlist", "/notifications?category=watchlist", "Watchlist"),
+            ("import", "/notifications?category=import", "Imports"),
+            ("admin", "/notifications?category=admin", "Admin"),
+        ],
+        category_key,
+        label="Notification categories",
+    )
+    state_options = "".join(
+        f'<option value="{e(value)}"{selected(filters["state"], value)}>{e(label)}</option>'
+        for value, label in (("unread", "Unread"), ("read", "Read"))
+    )
+    active_filters = render_active_filter_chips("/notifications", query, filters, notification_filter_chip_specs())
+    pagination = render_pagination("/notifications", query, total_count, page, per_page, page_count)
     content = f"""
+    {category_nav}
     <section class="section-heading">
         <div>
             <p class="eyebrow">Notifications</p>
             <h1>Activity and alerts</h1>
+            <p class="lead">Keep up with trades, watched cards, imports, and site notices without losing older activity.</p>
         </div>
         <div class="actions">
             {mark_all}
             {delete_read}
-            {delete_all}
         </div>
     </section>
+    {render_workspace_nav([
+        ("#notification-inbox", "Inbox", "Search and review activity"),
+        ("#notification-values", "Value changes", "Recent Scryfall price movement"),
+        ("/account#account-notifications", "Preferences", "Choose which alerts reach you"),
+    ], label="Notification workspace")}
+    <form class="filter-bar notification-filter-bar" method="get" action="/notifications">
+        <input type="hidden" name="category" value="{e(filters["category"])}">
+        <div class="filter-primary-row">
+            <label class="search-field">Search
+                <input name="q" value="{e(filters["q"])}" placeholder="Title or message">
+            </label>
+            <label>State
+                <select name="state"><option value="">Read and unread</option>{state_options}</select>
+            </label>
+            <div class="actions filter-actions">
+                <button class="button secondary" type="submit">Filter</button>
+                <a class="button ghost" href="{e('/notifications?category=' + filters['category'] if filters['category'] else '/notifications')}">Reset</a>
+            </div>
+        </div>
+    </form>
+    {active_filters}
     <section class="content-grid notifications-grid">
-        <article class="panel">
+        <article class="panel" id="notification-inbox">
             <div class="panel-heading">
                 <h2>Inbox</h2>
-                <span class="pill">{e(unread_count)} unread</span>
+                <span class="pill">{e(total_count)} matching - {e(unread_count)} unread</span>
             </div>
             <ol class="notification-list">{notification_items}</ol>
+            {pagination}
         </article>
-        <article class="panel">
+        <div class="notification-support-column">
+        <article class="panel" id="notification-values">
             <div class="panel-heading">
                 <h2>Recent value changes</h2>
             </div>
             <ul class="stack-list">{change_items}</ul>
         </article>
+        <article class="panel notification-danger-zone">
+            <div class="panel-heading"><h2>Inbox cleanup</h2></div>
+            <p class="muted compact">Deletion permanently removes notification history from your account.</p>
+            <div class="form-actions">{delete_all}</div>
+        </article>
+        </div>
     </section>
     """
     return render_layout(user, "Notifications", content, active="dashboard", notice=notice, status=status)

@@ -3,7 +3,7 @@
 This module is wired by binderbridge.views; shared app helpers are injected at runtime.
 """
 
-def render_staff_admin(user, notice=None, status="info", invite_result=None):
+def render_staff_admin(user, notice=None, status="info", invite_result=None, recovery_result=None):
     can_moderate = user_has_capability(user, CAP_MODERATE_USERS)
     can_disputes = user_has_capability(user, CAP_MODERATE_DISPUTES)
     can_logs = user_has_capability(user, CAP_VIEW_AUDIT_LOG)
@@ -70,9 +70,9 @@ def render_staff_admin(user, notice=None, status="info", invite_result=None):
     return render_layout(user, "Staff", content, active="admin", notice=notice, status=status)
 
 
-def render_admin(user, notice=None, status="info", invite_result=None):
+def render_admin(user, notice=None, status="info", invite_result=None, recovery_result=None):
     if user_role(user) not in (ROLE_OWNER, ROLE_ADMIN):
-        return render_staff_admin(user, notice=notice, status=status, invite_result=invite_result)
+        return render_staff_admin(user, notice=notice, status=status, invite_result=invite_result, recovery_result=recovery_result)
     users = admin_user_list()
     user_rows = "".join(render_admin_user_row(user, managed_user) for managed_user in users)
     trade_policy = trade_policy_settings()
@@ -105,6 +105,20 @@ def render_admin(user, notice=None, status="info", invite_result=None):
             <span class="subtle">Expires {e(invite_result["expires_at"][:10])}</span>
         </div>
         """
+    recovery_result_panel = ""
+    if recovery_result and not recovery_result.get("sent"):
+        recovery_result_panel = f"""
+        <article class="panel form-grid compact-form span-2">
+            <div class="span-2 panel-heading">
+                <h2>Manual password recovery link</h2>
+                <span class="status pending">Share securely</span>
+            </div>
+            <p class="muted compact span-2">This one-time link was shown because email delivery was unavailable. Share it directly with the intended user. It expires {e(recovery_result["expires_at"][:16].replace("T", " "))} UTC.</p>
+            <label class="span-2">Recovery link
+                <input readonly value="{e(recovery_result["link"])}" onclick="this.select()">
+            </label>
+        </article>
+        """
     backups = backup_status()
     auto_backup = backups["automatic"]
     auto_backup_checked = checked(auto_backup["enabled"])
@@ -133,16 +147,34 @@ def render_admin(user, notice=None, status="info", invite_result=None):
         <div>
             <p class="eyebrow">Admin</p>
             <h1>User control panel</h1>
-        </div>
-        <div class="actions">
-            <a class="button secondary" href="/admin/jobs">Import and jobs</a>
-            <a class="button secondary" href="/admin/collection-health">Collection health</a>
-            <a class="button secondary" href="/admin/health">Maintenance health</a>
-            <a class="button secondary" href="/admin/database">Database maintenance</a>
+            <p class="muted compact">Review site health first, then move into policy, access, operations, or user management.</p>
         </div>
     </section>
-    {onboarding_panel}
-    <section class="admin-settings-grid">
+    {render_workspace_nav([
+        ("#admin-overview", "Overview", "Setup and site health"),
+        ("#admin-policies", "Policies", "Trade and integration rules"),
+        ("#admin-access", "Access", "Registration and invites"),
+        ("#admin-operations", "Operations", "Backups, logs, and issues"),
+        ("#admin-users", "Users", "Roles, trust, and recovery"),
+    ], label="Admin control panel")}
+    {recovery_result_panel}
+    <section class="workspace-section" id="admin-overview">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Overview</p><h2>Site operations at a glance</h2><p class="muted compact">Open a focused dashboard for imports, card data, maintenance, or database work.</p></div>
+        </div>
+        <div class="admin-operation-grid">
+            <a class="admin-operation-card" href="/admin/jobs"><span class="pill">Jobs</span><strong>Import and jobs</strong><span>Review imports, enrichment, price refreshes, and failed notifications.</span></a>
+            <a class="admin-operation-card" href="/admin/collection-health"><span class="pill">Cards</span><strong>Collection health</strong><span>Find duplicates, invalid finishes, stale prices, and visibility coverage.</span></a>
+            <a class="admin-operation-card" href="/admin/health"><span class="pill">Health</span><strong>Maintenance health</strong><span>See setup warnings, queued work, backup status, and failed delivery.</span></a>
+            <a class="admin-operation-card" href="/admin/database"><span class="pill">Database</span><strong>Database maintenance</strong><span>Inspect storage, indexes, migrations, and maintenance history.</span></a>
+        </div>
+        {onboarding_panel}
+    </section>
+    <section class="workspace-section" id="admin-policies">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Policies</p><h2>Community rules and integrations</h2><p class="muted compact">Set trade safeguards and decide which user classes may use integrations.</p></div>
+        </div>
+        <div class="admin-settings-grid">
         <form class="panel form-grid compact-form trade-policy-settings span-2" method="post" action="/admin/trade-policy">
             <div class="span-2 panel-heading">
                 <h2>Trade policy</h2>
@@ -185,6 +217,13 @@ def render_admin(user, notice=None, status="info", invite_result=None):
                 <button class="button primary" type="submit">Save integration access</button>
             </div>
         </form>
+        </div>
+    </section>
+    <section class="workspace-section" id="admin-access">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Access</p><h2>Registration and invitations</h2><p class="muted compact">Choose how new members join and manage outstanding invitations.</p></div>
+        </div>
+        <div class="admin-settings-grid">
         <form class="panel form-grid compact-form registration-settings" method="post" action="/admin/registration-settings">
             <div class="span-2 panel-heading">
                 <h2>Registration</h2>
@@ -218,6 +257,13 @@ def render_admin(user, notice=None, status="info", invite_result=None):
             </div>
             <ul class="stack-list compact-stack">{invite_rows}</ul>
         </article>
+        </div>
+    </section>
+    <section class="workspace-section" id="admin-operations">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Operations</p><h2>Backups, audit trail, and trade issues</h2><p class="muted compact">Keep the site recoverable and review activity that needs administrator attention.</p></div>
+        </div>
+        <div class="admin-settings-grid">
         <article class="panel maintenance-panel">
             <div class="panel-heading">
                 <h2>Backup and restore</h2>
@@ -262,7 +308,7 @@ def render_admin(user, notice=None, status="info", invite_result=None):
                     <label>Confirm restore
                         <input required name="confirmation" placeholder="Type RESTORE">
                     </label>
-                    <button class="button danger" type="submit" onclick="return confirm('Restore this backup? Current data will be replaced after a safety backup is created.')">Restore backup</button>
+                <button class="button danger" type="submit" data-confirm="Restore this backup? Current data will be replaced after a safety backup is created.">Restore backup</button>
                 </form>
             </div>
             <div class="panel-heading with-gap">
@@ -286,10 +332,16 @@ def render_admin(user, notice=None, status="info", invite_result=None):
             </div>
             <ul class="stack-list compact-stack">{recent_dispute_rows}</ul>
         </article>
+        </div>
     </section>
-    <section class="panel flush">
+    <section class="workspace-section" id="admin-users">
+        <div class="workspace-section-heading">
+            <div><p class="eyebrow">Users</p><h2>Roles, trust, and account recovery</h2><p class="muted compact">Review member activity and apply the least privilege needed for each account.</p></div>
+            <span class="pill">{e(len(users))} accounts</span>
+        </div>
+        <div class="panel flush">
         <div class="table-wrap">
-            <table class="admin-table">
+            <table class="admin-table responsive-card-table">
                 <thead>
                     <tr>
                         <th>User</th>
@@ -782,7 +834,7 @@ def render_admin_database(user, notice=None, status="info"):
                 <strong>Rebuild and compact database</strong>
                 <span class="subtle">Runs quick_check, checkpoints WAL, then VACUUM. This needs temporary free disk space and may pause writes.</span>
                 <a class="button ghost small" href="/admin">Create a backup first</a>
-                <button class="button danger" type="submit" onclick="return confirm('Run VACUUM now? This can take time and temporarily block database writes. Create a backup first.')">Run VACUUM</button>
+                <button class="button danger" type="submit" data-confirm="Run VACUUM now? This can take time and temporarily block database writes. Create a backup first.">Run VACUUM</button>
             </form>
             <form class="backup-action-card" method="post" action="/admin/database/snapshot">
                 <strong>Record storage snapshot</strong>
@@ -826,7 +878,7 @@ def render_admin_database(user, notice=None, status="info"):
             </div>
         </div>
         <div class="table-wrap">
-            <table class="admin-table database-index-table">
+            <table class="admin-table responsive-card-table database-index-table">
                 <thead><tr><th>Index</th><th>Table</th><th>Columns</th><th>Planner statistics</th><th>Storage</th><th>Sample planner use</th></tr></thead>
                 <tbody>{index_rows}</tbody>
             </table>
@@ -1035,7 +1087,7 @@ def render_admin_health(user, notice=None, status="info"):
             <p class="muted compact span-2">Retention age is measured from creation time, webhook completion time, or dispute resolution time as appropriate. Last cleanup: {e(retention_last_run)}.</p>
             <div class="form-actions span-2">
                 <button class="button primary" name="intent" value="save" type="submit">Save retention settings</button>
-                <button class="button danger" name="intent" value="save_run" type="submit" onclick="return confirm('Delete all records currently eligible under these retention settings? This cannot be undone.')">Save and run cleanup</button>
+                <button class="button danger" name="intent" value="save_run" type="submit" data-confirm="Delete all records currently eligible under these retention settings? This cannot be undone.">Save and run cleanup</button>
             </div>
         </form>
         <article class="{health_card_class('panel', 'ok')}">
@@ -1131,7 +1183,7 @@ def admin_job_status_label(value):
 
 
 def admin_job_retry_form(action, field_name, field_value, label="Retry", button_class="secondary", confirm="", return_to=""):
-    confirm_attr = f' onclick="return confirm(\'{e(confirm)}\')"' if confirm else ""
+    confirm_attr = f' data-confirm="{e(confirm)}"' if confirm else ""
     return_input = f'<input type="hidden" name="redirect_to" value="{e(return_to)}">' if return_to else ""
     return f"""
     <form method="post" action="{e(action)}">
@@ -1553,20 +1605,20 @@ def render_trade_dispute_admin_row(item):
         """
     return f"""
     <tr>
-        <td>
+        <td data-label="Issue">
             <strong>#{e(item["id"])}</strong>
             <span class="subtle">{e(item["created_at"][:16].replace("T", " "))}</span>
             {escalation_badge}
         </td>
-        <td>
+        <td data-label="Trade">
             <a href="/trades/{item["trade_id"]}">Trade #{e(item["trade_id"])}</a>
             <span class="subtle">{e(trade_dispute_user_label(item, "proposer"))} with {e(trade_dispute_user_label(item, "recipient"))}</span>
         </td>
-        <td>
+        <td data-label="Status">
             <span class="status {e(trade_dispute_status_class(item["status"]))}">{e(trade_dispute_status_label(item["status"]))}</span>
             <span class="subtle">{e(trade_dispute_category_label(item["category"]))}</span>
         </td>
-        <td>
+        <td data-label="Report">
             <strong>{e(trade_dispute_user_label(item, "reporter"))}</strong>
             <p class="compact">{e(item["body"])}</p>
             <div class="evidence-block admin-evidence-block">
@@ -1575,7 +1627,7 @@ def render_trade_dispute_admin_row(item):
             </div>
             {resolved_line}
         </td>
-        <td>
+        <td data-label="Admin review">
             <form class="admin-dispute-form" method="post" action="/admin/disputes/{item["id"]}/update">
                 <label>Status
                     <select name="status">{status_options}</select>
@@ -1689,7 +1741,7 @@ def render_admin_trade_disputes(user, query, notice=None, status="info"):
     </form>
     <section class="panel flush">
         <div class="table-wrap">
-            <table class="admin-table">
+            <table class="admin-table responsive-card-table admin-dispute-table">
                 <thead>
                     <tr>
                         <th>Issue</th>
@@ -1812,6 +1864,8 @@ def render_admin_user_row(admin_user, managed_user):
         status_parts.append('<span class="status accepted">2FA on</span>')
     elif row_value(managed_user, "totp_secret", ""):
         status_parts.append('<span class="status pending">2FA setup</span>')
+    if int(row_value(managed_user, "pending_recovery_count", 0) or 0):
+        status_parts.append('<span class="status pending">Recovery requested</span>')
     trust_state, trust_label, trust_detail = trusted_status_details(managed_user)
     trust_class = "accepted" if trust_state in ("trusted", "earned") else "declined" if trust_state == "revoked" else "pending"
     status_parts.append(f'<span class="status {trust_class}">{e(trust_label)}</span>')
@@ -1869,12 +1923,11 @@ def render_admin_user_row(admin_user, managed_user):
     if can_manage_user:
         security_controls = f"""
         <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/password">
-            <input name="new_password" type="password" minlength="8" placeholder="New password">
-            <input name="confirm_password" type="password" minlength="8" placeholder="Confirm">
-            <button class="button secondary small" type="submit">Reset password</button>
+            <input required name="current_password" type="password" autocomplete="current-password" placeholder="Your admin password">
+            <button class="button secondary small" type="submit" data-confirm="Issue a one-time password recovery link and sign this user out?">Issue reset link</button>
         </form>
         <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/2fa">
-            <button class="button secondary small" type="submit" onclick="return confirm('Reset two-factor authentication for this user? They will need to set it up again.')">Reset 2FA</button>
+            <button class="button secondary small" type="submit" data-confirm="Reset two-factor authentication for this user? They will need to set it up again.">Reset 2FA</button>
         </form>
         """
     controls = moderation_controls + security_controls + role_form
@@ -1882,25 +1935,25 @@ def render_admin_user_row(admin_user, managed_user):
         controls = '<span class="muted compact">No actions available for this role.</span>'
     return f"""
     <tr>
-        <td>
+        <td data-label="User">
             <strong>{e(managed_user["display_name"])}</strong>
             <span class="subtle">@{e(managed_user["username"])}</span>
             <span class="subtle">{e(managed_user["email"] or "No email")}</span>
             {self_note}
         </td>
-        <td>
+        <td data-label="Status">
             <div class="status-stack">{''.join(status_parts)}</div>
             {f'<span class="subtle">{e(ban_reason)}</span>' if ban_reason else ""}
             <span class="subtle">{e(trust_detail)}</span>
         </td>
-        <td>
+        <td data-label="Activity">
             <span class="subtle">{e(managed_user["collection_count"])} collection entries</span>
             <span class="subtle">{e(managed_user["want_count"])} wants</span>
             <span class="subtle">{e(managed_user["trade_count"])} trades</span>
             <span class="subtle">{e(managed_user["completed_trade_count"])} completed trades</span>
             <span class="subtle">Joined {e(managed_user["created_at"][:10])}</span>
         </td>
-        <td>
+        <td data-label="Controls">
             <div class="admin-controls">
                 {controls}
             </div>

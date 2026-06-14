@@ -620,17 +620,81 @@ def start_notification_worker():
         _notification_worker_started = True
 
 
-def notification_rows(user_id, limit=80):
+NOTIFICATION_LIST_CATEGORY_KINDS = {
+    "trade": (
+        "trade_offer",
+        "trade_counter",
+        "trade_comment",
+        "trade_dispute",
+        "trade_feedback",
+        "trade_status",
+        "trade_reminder",
+    ),
+    "price": ("price_alert", "price_refresh"),
+    "watchlist": ("watchlist_alert",),
+    "import": ("scryfall_import",),
+    "admin": ("backup_status", "admin_notice"),
+}
+
+
+def notification_filter_values(query):
+    query = query or {}
+    filters = {
+        "q": str(query.get("q", [""])[0] or "").strip(),
+        "category": str(query.get("category", [""])[0] or "").strip().lower(),
+        "state": str(query.get("state", [""])[0] or "").strip().lower(),
+    }
+    if filters["category"] not in ("", *NOTIFICATION_LIST_CATEGORY_KINDS.keys()):
+        filters["category"] = ""
+    if filters["state"] not in ("", "unread", "read"):
+        filters["state"] = ""
+    return filters
+
+
+def notification_list_where(user_id, filters):
+    where = ["user_id = ?"]
+    params = [user_id]
+    if filters.get("q"):
+        term = f"%{filters['q']}%"
+        where.append("(title LIKE ? OR body LIKE ?)")
+        params.extend([term, term])
+    if filters.get("state") == "unread":
+        where.append("is_read = 0")
+    elif filters.get("state") == "read":
+        where.append("is_read = 1")
+    kinds = NOTIFICATION_LIST_CATEGORY_KINDS.get(filters.get("category", ""), ())
+    if kinds:
+        placeholders = ", ".join("?" for _ in kinds)
+        where.append(f"kind IN ({placeholders})")
+        params.extend(kinds)
+    return where, params
+
+
+def notification_count(user_id, filters=None):
+    where, params = notification_list_where(user_id, filters or {})
+    return row(
+        f"SELECT COUNT(*) AS count FROM user_notifications WHERE {' AND '.join(where)}",
+        params,
+    )["count"]
+
+
+def notification_page_rows(user_id, filters, limit, offset):
+    where, params = notification_list_where(user_id, filters)
     return rows(
-        """
+        f"""
         SELECT *
         FROM user_notifications
-        WHERE user_id = ?
+        WHERE {' AND '.join(where)}
         ORDER BY is_read ASC, created_at DESC, id DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """,
-        (user_id, int(limit)),
+        [*params, int(limit), int(offset)],
     )
+
+
+def notification_rows(user_id, limit=80):
+    return notification_page_rows(user_id, {}, limit, 0)
+
 
 def mark_notification_read(user_id, notification_id):
     execute(
@@ -763,6 +827,11 @@ __all__ = [
     'notification_worker_loop',
     'start_notification_worker',
     'notification_rows',
+    'NOTIFICATION_LIST_CATEGORY_KINDS',
+    'notification_filter_values',
+    'notification_list_where',
+    'notification_count',
+    'notification_page_rows',
     'mark_notification_read',
     'mark_all_notifications_read',
     'delete_notification',

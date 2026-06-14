@@ -81,8 +81,55 @@ def group_summary_rows(user_id):
     )
 
 
-def collection_group_items(group_id, order_clause=None):
+def _group_item_filter_sql(filters, table_alias, wishlist=False):
+    filters = filters or {}
+    where = []
+    params = []
+    if filters.get("q"):
+        where.append(f"({table_alias}.card_name LIKE ? OR {table_alias}.type_line LIKE ? OR {table_alias}.set_name LIKE ?)")
+        term = f"%{filters['q']}%"
+        params.extend([term, term, term])
+    if filters.get("game"):
+        where.append(f"{table_alias}.game = ?")
+        params.append(filters["game"])
+    if filters.get("condition"):
+        where.append(f"{table_alias}.condition = ?")
+        params.append(filters["condition"])
+    if filters.get("finish"):
+        where.append(f"{table_alias}.finish = ?")
+        params.append(filters["finish"])
+    if wishlist and filters.get("priority"):
+        where.append(f"{table_alias}.priority = ?")
+        params.append(filters["priority"])
+    return (" AND " + " AND ".join(where) if where else ""), params
+
+
+def collection_group_item_count(group_id, filters=None):
+    filter_sql, params = _group_item_filter_sql(filters, "collection_items")
+    return row(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM group_collection_items
+        JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+        WHERE group_collection_items.group_id = ?{filter_sql}
+        """,
+        [group_id, *params],
+    )["count"]
+
+
+def collection_group_quantity(group_id):
+    return row(
+        "SELECT COALESCE(SUM(quantity), 0) AS quantity FROM group_collection_items WHERE group_id = ?",
+        (group_id,),
+    )["quantity"]
+
+
+def collection_group_items(group_id, order_clause=None, filters=None, limit=None, offset=0):
     order_clause = order_clause or "collection_items.card_name COLLATE NOCASE, collection_items.set_name COLLATE NOCASE"
+    filter_sql, params = _group_item_filter_sql(filters, "collection_items")
+    limit_sql = " LIMIT ? OFFSET ?" if limit is not None else ""
+    if limit is not None:
+        params.extend([int(limit), int(offset)])
     return rows(
         f"""
         SELECT
@@ -91,15 +138,33 @@ def collection_group_items(group_id, order_clause=None):
             collection_items.*
         FROM group_collection_items
         JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
-        WHERE group_collection_items.group_id = ?
+        WHERE group_collection_items.group_id = ?{filter_sql}
         ORDER BY {order_clause}
+        {limit_sql}
         """,
-        (group_id,),
+        [group_id, *params],
     )
 
 
-def wishlist_group_items(group_id, order_clause=None):
+def wishlist_group_item_count(group_id, filters=None):
+    filter_sql, params = _group_item_filter_sql(filters, "want_items", wishlist=True)
+    return row(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM group_want_items
+        JOIN want_items ON want_items.id = group_want_items.want_item_id
+        WHERE group_want_items.group_id = ?{filter_sql}
+        """,
+        [group_id, *params],
+    )["count"]
+
+
+def wishlist_group_items(group_id, order_clause=None, filters=None, limit=None, offset=0):
     order_clause = order_clause or "want_items.card_name COLLATE NOCASE, want_items.set_name COLLATE NOCASE"
+    filter_sql, params = _group_item_filter_sql(filters, "want_items", wishlist=True)
+    limit_sql = " LIMIT ? OFFSET ?" if limit is not None else ""
+    if limit is not None:
+        params.extend([int(limit), int(offset)])
     return rows(
         f"""
         SELECT
@@ -107,10 +172,11 @@ def wishlist_group_items(group_id, order_clause=None):
             want_items.*
         FROM group_want_items
         JOIN want_items ON want_items.id = group_want_items.want_item_id
-        WHERE group_want_items.group_id = ?
+        WHERE group_want_items.group_id = ?{filter_sql}
         ORDER BY {order_clause}
+        {limit_sql}
         """,
-        (group_id,),
+        [group_id, *params],
     )
 
 
@@ -173,6 +239,30 @@ def delete_card_group(user_id, group_id):
         return cursor.rowcount
 
 
+def remove_group_items(user_id, group_id, group_item_ids):
+    group = user_group(user_id, group_id)
+    if not group:
+        return 0
+    clean_ids = []
+    for value in group_item_ids or []:
+        try:
+            item_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if item_id > 0 and item_id not in clean_ids:
+            clean_ids.append(item_id)
+    if not clean_ids:
+        return 0
+    table = "group_want_items" if group["group_type"] == "wishlist" else "group_collection_items"
+    placeholders = ", ".join("?" for _ in clean_ids)
+    with db() as conn:
+        cursor = conn.execute(
+            f"DELETE FROM {table} WHERE group_id = ? AND id IN ({placeholders})",
+            [group_id, *clean_ids],
+        )
+        return cursor.rowcount
+
+
 def update_card_group_visibility(user_id, group_id, visibility):
     if isinstance(visibility, bool):
         visibility = VISIBILITY_MEMBERS if visibility else VISIBILITY_PRIVATE
@@ -215,11 +305,15 @@ __all__ = [
     "create_card_group",
     "user_group",
     "group_summary_rows",
+    "collection_group_item_count",
+    "collection_group_quantity",
     "collection_group_items",
+    "wishlist_group_item_count",
     "wishlist_group_items",
     "add_collection_item_to_group",
     "add_want_item_to_group",
     "remove_group_item",
+    "remove_group_items",
     "delete_card_group",
     "update_card_group_visibility",
     "update_card_group_sharing_defaults",

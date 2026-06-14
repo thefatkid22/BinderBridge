@@ -48,6 +48,8 @@ CSRF_FORM_RE = re.compile(r"(<form\b(?=[^>]*\bmethod\s*=\s*['\"]?post['\"]?)[^>]
 RATE_LIMITS = {
     "login": (10, 15 * 60),
     "register": (5, 60 * 60),
+    "password_recovery": (5, 60 * 60),
+    "password_reset": (10, 15 * 60),
     "api_auth_failed": (30, 5 * 60),
     "api_write": (120, 60),
     "scryfall_lookup": (30, 5 * 60),
@@ -448,6 +450,10 @@ class App(BaseHTTPRequestHandler):
                 return self.login_passkey_complete(method, user)
             if path == "/register":
                 return self.register(method, user, query)
+            if path == "/password/forgot":
+                return self.password_recovery(method, user)
+            if path == "/password/reset":
+                return self.password_reset(method, user, query)
             if path.startswith("/share/") and method == "GET":
                 return self.shared_group_page(path)
             if path == "/logout" and method == "POST":
@@ -638,7 +644,7 @@ class App(BaseHTTPRequestHandler):
             if path.startswith("/members/"):
                 return self.member_detail(user, path, query)
             if path == "/notifications":
-                return self.html(render_notifications(user))
+                return self.html(render_notifications(user, query=query))
             if path == "/notifications/read-all" and method == "POST":
                 mark_all_notifications_read(user["id"])
                 return self.redirect("/notifications")
@@ -653,7 +659,7 @@ class App(BaseHTTPRequestHandler):
             if path.startswith("/notifications/") and path.endswith("/delete") and method == "POST":
                 return self.notification_action(user, path)
             if path == "/trades":
-                return self.html(render_trades(user))
+                return self.html(render_trades(user, query=query))
             if path == "/trades/matches":
                 return self.html(render_trade_matchmaking(user, query))
             if path == "/trades/new":

@@ -227,7 +227,7 @@ def render_duplicate_cleanup_panel(title, groups, action, empty_text, quantity_k
         <form class="duplicate-cleanup-form" method="post" action="{e(action)}">
             <div class="duplicate-grid">{group_cards}</div>
             <div class="form-actions">
-                <button class="button primary" type="submit" onclick="return confirm('Merge the selected duplicate groups?')">Merge selected</button>
+                    <button class="button primary" type="submit" data-confirm="Merge the selected duplicate groups?">Merge selected</button>
             </div>
         </form>
         """
@@ -305,18 +305,18 @@ def render_condition_finish_audit_row(item):
         finish_cell += f'<span class="audit-suggestion">Available finishes: {e(item["scryfall_finish_labels"])}</span>'
     return f"""
     <tr>
-        <td class="select-col"><input type="checkbox" name="item_id" value="{e(item["id"])}"></td>
-        <td>
+        <td class="select-col" data-label=""><input type="checkbox" name="item_id" value="{e(item["id"])}" aria-label="Select {e(item['card_name'])}"></td>
+        <td data-label="Card">
             <strong>{e(item["card_name"])}</strong>
             <span class="subtle">{e(row_value(item, "type_line", "") or row_value(item, "game", ""))}</span>
         </td>
-        <td>{e(set_text)}</td>
-        <td>{render_audit_value(item["condition"], item["suggested_condition"], item["normalize_condition"], "Missing condition")}</td>
-        <td>{finish_cell}</td>
-        <td><span class="pill">{e(item["quantity"])}</span></td>
-        <td><span class="pill">{e(item["quantity_for_trade"])}</span></td>
-        <td><div class="audit-badge-list">{render_audit_issue_badges(item)}</div></td>
-        <td class="actions-cell"><a class="button ghost small" href="/collection/{item["id"]}/edit">Edit</a></td>
+        <td data-label="Set">{e(set_text)}</td>
+        <td data-label="Condition">{render_audit_value(item["condition"], item["suggested_condition"], item["normalize_condition"], "Missing condition")}</td>
+        <td data-label="Finish">{finish_cell}</td>
+        <td data-label="Qty"><span class="pill">{e(item["quantity"])}</span></td>
+        <td data-label="Trade"><span class="pill">{e(item["quantity_for_trade"])}</span></td>
+        <td data-label="Issue"><div class="audit-badge-list">{render_audit_issue_badges(item)}</div></td>
+        <td class="actions-cell table-actions" data-label="Actions"><a class="button ghost small" href="/collection/{item["id"]}/edit">Edit</a></td>
     </tr>
     """
 
@@ -366,15 +366,15 @@ def render_condition_finish_audit(user, query, notice=None, status="info"):
                     </select>
                 </label>
                 <button class="button secondary small" type="submit">Apply selected</button>
-                <button class="button secondary small" type="submit" formaction="/cleanup/audit/update-all" onclick="return confirm('Update all {total_count} cards matching this audit view?')">Apply all matching</button>
+                <button class="button secondary small" type="submit" formaction="/cleanup/audit/update-all" data-confirm="Update all {total_count} cards matching this audit view?">Apply all matching</button>
             </div>
             <div class="actions">
                 <button class="button secondary small" type="submit" formaction="/cleanup/audit/normalize">Normalize selected</button>
-                <button class="button secondary small" type="submit" formaction="/cleanup/audit/normalize-all" onclick="return confirm('Normalize all recognized labels matching this audit view?')">Normalize all matching</button>
+                <button class="button secondary small" type="submit" formaction="/cleanup/audit/normalize-all" data-confirm="Normalize all recognized labels matching this audit view?">Normalize all matching</button>
             </div>
         </div>
         <div class="table-wrap">
-            <table>
+            <table class="responsive-card-table audit-table">
                 <thead>
                     <tr>
                         <th class="select-col">
@@ -522,30 +522,38 @@ def render_collection(user, query, notice=None, status="info"):
     <form method="post" action="/collection/bulk-update">
         <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
         <div class="bulk-action-bar">
-            <div>
-                <span class="muted compact">Select rows to update or remove them from your collection.</span>
-                <span class="subtle">Blank quantity fields keep the current value. Trade quantity is capped at owned quantity.</span>
+            <div class="bulk-action-intro">
+                <strong>Bulk edit collection</strong>
+                <span class="muted compact">Select rows below, then update quantities or sharing. Blank fields keep their current value.</span>
             </div>
-            <div class="bulk-update-controls">
-                <label>Qty owned
-                    <input type="number" min="0" name="quantity" placeholder="No change">
-                </label>
-                <label>Trade qty
-                    <input type="number" min="0" name="quantity_for_trade" placeholder="No change">
-                </label>
-                <label>Visibility
-                    <select name="visibility">
-                        <option value="">No change</option>
-                        {''.join(f'<option value="{e(value)}">{e(label)}</option>' for value, label in VISIBILITY_OPTIONS)}
-                    </select>
-                </label>
-                <button class="button secondary small" type="submit" formaction="/collection/bulk-update">Update selected</button>
-                <button class="button secondary small" type="submit" formaction="/collection/update-all" onclick="return confirm('Update all {total_count} cards matching the current filters?')">Update all</button>
+            <div class="bulk-update-workflow">
+                <div class="bulk-update-controls">
+                    <label>Qty owned
+                        <input type="number" min="0" name="quantity" placeholder="No change">
+                    </label>
+                    <label>Trade qty
+                        <input type="number" min="0" name="quantity_for_trade" placeholder="No change">
+                    </label>
+                    <label>Visibility
+                        <select name="visibility">
+                            <option value="">No change</option>
+                            {''.join(f'<option value="{e(value)}">{e(label)}</option>' for value, label in VISIBILITY_OPTIONS)}
+                        </select>
+                    </label>
+                </div>
+                <div class="actions bulk-update-actions">
+                    <button class="button secondary small" type="submit" formaction="/collection/bulk-update">Update selected</button>
+                    <button class="button secondary small" type="submit" formaction="/collection/update-all" data-confirm="Update all {total_count} cards matching the current filters?">Update all matching</button>
+                </div>
             </div>
-            <div class="actions">
-                <button class="button danger small" type="submit" formaction="/collection/bulk-delete" onclick="return confirm('Delete selected cards from your collection?')">Delete selected</button>
-                <button class="button danger small" type="submit" formaction="/collection/delete-all" onclick="return confirm('Delete all {total_count} cards matching the current filters? This cannot be undone.')">Delete all</button>
-            </div>
+            <details class="bulk-danger-zone">
+                <summary>Remove cards</summary>
+                <p class="muted compact">Deletion permanently removes collection records. Groups using these cards may also be affected.</p>
+                <div class="actions">
+                    <button class="button danger small" type="submit" formaction="/collection/bulk-delete" data-confirm="Delete selected cards from your collection?">Delete selected</button>
+                    <button class="button danger small" type="submit" formaction="/collection/delete-all" data-confirm="Delete all {total_count} cards matching the current filters? This cannot be undone.">Delete all matching</button>
+                </div>
+            </details>
         </div>
         {hidden_filters}
         <div class="table-wrap">
@@ -1320,18 +1328,18 @@ def render_price_history_panel(user_id, item_id):
         rows_html = "".join(
             f"""
             <tr>
-                <td>{e(entry["observed_at"][:16].replace("T", " "))}</td>
-                <td>${e(entry["price_usd"])}</td>
-                <td>{e("$" + entry["previous_price_usd"] if entry["previous_price_usd"] else "-")}</td>
-                <td>{e(signed_price_text(entry["change_amount"]) if entry["change_amount"] else "-")}</td>
-                <td>{e((entry["change_percent"] + "%") if entry["change_percent"] else "-")}</td>
+                <td data-label="Observed">{e(entry["observed_at"][:16].replace("T", " "))}</td>
+                <td data-label="Price">${e(entry["price_usd"])}</td>
+                <td data-label="Previous">{e("$" + entry["previous_price_usd"] if entry["previous_price_usd"] else "-")}</td>
+                <td data-label="Change">{e(signed_price_text(entry["change_amount"]) if entry["change_amount"] else "-")}</td>
+                <td data-label="Percent">{e((entry["change_percent"] + "%") if entry["change_percent"] else "-")}</td>
             </tr>
             """
             for entry in history
         )
         history_body = f"""
         <div class="table-wrap compact-table-wrap">
-            <table class="price-history-table">
+            <table class="responsive-card-table price-history-table">
                 <thead>
                     <tr><th>Observed</th><th>Price</th><th>Previous</th><th>Change</th><th>%</th></tr>
                 </thead>
@@ -1418,7 +1426,7 @@ def render_collection_share_link_row(item, link):
     if not revoked:
         revoke_form = f"""
         <form method="post" action="/collection/{item["id"]}/share-links/{link["id"]}/revoke">
-            <button class="button danger small" type="submit" onclick="return confirm('Revoke this private card link?')">Revoke</button>
+                <button class="button danger small" type="submit" data-confirm="Revoke this private card link?">Revoke</button>
         </form>
         """
     expires = row_value(link, "expires_at", "")
@@ -1698,7 +1706,7 @@ def render_csv_import_mapping_preset_row(user, preset):
     if can_delete:
         delete_form = f"""
         <form method="post" action="/import/presets/{preset["id"]}/delete">
-            <button class="button danger small" type="submit" onclick="return confirm('Delete this mapping preset?')">Delete</button>
+                <button class="button danger small" type="submit" data-confirm="Delete this mapping preset?">Delete</button>
         </form>
         """
     return f"""
@@ -1775,7 +1783,7 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
             undo_button = f"""
             <form method="post" action="/imports/{result["batch_id"]}/undo">
                 <input type="hidden" name="redirect_to" value="/import">
-                <button class="button danger small" type="submit" onclick="return confirm('Undo this import batch? Imported collection changes from the batch will be reverted.')">Undo import</button>
+                    <button class="button danger small" type="submit" data-confirm="Undo this import batch? Imported collection changes from the batch will be reverted.">Undo import</button>
             </form>
             """
         result_html = f"""
@@ -1853,7 +1861,7 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
             </div>
             <div class="form-actions span-2">
                 <button class="button primary" name="intent" value="preview" type="submit">Preview CSV</button>
-                <button class="button secondary" name="intent" value="import_now" type="submit" onclick="return confirm('Import without preview?')">Import now</button>
+                <button class="button secondary" name="intent" value="import_now" type="submit" data-confirm="Import without preview?">Import now</button>
             </div>
         </form>
         <article class="panel import-notes">
