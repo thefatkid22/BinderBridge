@@ -6,6 +6,35 @@ The project uses semantic versioning while releases are published. During the al
 
 ## [Unreleased]
 
+## [0.2.0-alpha.1] - 2026-06-15
+
+### Added
+
+- Secure password recovery with SMTP delivery when configured and administrator-issued manual recovery links otherwise
+- Searchable, filterable, sortable, paginated group contents with current-page selection and bulk group-link removal
+- Shared accessible confirmation dialogs and compact keyboard-accessible mobile navigation
+- UI inventory documenting page-level strengths, remaining polish opportunities, and accessibility priorities
+- Release smoke coverage for a complete multi-user trade lifecycle plus SQLite quick and foreign-key integrity checks
+
+### Changed
+
+- Reorganized Account into Profile, Notifications, Security, Integrations, and Data work areas
+- Reorganized Admin into focused overview, policy, access, operations, and user-management work areas
+- Refined the dashboard, collection, wishlist, trades, public profiles, notifications, and group pages for clearer responsive layouts
+- Improved mobile list and card presentation across high-traffic and administrative workflows
+- Strengthened administrator-assisted password recovery while preserving self-hosted operation without SMTP
+
+### Validation
+
+- Full automated suite: 207 tests
+- Fresh installation and schema-version verification
+- Schema upgrade from version 7 to version 9 with data preservation
+- Published `v0.1.0-alpha.1` schema 8 database upgrade to schema 9 with data preservation
+- Backup creation, restore, and post-restore SQLite integrity verification
+- Complete two-user trade offer, acceptance, completion, ownership-transfer, and notification workflow
+- Confirmed 5,000-row CSV collection import
+- Docker image build and startup smoke test through GitHub Actions
+
 ## [0.1.0-alpha.1] - 2026-06-12
 
 ### Added
@@ -34,5 +63,6 @@ The project uses semantic versioning while releases are published. During the al
 - Broader non-MTG metadata and pricing support is not yet implemented
 - Confirmed large collection imports can take several minutes while the applied rows are written
 
-[Unreleased]: https://github.com/thefatkid22/BinderBridge/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.1...HEAD
+[0.2.0-alpha.1]: https://github.com/thefatkid22/BinderBridge/compare/v0.1.0-alpha.1...v0.2.0-alpha.1
 [0.1.0-alpha.1]: https://github.com/thefatkid22/BinderBridge/releases/tag/v0.1.0-alpha.1
