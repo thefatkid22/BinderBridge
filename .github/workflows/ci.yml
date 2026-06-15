@@ -19,6 +19,8 @@ jobs:
         python-version: ["3.10", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -30,6 +32,9 @@ jobs:
         env:
           BINDERBRIDGE_RELEASE_IMPORT_ROWS: "1000"
         run: python scripts/release_smoke.py
+      - name: Published release upgrade smoke check
+        if: matrix.python-version == '3.12'
+        run: python scripts/release_upgrade_smoke.py v0.1.0-alpha.1
 
   docker:
     name: Docker startup smoke test

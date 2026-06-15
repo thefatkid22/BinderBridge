@@ -1,7 +1,7 @@
 """BinderBridge release metadata."""
 
 APP_NAME = "BinderBridge"
-APP_VERSION = "0.1.0-alpha.1"
+APP_VERSION = "0.2.0-alpha.1"
 RELEASE_TAG = f"v{APP_VERSION}"
 DEFAULT_SOURCE_URL = "https://github.com/thefatkid22/BinderBridge"
 DEFAULT_USER_AGENT = f"{APP_NAME}/{APP_VERSION} self-hosted collection manager"

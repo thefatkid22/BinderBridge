@@ -23,6 +23,15 @@ def use_data_directory(path):
     app.clear_rate_limits()
 
 
+def database_integrity_check():
+    with app.db() as conn:
+        quick_check = str(conn.execute("PRAGMA quick_check").fetchone()[0] or "")
+        foreign_key_issues = conn.execute("PRAGMA foreign_key_check").fetchall()
+    assert quick_check == "ok"
+    assert not foreign_key_issues
+    return {"quick_check": quick_check, "foreign_key_issues": len(foreign_key_issues)}
+
+
 def fresh_install_check():
     with tempfile.TemporaryDirectory() as temp_dir:
         use_data_directory(temp_dir)
@@ -32,7 +41,11 @@ def fresh_install_check():
         version = app.row("SELECT value FROM app_settings WHERE key = ?", (app.SCHEMA_VERSION_KEY,))
         assert user["role"] == app.ROLE_OWNER
         assert int(version["value"]) == app.CURRENT_SCHEMA_VERSION
-        return {"schema_version": int(version["value"]), "first_user_role": user["role"]}
+        return {
+            "schema_version": int(version["value"]),
+            "first_user_role": user["role"],
+            "database": database_integrity_check(),
+        }
 
 
 def upgrade_check():
@@ -60,7 +73,12 @@ def upgrade_check():
         assert sentinel["card_name"] == "Upgrade Sentinel"
         assert int(version["value"]) == app.CURRENT_SCHEMA_VERSION
         assert len(history) == app.CURRENT_SCHEMA_VERSION
-        return {"from_version": 7, "to_version": int(version["value"]), "preserved_rows": 1}
+        return {
+            "from_version": 7,
+            "to_version": int(version["value"]),
+            "preserved_rows": 1,
+            "database": database_integrity_check(),
+        }
 
 
 def backup_restore_check():
@@ -82,7 +100,86 @@ def backup_restore_check():
         restored = app.row("SELECT card_name FROM collection_items WHERE user_id = ?", (user_id,))
         assert restored["card_name"] == "Backup Sentinel"
         assert result["pre_restore_backup_name"]
-        return {"archive": archive.name, "restored_card": restored["card_name"]}
+        return {
+            "archive": archive.name,
+            "restored_card": restored["card_name"],
+            "database": database_integrity_check(),
+        }
+
+
+def core_trade_workflow_check():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        use_data_directory(temp_dir)
+        app.init_db()
+        alice_id = app.create_user("tradealice", "password123", "Trade Alice")
+        bob_id = app.create_user("tradebob", "password123", "Trade Bob")
+        timestamp = app.now_iso()
+        alice_card_id = app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, set_name, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Release Offer', 'Release Set', 1, 1, ?, ?)
+            """,
+            (alice_id, timestamp, timestamp),
+        )
+        bob_card_id = app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, set_name, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Release Request', 'Release Set', 1, 1, ?, ?)
+            """,
+            (bob_id, timestamp, timestamp),
+        )
+        app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, set_name, desired_quantity, is_public, created_at, updated_at)
+            VALUES (?, 'mtg', 'Release Request', 'Release Set', 1, 1, ?, ?)
+            """,
+            (alice_id, timestamp, timestamp),
+        )
+        app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, set_name, desired_quantity, is_public, created_at, updated_at)
+            VALUES (?, 'mtg', 'Release Offer', 'Release Set', 1, 1, ?, ?)
+            """,
+            (bob_id, timestamp, timestamp),
+        )
+        alice_card = app.row("SELECT * FROM collection_items WHERE id = ?", (alice_card_id,))
+        bob_card = app.row("SELECT * FROM collection_items WHERE id = ?", (bob_card_id,))
+        trade_id = app.create_trade_offer(
+            alice_id,
+            bob_id,
+            "Release smoke trade",
+            [(alice_card, 1)],
+            [(bob_card, 1)],
+        )
+        app.update_trade_response(trade_id, bob_id, "accepted", "Accepted during release smoke check.")
+        app.complete_trade(trade_id, bob_id)
+
+        trade = app.row("SELECT status FROM trades WHERE id = ?", (trade_id,))
+        alice_received = app.row(
+            "SELECT quantity FROM collection_items WHERE user_id = ? AND card_name = 'Release Request'",
+            (alice_id,),
+        )
+        bob_received = app.row(
+            "SELECT quantity FROM collection_items WHERE user_id = ? AND card_name = 'Release Offer'",
+            (bob_id,),
+        )
+        notifications = app.row(
+            "SELECT COUNT(*) AS count FROM user_notifications WHERE related_trade_id = ?",
+            (trade_id,),
+        )
+        assert trade["status"] == "completed"
+        assert alice_received["quantity"] == 1
+        assert bob_received["quantity"] == 1
+        assert notifications["count"] >= 3
+        return {
+            "trade_status": trade["status"],
+            "notifications": notifications["count"],
+            "database": database_integrity_check(),
+        }
 
 
 def large_import_check(row_count):
@@ -111,6 +208,7 @@ def main():
         "fresh_install": fresh_install_check(),
         "upgrade": upgrade_check(),
         "backup_restore": backup_restore_check(),
+        "core_trade_workflow": core_trade_workflow_check(),
         "large_import": large_import_check(row_count),
     }
     print(json.dumps(results, indent=2, sort_keys=True))
