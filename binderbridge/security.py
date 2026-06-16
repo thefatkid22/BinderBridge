@@ -478,12 +478,14 @@ def two_factor_challenge(token):
         conn.execute("DELETE FROM two_factor_challenges WHERE expires_at < ?", (now_ts,))
         return conn.execute(
             """
-            SELECT two_factor_challenges.*, users.username, users.display_name, users.is_banned, users.totp_enabled, users.totp_secret
+            SELECT two_factor_challenges.*, users.username, users.display_name, users.is_banned,
+                users.registration_status, users.totp_enabled, users.totp_secret
             FROM two_factor_challenges
             JOIN users ON users.id = two_factor_challenges.user_id
             WHERE two_factor_challenges.token = ?
                 AND two_factor_challenges.expires_at >= ?
                 AND users.is_banned = 0
+                AND users.registration_status = 'active'
             """,
             (clean_token, now_ts),
         ).fetchone()
@@ -640,7 +642,7 @@ def passkey_registration_options(user, rp_id, origin):
 
 def passkey_authentication_options(username, rp_id, origin):
     found = get_user_by_username(username)
-    if not found or row_value(found, "is_banned", 0):
+    if not found or row_value(found, "is_banned", 0) or row_value(found, "registration_status", "active") != "active":
         raise ValueError("No passkeys are available for that username.")
     credentials = passkey_existing_credentials(found["id"])
     if not credentials:
@@ -970,7 +972,10 @@ def complete_passkey_authentication(token, payload_json):
     credential = row("SELECT * FROM passkey_credentials WHERE credential_id = ?", (credential_id,))
     if not credential or int(credential["user_id"]) != int(challenge["user_id"] or 0):
         raise ValueError("That passkey is not registered for this sign-in.")
-    user = row("SELECT * FROM users WHERE id = ? AND is_banned = 0", (credential["user_id"],))
+    user = row(
+        "SELECT * FROM users WHERE id = ? AND is_banned = 0 AND registration_status = 'active'",
+        (credential["user_id"],),
+    )
     if not user:
         raise ValueError("That passkey is not available.")
     client_data_json = passkey_b64decode(passkey_payload_value(payload, "response", "clientDataJSON"))
@@ -1011,6 +1016,9 @@ def delete_passkey_credential(user_id, credential_id):
         return cursor.rowcount
 
 def create_session(user_id):
+    user = row("SELECT id FROM users WHERE id = ? AND is_banned = 0 AND registration_status = 'active'", (user_id,))
+    if not user:
+        raise ValueError("Only active accounts can start a session.")
     token = secrets.token_urlsafe(32)
     expires_at = int(datetime.now(timezone.utc).timestamp()) + SESSION_TTL_SECONDS
     with db() as conn:
@@ -1037,7 +1045,10 @@ def get_user_by_session(token):
             SELECT users.*
             FROM sessions
             JOIN users ON users.id = sessions.user_id
-            WHERE sessions.token = ? AND sessions.expires_at >= ? AND users.is_banned = 0
+            WHERE sessions.token = ?
+                AND sessions.expires_at >= ?
+                AND users.is_banned = 0
+                AND users.registration_status = 'active'
             """,
             (token, now_ts),
         ).fetchone()
@@ -1046,7 +1057,7 @@ def get_user_by_username(username):
     with db() as conn:
         return conn.execute("SELECT * FROM users WHERE username = ?", (sanitize_text_input(username, max_length=40).strip(),)).fetchone()
 
-def create_user(username, password, display_name, is_admin=None, email="", role=None):
+def create_user(username, password, display_name, is_admin=None, email="", role=None, registration_status="active"):
     username = validate_username(username)
     display_name = sanitize_text_input(display_name, max_length=80).strip() or username
     email = validate_email(email)
@@ -1058,12 +1069,16 @@ def create_user(username, password, display_name, is_admin=None, email="", role=
             role = ROLE_OWNER if is_admin else ROLE_MEMBER
         role = normalize_user_role(role, is_admin=is_admin)
         is_admin = bool(role_sync_is_admin(role))
+        registration_status = sanitize_text_input(registration_status, max_length=20).strip().lower()
+        if registration_status not in ("active", "pending", "denied"):
+            registration_status = "active"
         cursor = conn.execute(
             """
-            INSERT INTO users (username, password_hash, email, display_name, role, is_admin, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users
+                (username, password_hash, email, display_name, role, registration_status, is_admin, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (username, hash_password(password), email, display_name, role, 1 if is_admin else 0, created_at, created_at),
+            (username, hash_password(password), email, display_name, role, registration_status, 1 if is_admin else 0, created_at, created_at),
         )
         return cursor.lastrowid
 

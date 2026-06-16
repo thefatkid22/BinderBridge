@@ -1037,6 +1037,7 @@ def render_wants(
             </div>
         </details>
     </form>
+    {render_saved_search_controls(user["id"], "wants", query)}
     {active_filters}
     <section class="content-grid wants-grid">
         <div id="add-want">{add_form}</div>

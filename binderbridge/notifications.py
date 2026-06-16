@@ -481,6 +481,8 @@ def create_notification(user_id, kind, title, body="", url="", related_trade_id=
         queue_webhooks = globals().get("queue_notification_webhooks")
         if queue_webhooks:
             queue_webhooks(user_id, notification_id, clean_kind, params[2], params[3], params[4], related_trade_id, conn=conn)
+        if email_status == "pending":
+            start_notification_worker(conn=conn)
         return notification_id
     with db() as new_conn:
         cursor = new_conn.execute(
@@ -496,10 +498,7 @@ def create_notification(user_id, kind, title, body="", url="", related_trade_id=
         if queue_webhooks:
             queue_webhooks(user_id, notification_id, clean_kind, params[2], params[3], params[4], related_trade_id, conn=new_conn)
     if email_status == "pending":
-        send_pending_trade_notification_emails(user_id=user_id, limit=5)
-    send_webhooks = globals().get("send_pending_webhook_deliveries")
-    if send_webhooks:
-        send_webhooks(user_id=user_id, limit=5)
+        start_notification_worker()
     return notification_id
 
 def unread_notification_count(user_id):
@@ -589,8 +588,6 @@ def create_stale_trade_reminders(reference_time=None):
                     (now_iso(), trade["id"]),
                 )
                 created += 1
-    if created:
-        send_pending_trade_notification_emails(limit=max(20, created))
     return created
 
 
@@ -610,14 +607,20 @@ def notification_worker_loop():
         time.sleep(NOTIFICATION_WORKER_INTERVAL_SECONDS)
 
 
-def start_notification_worker():
-    global _notification_worker_started
-    with _notification_worker_lock:
-        if _notification_worker_started:
-            return
-        thread = threading.Thread(target=notification_worker_loop, name="binderbridge-notifications", daemon=True)
-        thread.start()
-        _notification_worker_started = True
+def start_notification_worker(conn=None):
+    enqueue = globals().get("enqueue_background_job")
+    if enqueue:
+        _job_id, created = enqueue(
+            "notification_delivery",
+            unique_key="system:notification-delivery",
+            max_attempts=10,
+            conn=conn,
+        )
+        expedite = globals().get("expedite_background_job")
+        if expedite:
+            expedite("system:notification-delivery", conn=conn)
+        return created
+    return False
 
 
 NOTIFICATION_LIST_CATEGORY_KINDS = {

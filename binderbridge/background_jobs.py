@@ -394,15 +394,19 @@ def price_refresh_worker_loop():
 
 
 def start_price_refresh_worker():
-    global _price_refresh_worker_started
-    with _price_refresh_worker_lock:
-        if _price_refresh_worker_started:
-            return False
+    enqueue = globals().get("enqueue_background_job")
+    if enqueue:
         execute("UPDATE price_refresh_jobs SET status = 'pending', updated_at = ? WHERE status = 'processing'", (now_iso(),))
-        thread = threading.Thread(target=price_refresh_worker_loop, name="price-refresh", daemon=True)
-        thread.start()
-        _price_refresh_worker_started = True
-        return True
+        _job_id, created = enqueue(
+            "legacy_price_refresh",
+            unique_key="system:legacy-price-refresh",
+            max_attempts=10,
+        )
+        expedite = globals().get("expedite_background_job")
+        if expedite:
+            expedite("system:legacy-price-refresh")
+        return created
+    return False
 
 
 def price_refresh_stats():

@@ -77,6 +77,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         maintenance_run_indexes = {item["name"] for item in app.rows("PRAGMA index_list(database_maintenance_runs)")}
         password_request_indexes = {item["name"] for item in app.rows("PRAGMA index_list(password_recovery_requests)")}
         password_token_indexes = {item["name"] for item in app.rows("PRAGMA index_list(password_reset_tokens)")}
+        rate_limit_indexes = {item["name"] for item in app.rows("PRAGMA index_list(rate_limit_events)")}
+        saved_search_indexes = {item["name"] for item in app.rows("PRAGMA index_list(saved_searches)")}
         user_indexes = {item["name"] for item in app.rows("PRAGMA index_list(users)")}
         dispute_columns = {item["name"] for item in app.rows("PRAGMA table_info(trade_disputes)")}
         evidence_indexes = {item["name"] for item in app.rows("PRAGMA index_list(trade_dispute_evidence)")}
@@ -106,6 +108,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn("idx_database_maintenance_runs_completed", maintenance_run_indexes)
         self.assertIn("idx_password_recovery_requests_status", password_request_indexes)
         self.assertIn("idx_password_reset_tokens_active", password_token_indexes)
+        self.assertIn("idx_rate_limit_events_bucket_key_time", rate_limit_indexes)
+        self.assertIn("idx_saved_searches_user_context", saved_search_indexes)
         self.assertIn("idx_users_role_status", user_indexes)
         self.assertIn("trg_collection_privacy_legacy_update", triggers)
         self.assertIn("trg_collection_privacy_visibility_update", triggers)
@@ -160,6 +164,15 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertTrue(app.rate_limit_allowed("unit-test", "same-key", limit=2, window_seconds=60))
         self.assertFalse(app.rate_limit_allowed("unit-test", "same-key", limit=2, window_seconds=60))
         self.assertTrue(app.rate_limit_allowed("unit-test", "other-key", limit=2, window_seconds=60))
+        self.assertEqual(
+            app.row(
+                "SELECT COUNT(*) AS count FROM rate_limit_events WHERE bucket = ? AND rate_key = ?",
+                ("unit-test", "same-key"),
+            )["count"],
+            2,
+        )
+        app.clear_rate_limits()
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM rate_limit_events")["count"], 0)
 
     def test_passkey_options_render_on_login_and_account_pages(self):
         user = factory.user_row("passkeyui", display_name="Passkey User")
@@ -652,6 +665,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn('/admin/jobs/scryfall/retry', html)
         self.assertIn('/admin/jobs/scryfall-prices/retry', html)
         self.assertIn('/admin/jobs/notifications/retry', html)
+        self.assertIn("Durable background runner", html)
+        self.assertIn("runner jobs needing attention", html)
         self.assertIn("Lookup failed", html)
         self.assertIn("SMTP refused", html)
         self.assertIn("Bulk cache unavailable", html)

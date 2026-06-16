@@ -6,6 +6,19 @@ The project uses semantic versioning while releases are published. During the al
 
 ## [Unreleased]
 
+### Added
+
+- Durable SQLite-backed background job runner with leases, retries, recurring schedules, progress, cancellation, admin controls, and an optional standalone worker process
+- Personal saved filter and sort presets for collection, browse, wishlist, and both sides of the trade builder
+- SQLite-backed API and integration rate limits for failed auth, health checks, authenticated reads, writes, Scryfall lookups, and token/webhook management
+- Registration moderation with optional approval queues, privacy-safe ban-evasion signals, pending-account review, and stronger ban cleanup for sessions, API tokens, webhooks, and unused invites
+
+### Changed
+
+- Routed Scryfall enrichment and refreshes, automatic backups, notification email delivery, webhooks, and legacy price work through the durable runner
+- Made normal notification and webhook request paths queue work instead of blocking on outbound delivery
+- Made rate limits configurable through the INI file or environment variables, with persistent storage enabled by default
+
 ## [0.2.0-alpha.1] - 2026-06-15
 
 ### Added

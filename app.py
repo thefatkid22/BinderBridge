@@ -12,9 +12,7 @@ import secrets
 import smtplib
 import sys
 import sqlite3
-import threading
 import types
-import time
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from email.message import EmailMessage
@@ -45,20 +43,6 @@ SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 PBKDF2_ITERATIONS = 310_000
 CSRF_FIELD_NAME = "_csrf_token"
 CSRF_FORM_RE = re.compile(r"(<form\b(?=[^>]*\bmethod\s*=\s*['\"]?post['\"]?)[^>]*>)", re.IGNORECASE)
-RATE_LIMITS = {
-    "login": (10, 15 * 60),
-    "register": (5, 60 * 60),
-    "password_recovery": (5, 60 * 60),
-    "password_reset": (10, 15 * 60),
-    "api_auth_failed": (30, 5 * 60),
-    "api_write": (120, 60),
-    "scryfall_lookup": (30, 5 * 60),
-    "integration_admin": (20, 5 * 60),
-}
-_rate_limit_lock = threading.Lock()
-_rate_limit_state = {}
-
-
 MAX_REQUEST_BODY_BYTES = max(64_000, config_int("BINDERBRIDGE_MAX_REQUEST_BODY_BYTES", "MAX_REQUEST_BODY_BYTES", default=15 * 1024 * 1024, section="limits", key="max_request_body_bytes"))
 MAX_UPLOAD_BYTES = max(64_000, config_int("BINDERBRIDGE_MAX_UPLOAD_BYTES", "MAX_UPLOAD_BYTES", default=10 * 1024 * 1024, section="limits", key="max_upload_bytes"))
 MAX_FORM_FIELDS = max(100, config_int("BINDERBRIDGE_MAX_FORM_FIELDS", "MAX_FORM_FIELDS", default=2000, section="limits", key="max_form_fields"))
@@ -113,10 +97,14 @@ from binderbridge import roles as _roles
 _install_feature_module(_roles)
 from binderbridge import ui_helpers as _ui_helpers
 _install_feature_module(_ui_helpers)
+from binderbridge import rate_limits as _rate_limits
+_install_feature_module(_rate_limits)
 from binderbridge import privacy as _privacy
 _install_feature_module(_privacy)
 from binderbridge import accounts as _accounts
 _install_feature_module(_accounts)
+from binderbridge import registration_moderation as _registration_moderation
+_install_feature_module(_registration_moderation)
 from binderbridge import groups as _groups
 _install_feature_module(_groups)
 from binderbridge import maintenance as _maintenance
@@ -168,28 +156,6 @@ def csrf_form_valid(form, session_token):
         provided = str(values[0] or "")
     expected = csrf_token_for_session(session_token)
     return bool(expected and provided and hmac.compare_digest(provided, expected))
-
-
-def rate_limit_allowed(bucket, key, limit=None, window_seconds=None):
-    if bucket in RATE_LIMITS and (limit is None or window_seconds is None):
-        limit, window_seconds = RATE_LIMITS[bucket]
-    limit = max(1, int(limit or 1))
-    window_seconds = max(1, int(window_seconds or 60))
-    now = time.monotonic()
-    state_key = (bucket, str(key or "anonymous"))
-    with _rate_limit_lock:
-        timestamps = [item for item in _rate_limit_state.get(state_key, []) if item > now - window_seconds]
-        if len(timestamps) >= limit:
-            _rate_limit_state[state_key] = timestamps
-            return False
-        timestamps.append(now)
-        _rate_limit_state[state_key] = timestamps
-        return True
-
-
-def clear_rate_limits():
-    with _rate_limit_lock:
-        _rate_limit_state.clear()
 
 
 def request_content_length(headers):
@@ -399,6 +365,11 @@ _install_feature_module(_collection_imports)
 from binderbridge import deck_import_service as _deck_import_service
 _install_feature_module(_deck_import_service)
 
+from binderbridge import job_runner as _job_runner
+_install_feature_module(_job_runner)
+from binderbridge import saved_searches as _saved_searches
+_install_feature_module(_saved_searches)
+
 
 from binderbridge import views as _views
 _install_feature_module(_views)
@@ -507,6 +478,10 @@ class App(BaseHTTPRequestHandler):
                 return self.account_webhook_delete(user, path)
             if path.startswith("/account/webhooks/") and path.endswith("/test") and method == "POST":
                 return self.account_webhook_test(user, path)
+            if path == "/saved-searches" and method == "POST":
+                return self.saved_search_create(user)
+            if path.startswith("/saved-searches/") and path.endswith("/delete") and method == "POST":
+                return self.saved_search_delete(user, path)
             if path == "/cleanup":
                 return self.cleanup_page(user)
             if path == "/cleanup/collection" and method == "POST":
@@ -563,6 +538,10 @@ class App(BaseHTTPRequestHandler):
                 return self.admin_job_retry_scryfall_prices(user)
             if path == "/admin/jobs/notifications/retry" and method == "POST":
                 return self.admin_job_retry_notification(user)
+            if path == "/admin/jobs/background/retry" and method == "POST":
+                return self.admin_job_retry_background(user)
+            if path == "/admin/jobs/background/cancel" and method == "POST":
+                return self.admin_job_cancel_background(user)
             if path.startswith("/admin/jobs/imports/") and path.endswith("/undo") and method == "POST":
                 return self.admin_job_undo_import(user, path)
             if path == "/admin/trade-policy" and method == "POST":
@@ -575,6 +554,8 @@ class App(BaseHTTPRequestHandler):
                 return self.admin_trade_fairness_settings(user)
             if path == "/admin/registration-settings" and method == "POST":
                 return self.admin_registration_settings(user)
+            if path.startswith("/admin/registration-review/") and method == "POST":
+                return self.admin_registration_review(user, path)
             if path == "/admin/invites" and method == "POST":
                 return self.admin_invite_create(user)
             if path.startswith("/admin/invites/") and path.endswith("/revoke") and method == "POST":
@@ -942,6 +923,10 @@ for _api_route_name in _api.API_ROUTE_METHODS:
 
 from binderbridge import trade_service as _trade_service
 _install_feature_module(_trade_service)
+from binderbridge import saved_search_routes as _saved_search_routes
+_install_feature_module(_saved_search_routes)
+for _saved_search_route_name in _saved_search_routes.SAVED_SEARCH_ROUTE_METHODS:
+    setattr(App, _saved_search_route_name, globals()[_saved_search_route_name])
 from binderbridge import trade_routes as _trade_routes
 _install_feature_module(_trade_routes)
 for _trade_route_name in _trade_routes.TRADE_ROUTE_METHODS:
@@ -993,11 +978,7 @@ def seed_demo_data():
 def main():
     init_db()
     seed_demo_data()
-    start_scryfall_enrichment_worker()
-    start_scryfall_price_refresh_worker()
-    start_automatic_backup_worker()
-    start_webhook_delivery_worker()
-    start_notification_worker()
+    start_background_job_runner()
     server = ThreadingHTTPServer((HOST, PORT), App)
     write_log_message(f"{APP_NAME} running at http://{HOST}:{PORT}", stream=sys.stdout)
     write_log_message(f"Database: {DB_PATH}", stream=sys.stdout)
@@ -1009,4 +990,3 @@ sys.modules[__name__].__class__ = _AppModule
 
 if __name__ == "__main__":
     main()
-

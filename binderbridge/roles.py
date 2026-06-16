@@ -119,6 +119,8 @@ def role_level(role_or_user):
 def user_has_capability(user, capability):
     if not user or record_value(user, "is_banned", 0):
         return False
+    if record_value(user, "registration_status", "active") != "active":
+        return False
     return capability in ROLE_CAPABILITIES.get(user_role(user), set())
 
 
@@ -181,7 +183,8 @@ def user_can_mutate_path(user, path):
         "/notifications/read-all",
         "/notifications/delete-read",
         "/notifications/delete-all",
-    ) or path.startswith("/account/passkeys/") or path.startswith("/notifications/")
+        "/saved-searches",
+    ) or path.startswith("/account/passkeys/") or path.startswith("/notifications/") or path.startswith("/saved-searches/")
 
 
 __all__ = [

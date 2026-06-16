@@ -82,6 +82,10 @@ def init_db():
                 public_email INTEGER NOT NULL DEFAULT 0,
                 collection_value_visibility TEXT NOT NULL DEFAULT 'members',
                 role TEXT NOT NULL DEFAULT 'member',
+                registration_status TEXT NOT NULL DEFAULT 'active',
+                registration_review_note TEXT NOT NULL DEFAULT '',
+                registration_reviewed_by_user_id INTEGER NOT NULL DEFAULT 0,
+                registration_reviewed_at TEXT NOT NULL DEFAULT '',
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 is_banned INTEGER NOT NULL DEFAULT 0,
                 trusted_override INTEGER NOT NULL DEFAULT 0,
@@ -635,6 +639,38 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_registration_invites_status
                 ON registration_invites(status, expires_at);
 
+            CREATE TABLE IF NOT EXISTS registration_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                invite_id INTEGER REFERENCES registration_invites(id) ON DELETE SET NULL,
+                inviter_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                username TEXT NOT NULL DEFAULT '',
+                display_name TEXT NOT NULL DEFAULT '',
+                email_domain TEXT NOT NULL DEFAULT '',
+                email_hash TEXT NOT NULL DEFAULT '',
+                ip_hash TEXT NOT NULL DEFAULT '',
+                subnet_hash TEXT NOT NULL DEFAULT '',
+                user_agent_hash TEXT NOT NULL DEFAULT '',
+                risk_score INTEGER NOT NULL DEFAULT 0,
+                risk_reasons_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'active',
+                decision_note TEXT NOT NULL DEFAULT '',
+                reviewed_by_user_id INTEGER NOT NULL DEFAULT 0,
+                reviewed_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_registration_attempts_status
+                ON registration_attempts(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_registration_attempts_user
+                ON registration_attempts(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_registration_attempts_email_hash
+                ON registration_attempts(email_hash, status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_registration_attempts_ip_hash
+                ON registration_attempts(ip_hash, status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_registration_attempts_subnet_hash
+                ON registration_attempts(subnet_hash, status, created_at);
+
             CREATE TABLE IF NOT EXISTS scryfall_bulk_cards (
                 scryfall_id TEXT PRIMARY KEY,
                 card_name TEXT NOT NULL,
@@ -726,6 +762,10 @@ def migrate_db(conn):
         "public_email": "INTEGER NOT NULL DEFAULT 0",
         "collection_value_visibility": "TEXT NOT NULL DEFAULT 'members'",
         "role": "TEXT NOT NULL DEFAULT 'member'",
+        "registration_status": "TEXT NOT NULL DEFAULT 'active'",
+        "registration_review_note": "TEXT NOT NULL DEFAULT ''",
+        "registration_reviewed_by_user_id": "INTEGER NOT NULL DEFAULT 0",
+        "registration_reviewed_at": "TEXT NOT NULL DEFAULT ''",
         "is_admin": "INTEGER NOT NULL DEFAULT 0",
         "is_banned": "INTEGER NOT NULL DEFAULT 0",
         "trusted_override": "INTEGER NOT NULL DEFAULT 0",
@@ -776,6 +816,8 @@ def migrate_db(conn):
     conn.execute("UPDATE users SET role = 'owner' WHERE is_admin = 1 AND role IN ('', 'member')")
     conn.execute("UPDATE users SET role = 'member' WHERE role NOT IN ('owner', 'admin', 'moderator', 'organizer', 'member', 'read_only')")
     conn.execute("UPDATE users SET is_admin = CASE WHEN role IN ('owner', 'admin') THEN 1 ELSE 0 END")
+    conn.execute("UPDATE users SET registration_status = 'active' WHERE registration_status NOT IN ('active', 'pending', 'denied')")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_registration_status ON users(registration_status, is_banned, created_at)")
     timestamp = now_iso()
     conn.execute("UPDATE users SET preferred_price_source = 'scryfall', updated_at = ? WHERE preferred_price_source != 'scryfall'", (timestamp,))
 

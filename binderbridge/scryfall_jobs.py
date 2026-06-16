@@ -155,14 +155,18 @@ def scryfall_price_refresh_worker_loop():
 
 
 def start_scryfall_price_refresh_worker():
-    global _scryfall_price_refresh_worker_started
-    with _scryfall_price_refresh_worker_lock:
-        if _scryfall_price_refresh_worker_started:
-            return False
-        thread = threading.Thread(target=scryfall_price_refresh_worker_loop, name="scryfall-price-refresh", daemon=True)
-        thread.start()
-        _scryfall_price_refresh_worker_started = True
-        return True
+    enqueue = globals().get("enqueue_background_job")
+    if enqueue:
+        _job_id, created = enqueue(
+            "scryfall_price_refresh",
+            unique_key="system:scryfall-price-refresh",
+            max_attempts=10,
+        )
+        expedite = globals().get("expedite_background_job")
+        if expedite:
+            expedite("system:scryfall-price-refresh")
+        return created
+    return False
 
 
 def run_scryfall_bulk_sync():
@@ -179,12 +183,21 @@ def run_scryfall_bulk_sync():
 
 
 def start_scryfall_bulk_sync():
-    if get_setting(SCRYFALL_BULK_STATUS_KEY, "idle") == "running":
-        return False
-    set_setting(SCRYFALL_BULK_STATUS_KEY, "running")
-    thread = threading.Thread(target=run_scryfall_bulk_sync, name="scryfall-bulk-sync", daemon=True)
-    thread.start()
-    return True
+    enqueue = globals().get("enqueue_background_job")
+    if enqueue:
+        _job_id, created = enqueue(
+            "scryfall_bulk_sync",
+            unique_key="system:scryfall-bulk-sync",
+            priority=10,
+            max_attempts=3,
+        )
+        if created:
+            set_setting(SCRYFALL_BULK_STATUS_KEY, "queued")
+        expedite = globals().get("expedite_background_job")
+        if expedite:
+            expedite("system:scryfall-bulk-sync")
+        return created
+    return False
 
 
 def enqueue_scryfall_enrichment(collection_item_id, user_id, item):
@@ -335,15 +348,20 @@ def scryfall_enrichment_worker_loop():
 
 
 def start_scryfall_enrichment_worker():
-    global _scryfall_worker_started
-    with _scryfall_worker_lock:
-        if _scryfall_worker_started:
-            return False
+    enqueue = globals().get("enqueue_background_job")
+    if enqueue:
         execute("UPDATE scryfall_enrichment_jobs SET status = 'pending', updated_at = ? WHERE status = 'processing'", (now_iso(),))
-        thread = threading.Thread(target=scryfall_enrichment_worker_loop, name="scryfall-enrichment", daemon=True)
-        thread.start()
-        _scryfall_worker_started = True
-        return True
+        _job_id, created = enqueue(
+            "scryfall_enrichment",
+            unique_key="system:scryfall-enrichment",
+            priority=5,
+            max_attempts=100000,
+        )
+        expedite = globals().get("expedite_background_job")
+        if expedite:
+            expedite("system:scryfall-enrichment")
+        return created
+    return False
 
 
 def scryfall_enrichment_stats():

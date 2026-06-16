@@ -393,20 +393,58 @@ def admin_registration_settings(self, user):
         return self.not_found(user)
     form = self.read_form()
     enabled = form.get("invite_only_registration", [""])[0] == "1"
-    set_invite_only_registration(enabled)
+    try:
+        moderation = set_registration_moderation_settings(
+            form.get("registration_approval_mode", [DEFAULT_REGISTRATION_APPROVAL_MODE])[0],
+            form.get("registration_risk_threshold", [DEFAULT_REGISTRATION_RISK_THRESHOLD])[0],
+        )
+    except ValueError as exc:
+        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    invite_only = set_invite_only_registration(enabled)
     log_admin_action(
         user["id"],
         "registration_mode_updated",
         None,
         "setting",
         "Registration",
-        "Invite-only registration enabled." if enabled else "Open registration enabled.",
+        (
+            ("Invite-only registration enabled. " if invite_only else "Open registration enabled. ")
+            + f"Approval mode: {moderation['approval_mode_label']}; risk threshold {moderation['risk_threshold']}."
+        ),
         admin_request_ip(self),
         admin_user_agent(self),
     )
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     mode = "invite-only" if enabled else "open"
-    return self.html(render_admin(updated, notice=f"Registration mode set to {mode}."))
+    return self.html(render_admin(updated, notice=f"Registration mode set to {mode}. Approval mode: {moderation['approval_mode_label']}."))
+
+
+def admin_registration_review(self, user, path):
+    if not require_capability(user, CAP_MODERATE_USERS):
+        return self.not_found(user)
+    parts = path.strip("/").split("/")
+    try:
+        target_user_id = int(parts[2])
+        decision = parts[3]
+    except (ValueError, IndexError):
+        return self.not_found(user)
+    form = self.read_form()
+    try:
+        reviewed = admin_review_registration(
+            user["id"],
+            target_user_id,
+            decision,
+            form.get("note", [""])[0],
+        )
+    except ValueError as exc:
+        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    notice = (
+        f"Registration approved for {reviewed['display_name']}."
+        if decision == "approve"
+        else f"Registration denied for {reviewed['display_name']}."
+    )
+    return self.html(render_admin(updated, notice=notice, status="info" if decision == "approve" else "warning"))
 
 
 def admin_invite_create(self, user):
@@ -622,6 +660,48 @@ def admin_job_retry_notification(self, user):
     return admin_jobs_retry_response(self, user, form, notice, status="warning" if result["failed"] else "info")
 
 
+def admin_job_retry_background(self, user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
+        return self.not_found(user)
+    form = self.read_form()
+    try:
+        job = retry_background_job(form.get("job_id", [""])[0])
+    except ValueError as exc:
+        return admin_jobs_retry_response(self, user, form, str(exc), status="error", http_status=HTTPStatus.BAD_REQUEST)
+    log_admin_action(
+        user["id"],
+        "background_job_retried",
+        None,
+        "background_job",
+        f"Job #{job['id']}",
+        f"Retried {job.get('job_type', 'background job')}.",
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    return admin_jobs_retry_response(self, user, form, f"Background job #{job['id']} queued for retry.")
+
+
+def admin_job_cancel_background(self, user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
+        return self.not_found(user)
+    form = self.read_form()
+    try:
+        job = cancel_background_job(form.get("job_id", [""])[0])
+    except ValueError as exc:
+        return admin_jobs_retry_response(self, user, form, str(exc), status="error", http_status=HTTPStatus.BAD_REQUEST)
+    log_admin_action(
+        user["id"],
+        "background_job_cancelled",
+        None,
+        "background_job",
+        f"Job #{job['id']}",
+        f"Cancelled {job.get('job_type', 'background job')}.",
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    return admin_jobs_retry_response(self, user, form, f"Background job #{job['id']} cancelled.", status="warning")
+
+
 def admin_job_undo_import(self, user, path):
     if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
@@ -756,6 +836,7 @@ __all__ = [
     "admin_trade_policy_settings",
     "admin_integration_policy_settings",
     "admin_registration_settings",
+    "admin_registration_review",
     "admin_invite_create",
     "admin_invite_revoke",
     "admin_backup_create",
@@ -766,6 +847,8 @@ __all__ = [
     "admin_job_retry_price",
     "admin_job_retry_scryfall_prices",
     "admin_job_retry_notification",
+    "admin_job_retry_background",
+    "admin_job_cancel_background",
     "admin_job_undo_import",
     "admin_user_action",
 ]

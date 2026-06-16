@@ -186,6 +186,68 @@ def render_active_filter_chips(path, query, filters, specs, page_key="page", req
     """
 
 
+def render_saved_search_controls(user_id, context, query, required_params=None, class_name=""):
+    searches = saved_search_rows(user_id, context)
+    current_values = saved_search_query_values(context, query)
+    return_to = saved_search_current_url(context, query, required_params=required_params)
+    hidden_inputs = "".join(
+        f'<input type="hidden" name="{e(key)}" value="{e(value)}">'
+        for key, value in current_values.items()
+    )
+    saved_items = []
+    for search in searches:
+        apply_url = saved_search_apply_url(search, current_query=query, required_params=required_params)
+        setting_count = len(saved_search_payload(search))
+        saved_items.append(
+            f"""
+            <li class="saved-search-item">
+                <a class="button secondary small saved-search-apply" href="{e(apply_url)}">
+                    <span>{e(search["name"])}</span>
+                    <small>{e(setting_count)} setting{"s" if setting_count != 1 else ""}</small>
+                </a>
+                <form method="post" action="/saved-searches/{e(search["id"])}/delete" data-confirm="Delete this saved search?">
+                    <input type="hidden" name="context" value="{e(context)}">
+                    <input type="hidden" name="return_to" value="{e(return_to)}">
+                    <button class="button ghost small" type="submit" aria-label="Delete saved search {e(search["name"])}">Remove</button>
+                </form>
+            </li>
+            """
+        )
+    saved_list = (
+        f'<ul class="saved-search-list">{"".join(saved_items)}</ul>'
+        if saved_items
+        else '<p class="muted compact">No presets saved for this view yet.</p>'
+    )
+    disabled = "" if current_values else " disabled"
+    helper = (
+        "Saving this name again updates the preset."
+        if current_values
+        else "Apply a filter or sort option before saving a preset."
+    )
+    extra_class = f" {e(class_name)}" if class_name else ""
+    return f"""
+    <details class="saved-search-panel{extra_class}">
+        <summary>
+            <span>Saved filters</span>
+            <span class="advanced-filter-count">{e(len(searches))} saved</span>
+        </summary>
+        <div class="saved-search-body">
+            {saved_list}
+            <form class="saved-search-form" method="post" action="/saved-searches">
+                <input type="hidden" name="context" value="{e(context)}">
+                <input type="hidden" name="return_to" value="{e(return_to)}">
+                {hidden_inputs}
+                <label>Preset name
+                    <input name="name" maxlength="80" required placeholder="My favorite view">
+                </label>
+                <button class="button primary small" type="submit"{disabled}>Save current filters</button>
+                <span class="muted compact">{e(helper)}</span>
+            </form>
+        </div>
+    </details>
+    """
+
+
 def pagination_state(query, total_count, default_per_page=25):
     requested_per_page = query_int(query, "per_page", default_per_page)
     per_page = requested_per_page if requested_per_page in PAGE_SIZE_OPTIONS else default_per_page
@@ -381,6 +443,7 @@ __all__ = [
     "filter_chip_url",
     "filter_chip_text",
     "render_active_filter_chips",
+    "render_saved_search_controls",
     "pagination_state",
     "page_url",
     "current_collection_url",
