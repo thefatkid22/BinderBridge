@@ -683,6 +683,9 @@ def maintenance_health_status(limit=6):
         "COALESCE(NULLIF(email_status, ''), 'none')",
         "WHERE email_status != ''",
     )
+    runner_status_func = globals().get("background_job_runner_status")
+    runner_status = runner_status_func() if runner_status_func else {}
+    background_counts = runner_status.get("counts", [])
     failed_notifications = rows(
         """
         SELECT user_notifications.*, users.display_name, users.username, users.email
@@ -737,6 +740,10 @@ def maintenance_health_status(limit=6):
                 "label": "Email notifications",
                 "counts": email_counts,
             },
+            {
+                "label": "Durable job runner",
+                "counts": background_counts,
+            },
         ],
         "job_counts": {
             "imports": import_counts,
@@ -744,7 +751,9 @@ def maintenance_health_status(limit=6):
             "prices": price_counts,
             "webhooks": webhook_counts,
             "email": email_counts,
+            "background": background_counts,
         },
+        "job_runner": runner_status,
         "email": {
             "configured": email_delivery_configured(),
             "host": smtp_settings["host"],
@@ -888,11 +897,18 @@ def maintenance_job_dashboard(limit=12):
         "WHERE email_status != ''",
     )
     price_status_func = globals().get("scryfall_price_refresh_status")
+    runner_status_func = globals().get("background_job_runner_status")
+    runner_rows_func = globals().get("background_job_rows")
+    runner_status = runner_status_func() if runner_status_func else {}
+    background_counts = runner_status.get("counts", [])
     return {
         "import_counts": import_counts,
         "scryfall_counts": scryfall_counts,
         "price_counts": price_counts,
         "email_counts": email_counts,
+        "background_counts": background_counts,
+        "background_jobs": runner_rows_func(limit) if runner_rows_func else [],
+        "job_runner": runner_status,
         "scryfall_price_refresh": price_status_func() if price_status_func else {},
         "imports": maintenance_import_batch_rows(limit),
         "scryfall_jobs": maintenance_scryfall_job_rows(limit),
@@ -903,6 +919,7 @@ def maintenance_job_dashboard(limit=12):
             "scryfall_attention": maintenance_job_status_value(scryfall_counts, "failed", "not_found", "processing"),
             "price_attention": maintenance_job_status_value(price_counts, "failed", "not_found", "processing", "disabled"),
             "failed_emails": maintenance_job_status_value(email_counts, "failed"),
+            "background_attention": maintenance_job_status_value(background_counts, "failed"),
         },
     }
 
@@ -1237,28 +1254,24 @@ def retry_failed_notification_email(notification_id):
 
 
 def retry_scryfall_price_refresh_async():
-    global _job_dashboard_price_retry_running
-    with _job_dashboard_price_retry_lock:
-        if _job_dashboard_price_retry_running:
-            return {"started": False, "message": "Scryfall price refresh is already running."}
-        _job_dashboard_price_retry_running = True
+    enqueue = globals().get("enqueue_background_job")
+    if not enqueue:
+        return {"started": False, "message": "The background job runner is unavailable."}
     status_key = globals().get("SCRYFALL_PRICE_REFRESH_STATUS_KEY")
     if status_key:
         set_setting(status_key, "queued")
-
-    def worker():
-        global _job_dashboard_price_retry_running
-        try:
-            refresh_all_scryfall_prices(sync_bulk=True, notify_users=True)
-        except Exception:
-            pass
-        finally:
-            with _job_dashboard_price_retry_lock:
-                _job_dashboard_price_retry_running = False
-
-    thread = threading.Thread(target=worker, name="admin-scryfall-price-retry", daemon=True)
-    thread.start()
-    return {"started": True, "message": "Scryfall price refresh retry started."}
+    job_id, created = enqueue(
+        "scryfall_price_refresh",
+        {"force": True},
+        unique_key="manual:scryfall-price-refresh",
+        priority=20,
+        max_attempts=3,
+    )
+    return {
+        "started": created,
+        "job_id": job_id,
+        "message": "Scryfall price refresh queued." if created else "Scryfall price refresh is already queued or running.",
+    }
 
 
 def admin_undo_import_batch(batch_id):
@@ -1577,14 +1590,18 @@ def automatic_backup_worker_loop():
 
 
 def start_automatic_backup_worker():
-    global _automatic_backup_worker_started
-    with _automatic_backup_worker_lock:
-        if _automatic_backup_worker_started:
-            return False
-        thread = threading.Thread(target=automatic_backup_worker_loop, name="automatic-backup", daemon=True)
-        thread.start()
-        _automatic_backup_worker_started = True
-        return True
+    enqueue = globals().get("enqueue_background_job")
+    if enqueue:
+        _job_id, created = enqueue(
+            "automatic_backup",
+            unique_key="system:automatic-backup",
+            max_attempts=10,
+        )
+        expedite = globals().get("expedite_background_job")
+        if expedite:
+            expedite("system:automatic-backup")
+        return created
+    return False
 
 
 def validate_restore_database(sqlite_path):

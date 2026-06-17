@@ -82,8 +82,11 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
     integration_policy = integration_access_settings()
     api_access_options = option_tags(INTEGRATION_ACCESS_POLICY_OPTIONS, integration_policy["api_policy"])
     webhook_access_options = option_tags(INTEGRATION_ACCESS_POLICY_OPTIONS, integration_policy["webhook_policy"])
+    moderation_settings = registration_moderation_settings()
+    approval_options = option_tags(REGISTRATION_APPROVAL_MODE_OPTIONS, moderation_settings["approval_mode"])
     invite_only_checked = checked(invite_only_registration_enabled())
     invite_mode_label = "Invite-only" if invite_only_registration_enabled() else "Open registration"
+    review_count = pending_registration_count()
     smtp_configured = smtp_invites_configured()
     smtp_status = "SMTP configured" if smtp_configured else "Manual link fallback"
     invite_panel_title = "Email invites" if smtp_configured else "Invite links"
@@ -96,6 +99,8 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
     )
     invite_rows = "".join(render_registration_invite_row(invite) for invite in registration_invite_rows())
     invite_rows = invite_rows or '<li class="muted">No invites yet.</li>'
+    pending_rows = "".join(render_registration_review_row(item) for item in pending_registration_rows())
+    pending_rows = pending_rows or '<li class="muted">No pending account reviews.</li>'
     invite_result_panel = ""
     if invite_result:
         invite_result_panel = f"""
@@ -228,15 +233,33 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
             <div class="span-2 panel-heading">
                 <h2>Registration</h2>
                 <span class="pill">{e(invite_mode_label)}</span>
+                <span class="pill">{e(moderation_settings["approval_mode_label"])}</span>
             </div>
             <label class="checkbox-line span-2">
                 <input type="checkbox" name="invite_only_registration" value="1"{invite_only_checked}>
                 Require an invite link for new accounts
             </label>
+            <label class="span-2">Account approval
+                <select name="registration_approval_mode">{approval_options}</select>
+            </label>
+            <label>Suspicious score threshold
+                <input name="registration_risk_threshold" type="number" min="0" max="1000" step="1" value="{e(moderation_settings["risk_threshold"])}">
+            </label>
+            <p class="muted compact span-2">Suspicious mode sends matching signups to review instead of automatically denying them. Signals use hashed email, IP, network range, and user-agent values.</p>
             <div class="form-actions span-2">
-                <button class="button primary" type="submit">Save registration mode</button>
+                <button class="button primary" type="submit">Save registration settings</button>
             </div>
         </form>
+        <article class="panel invite-settings span-2" id="admin-registration-review">
+            <div class="panel-heading with-gap">
+                <div>
+                    <h2>Pending account review</h2>
+                    <p class="muted compact">Approve real members, deny suspicious signups, and keep the risk signals visible for context.</p>
+                </div>
+                <span class="pill">{e(review_count)} pending</span>
+            </div>
+            <ul class="stack-list compact-stack">{pending_rows}</ul>
+        </article>
         <article class="panel invite-settings" id="admin-invites">
             <form class="form-grid compact-form" method="post" action="/admin/invites">
                 <div class="span-2 panel-heading">
@@ -426,7 +449,7 @@ def health_time_label(value):
 
 def health_status_class(value):
     status = str(value or "").strip().lower()
-    if status in ("done", "idle", "sent", "none", "ok", "completed", "applied"):
+    if status in ("done", "idle", "sent", "none", "ok", "completed", "applied", "succeeded"):
         return "accepted"
     if status in ("failed", "error", "disabled", "not_found"):
         return "declined"
@@ -439,7 +462,7 @@ def health_severity_for_status(value):
         return "error"
     if status in ("pending", "processing", "queued", "warning", "paused"):
         return "warning"
-    if status in ("done", "idle", "sent", "none", "ok", "completed", "enabled", "applied"):
+    if status in ("done", "idle", "sent", "none", "ok", "completed", "enabled", "applied", "succeeded"):
         return "ok"
     return "info"
 
@@ -1336,6 +1359,47 @@ def admin_job_notification_row(notification, return_to=""):
     """
 
 
+def admin_job_background_row(job):
+    status_value = row_value(job, "status", "")
+    label = JOB_TYPE_LABELS.get(row_value(job, "job_type", ""), row_value(job, "job_type", "Background job").replace("_", " ").title())
+    error = row_value(job, "last_error", "")
+    progress = row_value(job, "progress_message", "")
+    result = parse_job_json(row_value(job, "result_json", "{}"), {})
+    result_line = f'<span class="subtle">Last result: {e(json.dumps(result, ensure_ascii=True, sort_keys=True)[:300])}</span>' if result else ""
+    error_line = f'<p class="job-error">{e(error)}</p>' if error else ""
+    actions = ""
+    if status_value in ("failed", "cancelled"):
+        actions += admin_job_retry_form("/admin/jobs/background/retry", "job_id", job["id"])
+    if status_value in ("pending", "running"):
+        actions += admin_job_retry_form(
+            "/admin/jobs/background/cancel",
+            "job_id",
+            job["id"],
+            "Cancel",
+            "danger",
+            "Cancel this background job? Running work may finish its current operation before stopping.",
+        )
+    return f"""
+    <li class="job-row {health_severity_class(health_severity_for_status(status_value))}">
+        <div class="job-main">
+            <strong>{e(label)}</strong>
+            <span class="subtle">Job #{e(job["id"])} - updated {e(admin_job_time_label(row_value(job, "updated_at", "")))}</span>
+            <div class="job-meta">
+                <span>{e(job["attempts"])} of {e(job["max_attempts"])} attempts</span>
+                <span>Available {e(admin_job_time_label(row_value(job, "available_at", "")))}</span>
+                <span>{e(progress or "No progress message")}</span>
+            </div>
+            {result_line}
+            {error_line}
+        </div>
+        <div class="job-actions">
+            <span class="status {health_status_class(status_value)}">{e(admin_job_status_label(status_value))}</span>
+            {actions}
+        </div>
+    </li>
+    """
+
+
 def render_admin_jobs(user, notice=None, status="info"):
     dashboard = maintenance_job_dashboard()
     metrics = dashboard["metrics"]
@@ -1348,6 +1412,9 @@ def render_admin_jobs(user, notice=None, status="info"):
     price_rows = price_rows or '<li class="empty-state compact-empty">No queued price refresh jobs need attention.</li>'
     notification_rows = "".join(admin_job_notification_row(item) for item in dashboard["failed_notifications"])
     notification_rows = notification_rows or '<li class="empty-state compact-empty">No failed notification emails.</li>'
+    background_rows = "".join(admin_job_background_row(item) for item in dashboard["background_jobs"])
+    background_rows = background_rows or '<li class="empty-state compact-empty">No durable background jobs have been recorded.</li>'
+    runner = dashboard["job_runner"]
     price_error = f'<p class="notice error compact">{e(price_refresh.get("error", ""))}</p>' if price_refresh.get("error") else ""
     price_retry_disabled = " disabled" if price_refresh.get("status") in ("running", "queued") else ""
     content = f"""
@@ -1378,8 +1445,26 @@ def render_admin_jobs(user, notice=None, status="info"):
             <span>{e(metrics["failed_emails"])}</span>
             <p>failed notification emails</p>
         </article>
+        <article class="metric">
+            <span>{e(metrics["background_attention"])}</span>
+            <p>runner jobs needing attention</p>
+        </article>
     </section>
     <section class="job-dashboard-grid">
+        <article class="panel job-dashboard-card span-2">
+            <div class="panel-heading">
+                <div>
+                    <h2>Durable background runner</h2>
+                    <p class="muted compact">Leased, retryable orchestration for Scryfall, backups, notifications, and webhooks.</p>
+                </div>
+                <div class="status-row">
+                    <span class="pill">{e(runner.get("mode", "unknown"))} mode</span>
+                    <span class="pill">{e(runner.get("lease_seconds", ""))}s lease</span>
+                    {render_health_status_counts(dashboard["background_counts"])}
+                </div>
+            </div>
+            <ul class="stack-list job-list">{background_rows}</ul>
+        </article>
         <article class="panel job-dashboard-card">
             <div class="panel-heading">
                 <div>
@@ -1851,13 +1936,57 @@ def render_registration_invite_row(invite):
     """
 
 
+def render_registration_review_row(item):
+    reasons = registration_attempt_reasons(item)
+    reason_text = ", ".join(
+        f"{reason.get('label', 'Signal')} (+{reason.get('points', 0)})"
+        for reason in reasons
+        if isinstance(reason, dict)
+    ) or "No specific risk signals; review required by policy."
+    invite_line = ""
+    if row_value(item, "invite_id", None):
+        inviter = row_value(item, "inviter_name", "") or row_value(item, "inviter_username", "")
+        invite_suffix = f" from {inviter}" if inviter else ""
+        invite_line = f'<span class="subtle">Invite #{e(row_value(item, "invite_id", ""))}{e(invite_suffix)}</span>'
+    email_domain = row_value(item, "email_domain", "")
+    email_line = f'<span class="subtle">Email domain: {e(email_domain)}</span>' if email_domain else ""
+    created = row_value(item, "attempt_created_at", "") or row_value(item, "created_at", "")
+    return f"""
+    <li class="invite-row registration-review-row">
+        <div>
+            <strong>{e(item["display_name"])}</strong>
+            <span class="subtle">@{e(item["username"])} - requested {e(created[:16].replace("T", " "))}</span>
+            {email_line}
+            {invite_line}
+            <span class="subtle">{e(reason_text)}</span>
+        </div>
+        <div class="invite-actions">
+            <span class="status pending">Risk {e(row_value(item, "risk_score", 0))}</span>
+            <form method="post" action="/admin/registration-review/{item["id"]}/approve">
+                <input name="note" placeholder="Review note">
+                <button class="button primary small" type="submit">Approve</button>
+            </form>
+            <form method="post" action="/admin/registration-review/{item["id"]}/deny" data-confirm="Deny this account registration?">
+                <input name="note" placeholder="Denial note">
+                <button class="button danger small" type="submit">Deny</button>
+            </form>
+        </div>
+    </li>
+    """
+
+
 def render_admin_user_row(admin_user, managed_user):
     status_parts = []
     managed_role = user_role(managed_user)
     role_class = "accepted" if managed_role in (ROLE_OWNER, ROLE_ADMIN) else "pending" if managed_role in (ROLE_MODERATOR, ROLE_ORGANIZER) else ""
     status_parts.append(f'<span class="status {role_class}">{e(role_label(managed_role))}</span>')
+    registration_status = row_value(managed_user, "registration_status", "active")
     if managed_user["is_banned"]:
         status_parts.append('<span class="status declined">Banned</span>')
+    elif registration_status == "pending":
+        status_parts.append('<span class="status pending">Pending review</span>')
+    elif registration_status == "denied":
+        status_parts.append('<span class="status declined">Denied</span>')
     else:
         status_parts.append('<span class="status accepted">Active</span>')
     if two_factor_enabled(managed_user):

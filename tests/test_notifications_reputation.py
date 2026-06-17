@@ -128,6 +128,8 @@ class NotificationsReputationTests(BinderBridgeTestCase):
         try:
             trade_id = app.create_trade_offer(alice_id, bob_id, "Offer", [(alice_card, 1)], [(bob_card, 1)])
             app.add_trade_comment(trade_id, bob_id, "Can you ship this week?")
+            self.assertEqual(sent, [])
+            app.process_background_job_once("trade-email-test-worker")
         finally:
             app.send_email_message = original_sender
             app.email_delivery_configured = original_configured
@@ -175,6 +177,7 @@ class NotificationsReputationTests(BinderBridgeTestCase):
         app.email_delivery_configured = lambda: True
         try:
             trade_id = app.create_trade_offer(alice_id, bob_id, "Offer", [(alice_card, 1)], [(bob_card, 1)])
+            app.process_background_job_once("trade-email-failure-worker")
         finally:
             app.send_email_message = original_sender
             app.email_delivery_configured = original_configured
@@ -269,6 +272,8 @@ class NotificationsReputationTests(BinderBridgeTestCase):
             app.create_notification(user_id, "price_alert", "Price moved", "Sol Ring changed.")
             app.create_notification(user_id, "scryfall_import", "Import complete", "Cards enriched.")
             app.create_notification(user_id, "backup_status", "Backup failed", "Disk full.")
+            self.assertEqual(sent, [])
+            app.process_background_job_once("notification-test-worker")
         finally:
             app.send_email_message = original_sender
             app.email_delivery_configured = original_configured

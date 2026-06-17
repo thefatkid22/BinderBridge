@@ -660,6 +660,13 @@ def render_trade_picker_section(title, owner_id, recipient_id, query, prefix, in
             </details>
             {trade_picker_datalists(prefix, owner_id, public_only=int(viewer_id) != int(owner_id))}
         </form>
+        {render_saved_search_controls(
+            viewer_id,
+            f"trade_{prefix}",
+            query,
+            required_params={"recipient_id": recipient_id},
+            class_name="trade-picker-saved-searches",
+        )}
         {active_filter_chips}
         {hidden_selected}
         {table}

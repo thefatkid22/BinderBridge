@@ -110,7 +110,7 @@ def set_integration_access_settings(api_policy_value, webhook_policy_value):
 
 
 def user_matches_integration_policy(user, policy):
-    if not user or row_value(user, "is_banned", 0):
+    if not user or row_value(user, "is_banned", 0) or row_value(user, "registration_status", "active") != "active":
         return False
     policy = normalize_integration_access_policy(policy)
     if policy == "disabled":
@@ -219,14 +219,20 @@ def get_user_by_api_token(token):
         return None, None
     found = row(
         """
-        SELECT api_tokens.*, users.username, users.display_name, users.email, users.role, users.is_admin, users.is_banned
+        SELECT api_tokens.*, users.username, users.display_name, users.email, users.role,
+            users.registration_status, users.is_admin, users.is_banned
         FROM api_tokens
         JOIN users ON users.id = api_tokens.user_id
         WHERE api_tokens.token_hash = ?
         """,
         (api_token_hash(token),),
     )
-    if not found or row_value(found, "revoked_at", "") or int(row_value(found, "is_banned", 0) or 0):
+    if (
+        not found
+        or row_value(found, "revoked_at", "")
+        or int(row_value(found, "is_banned", 0) or 0)
+        or row_value(found, "registration_status", "active") != "active"
+    ):
         return None, None
     expires_at = row_value(found, "expires_at", "")
     if expires_at and expires_at <= now_iso():
@@ -357,11 +363,14 @@ def queue_user_webhook_event(user_id, event_type, payload=None, conn=None):
         return queued
 
     if conn is not None:
-        return run(conn)
+        queued = run(conn)
+        if queued:
+            start_webhook_delivery_worker(conn=conn)
+        return queued
     with db() as active_conn:
         queued = run(active_conn)
     if queued:
-        send_pending_webhook_deliveries(user_id=user_id, limit=min(queued, WEBHOOK_DELIVERY_BATCH_SIZE))
+        start_webhook_delivery_worker()
     return queued
 
 
@@ -526,25 +535,22 @@ def webhook_delivery_rows(user_id, limit=8):
     )
 
 
-def start_webhook_delivery_worker():
-    global _webhook_worker_started
+def start_webhook_delivery_worker(conn=None):
     if not WEBHOOK_DELIVERY_WORKER_ENABLED:
         return False
-    with _webhook_worker_lock:
-        if _webhook_worker_started:
-            return False
-        _webhook_worker_started = True
-
-    def worker():
-        while True:
-            try:
-                send_pending_webhook_deliveries(limit=WEBHOOK_DELIVERY_BATCH_SIZE)
-            except Exception as exc:
-                write_log_message(f"Webhook delivery worker error: {exc}")
-            time.sleep(WEBHOOK_DELIVERY_INTERVAL_SECONDS)
-
-    threading.Thread(target=worker, name="binderbridge-webhooks", daemon=True).start()
-    return True
+    enqueue = globals().get("enqueue_background_job")
+    if enqueue:
+        _job_id, created = enqueue(
+            "webhook_delivery",
+            unique_key="system:webhook-delivery",
+            max_attempts=10,
+            conn=conn,
+        )
+        expedite = globals().get("expedite_background_job")
+        if expedite:
+            expedite("system:webhook-delivery", conn=conn)
+        return created
+    return False
 
 
 def render_api_access_panel(user):
@@ -1239,6 +1245,8 @@ def api_notifications_list(self, user, query):
 
 def api_dispatch(self, method, path, query):
     if path == "/api/v1/health" and method == "GET":
+        if not rate_limit_allowed("api_health", integration_request_ip(self)):
+            return self.api_error("Too many API health requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
         return self.api_json({"ok": True, "app": APP_NAME, "version": APP_VERSION})
     required_scope = "write" if method in ("POST", "PUT", "PATCH", "DELETE") else "read"
     user, token_row, error = self.api_authenticate(required_scope)
@@ -1246,6 +1254,8 @@ def api_dispatch(self, method, path, query):
         return None
     if required_scope == "write" and not user_can_write_content(user):
         return self.api_error("This account is read-only.", HTTPStatus.FORBIDDEN)
+    if required_scope == "read" and not rate_limit_allowed("api_read", f"user:{user['id']}"):
+        return self.api_error("Too many API read requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
     if required_scope == "write" and not rate_limit_allowed("api_write", f"user:{user['id']}"):
         return self.api_error("Too many API write requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
     try:

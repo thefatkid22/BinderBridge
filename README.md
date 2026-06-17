@@ -12,14 +12,14 @@ License: **GNU AGPL-3.0**
 - TOTP two-factor authentication with one-time recovery codes
 - Passkey/WebAuthn login as an optional passwordless sign-in method
 - CSRF protection for authenticated browser form actions
-- Basic in-memory rate limiting for sign-in, registration, API auth/write actions, Scryfall lookups, and integration management
+- SQLite-backed rate limiting for sign-in, registration, API auth/read/write actions, API health checks, Scryfall lookups, and integration management
 - Dark interface enabled by default with a persistent light-mode toggle
 - Account control panel for username, email, profile, and password changes
 - Owner, admin, moderator, organizer, member, and read-only roles with protected hierarchy and capability-based staff tools
-- Staff control panels for user moderation, disputes, invites, role management, trusted status, and security resets
+- Staff control panels for user moderation, pending registration review, disputes, invites, role management, trusted status, and security resets
 - Admin activity logs for moderation, invite, registration, fairness, and backup actions
 - Integration audit logs for API token, webhook, failed API-auth, and API write activity
-- Admin-managed registration invites with optional invite-only registration mode and manual-link fallback
+- Admin-managed registration invites with optional invite-only registration, approval queues, privacy-safe evasion signals, and manual-link fallback
 - SQLite storage with no external service dependency
 - Versioned SQLite schema migrations with hot-path indexes for collection, browse, wishlist, trade, and Scryfall lookup pages
 - Admin database maintenance tools with guarded ANALYZE/VACUUM actions, index-planner visibility, storage-growth snapshots, and migration history
@@ -35,7 +35,7 @@ License: **GNU AGPL-3.0**
 - Sortable collection, browse, wishlist, deck/binder group, and trade-building card lists by name, set, game, quantity, trade quantity, condition, finish, value, and update time
 - Searchable, filterable, paginated deck/binder/wishlist group contents with current-page selection and bulk group-link removal
 - Responsive collection, browse, group, trade, and admin layouts with mobile-friendly card views, compact mobile navigation, and shared accessible confirmation dialogs
-- Active removable filter chips for collection, browse, and trade-picker results
+- Active removable filter chips plus personal saved filter/sort presets for collection, browse, wishlist, and both trade-builder pickers
 - Tradeable quantity per card
 - Per-card condition details and photo galleries that are preserved in trade offers
 - Bulk collection quantity and trade-quantity updates
@@ -94,6 +94,8 @@ Open `http://127.0.0.1:8000`.
 Data is stored in `data/binderbridge.sqlite3` by default. Set `BINDERBRIDGE_DATA` to choose another directory.
 
 The first registered user becomes the site owner. For upgrades, create a backup first, stop BinderBridge, update the checkout, and restart it. SQLite migrations run automatically on startup.
+
+For Docker Compose, production config, worker, reverse-proxy, backup, and upgrade guidance, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## CSV Import
 
@@ -179,6 +181,8 @@ Admins can create registration invites from `Admin -> Registration invites`. Inv
 
 Registration remains open by default so a fresh self-hosted install can create its first admin account. After that, admins can enable `Require an invite link for new accounts` from `Admin -> Registration`.
 
+Admins can also require approval for every new account, or only for signups that match suspicious signals. BinderBridge stores hashed email, IP, network-range, and user-agent signals for registration attempts, shows the resulting risk reasons in the admin review queue, and leaves approval or denial to staff rather than auto-banning new accounts.
+
 If SMTP is configured, BinderBridge sends the invite email automatically. Without SMTP, the admin panel shows a copyable invite link.
 
 ## Password Recovery
@@ -217,7 +221,7 @@ Initial API endpoints:
 
 Send API tokens with `Authorization: Bearer bbapi_...`.
 
-Webhook endpoints are also managed from `Account -> API access`. BinderBridge sends JSON `POST` requests with `X-BinderBridge-Event`, `X-BinderBridge-Delivery`, and `X-BinderBridge-Signature` headers. The signature is `sha256=` plus an HMAC-SHA256 of the raw JSON payload using the webhook signing secret. Deliveries are queued in SQLite and processed by a small background worker so trade and notification actions are not blocked by remote webhook downtime.
+Webhook endpoints are also managed from `Account -> API access`. BinderBridge sends JSON `POST` requests with `X-BinderBridge-Event`, `X-BinderBridge-Delivery`, and `X-BinderBridge-Signature` headers. The signature is `sha256=` plus an HMAC-SHA256 of the raw JSON payload using the webhook signing secret. Deliveries are queued in SQLite and processed by the durable background runner so trade and notification actions are not blocked by remote webhook downtime.
 
 ## Test
 
@@ -230,13 +234,19 @@ python -m unittest discover -s tests
 `app.py` remains the public entrypoint and HTTP router so existing scripts can still run `python app.py` or `import app`. Feature code is split into focused modules under `binderbridge/`:
 
 - `accounts.py`: account profile, password, admin, invites, registration mode, and trusted-user controls
+- `registration_moderation.py`: pending account review, approval settings, and privacy-safe registration risk signals
 - `groups.py`: deck, binder, and wishlist group management
 - `collection_service.py`: collection CRUD, bulk updates, and watchlist alerts
 - `scryfall_client.py`: Scryfall API access, local bulk-data cache, bulk-data synchronization, card lookup, and card metadata enrichment helpers
-- `scryfall_jobs.py`: Scryfall enrichment workers, bulk-sync orchestration, and automatic Scryfall price refresh
+- `scryfall_jobs.py`: Scryfall enrichment handlers, bulk-sync orchestration, and automatic Scryfall price refresh
 - `background_jobs.py`: legacy batched external price-refresh queue compatibility
+- `job_runner.py`: durable leased job queue, retries, recurring schedules, progress, and embedded/external worker orchestration
+- `scripts/run_worker.py`: standalone background worker entrypoint for deployments that separate web and worker processes
+- `deploy/binderbridge.production.ini`: Docker-oriented production defaults that can be overridden by environment variables
+- `docs/DEPLOYMENT.md`: Docker Compose, reverse-proxy, backup, upgrade, and worker operations guide
 - `views.py`: compatibility facade for feature-specific page renderers
 - `components.py`: shared HTML controls such as sort bars, active filter chips, pagination, and trade-picker paging
+- `saved_searches.py`, `saved_search_routes.py`: private reusable filter/sort presets and their save/delete actions
 - `trade_service.py`: trade validation, comments, counters, notifications, and completion logic
 - `collection_queries.py`, `want_queries.py`, `matchmaking_queries.py`, `trade_queries.py`: SQL-heavy list, detail, picker, availability, and matchmaking queries
 - `import_mapping.py`, `import_batches.py`, `collection_imports.py`, `deck_import_service.py`: CSV mapping, preview batches, undo support, and collection/deck import orchestration
@@ -283,6 +293,10 @@ Schema migrations run automatically during startup. Migration history introduced
 | 7 | Private wanted-card share links |
 | 8 | Database maintenance history, storage snapshots, and recorded migration history |
 | 9 | Secure password recovery requests and one-time reset tokens |
+| 10 | Durable leased background job runner |
+| 11 | Personal saved searches and filter presets |
+| 12 | Persistent API and integration rate-limit events |
+| 13 | Registration moderation, pending account review, and ban-evasion signals |
 
 ## Demo Data
 
@@ -337,6 +351,15 @@ ssl = false
 [notifications]
 worker_interval_seconds = 60
 
+[jobs]
+enabled = true
+mode = embedded
+poll_seconds = 1
+lease_seconds = 3600
+retry_base_seconds = 30
+retry_max_seconds = 3600
+history_days = 30
+
 [registration]
 invite_expiry_days = 14
 
@@ -350,6 +373,24 @@ retention_days = 30
 notification_days = 90
 admin_log_days = 365
 webhook_days = 90
+
+[api]
+page_size_max = 250
+
+[rate_limits]
+persistent = true
+api_auth_failed_limit = 30
+api_auth_failed_window_seconds = 300
+api_health_limit = 120
+api_health_window_seconds = 60
+api_read_limit = 600
+api_read_window_seconds = 60
+api_write_limit = 120
+api_write_window_seconds = 60
+scryfall_lookup_limit = 30
+scryfall_lookup_window_seconds = 300
+integration_admin_limit = 20
+integration_admin_window_seconds = 300
 
 [webhooks]
 worker_enabled = true
@@ -382,6 +423,13 @@ Supported environment variables:
 - `BINDERBRIDGE_SMTP_SSL`: use SMTP over SSL, default disabled
 - `BINDERBRIDGE_PASSWORD_RESET_EXPIRY_MINUTES`: one-time password reset link lifetime, default `60`
 - `BINDERBRIDGE_NOTIFICATION_WORKER_INTERVAL_SECONDS`: interval for scheduled email and stale-trade reminder processing, default `60`
+- `BINDERBRIDGE_JOB_RUNNER_ENABLED`: set to `0`, `false`, `no`, or `off` to disable the embedded runner
+- `BINDERBRIDGE_JOB_RUNNER_MODE`: `embedded` by default; use `external` when a separate worker process handles jobs, or `disabled` to pause all runner startup
+- `BINDERBRIDGE_JOB_POLL_SECONDS`: idle queue polling interval, default `1`
+- `BINDERBRIDGE_JOB_LEASE_SECONDS`: worker lease duration before interrupted running jobs return to the queue, default `3600`
+- `BINDERBRIDGE_JOB_RETRY_BASE_SECONDS`: initial retry delay, default `30`
+- `BINDERBRIDGE_JOB_RETRY_MAX_SECONDS`: maximum exponential retry delay, default `3600`
+- `BINDERBRIDGE_JOB_HISTORY_DAYS`: completed/failed/cancelled job history retention, default `30`; set to `0` to keep forever
 - `BINDERBRIDGE_REGISTRATION_INVITE_EXPIRY_DAYS`: invite expiration window, default `14`
 - `BINDERBRIDGE_BACKUP_AUTO_ENABLED`: set to `0`, `false`, `no`, or `off` to pause automatic backups by default
 - `BINDERBRIDGE_BACKUP_INTERVAL_HOURS`: automatic backup interval, default `24`
@@ -392,6 +440,13 @@ Supported environment variables:
 - `BINDERBRIDGE_WEBHOOK_RETENTION_DAYS`: default age for completed webhook delivery cleanup, default `90`; set to `0` to keep forever
 - `BINDERBRIDGE_SQLITE_BUSY_TIMEOUT_MS`: how long SQLite waits for another write to finish before reporting a lock, default `30000`
 - `BINDERBRIDGE_API_PAGE_SIZE_MAX`: maximum API page size, default `250`
+- `BINDERBRIDGE_RATE_LIMIT_PERSISTENT`: store rate-limit events in SQLite so limits survive restarts and are shared by app processes using the same database, default enabled
+- `BINDERBRIDGE_API_AUTH_FAILED_LIMIT` / `BINDERBRIDGE_API_AUTH_FAILED_WINDOW_SECONDS`: failed bearer-token authentication attempts per IP, default `30` per `300` seconds
+- `BINDERBRIDGE_API_HEALTH_LIMIT` / `BINDERBRIDGE_API_HEALTH_WINDOW_SECONDS`: public `/api/v1/health` requests per IP, default `120` per `60` seconds
+- `BINDERBRIDGE_API_READ_LIMIT` / `BINDERBRIDGE_API_READ_WINDOW_SECONDS`: authenticated API read requests per user, default `600` per `60` seconds
+- `BINDERBRIDGE_API_WRITE_LIMIT` / `BINDERBRIDGE_API_WRITE_WINDOW_SECONDS`: authenticated API write requests per user, default `120` per `60` seconds
+- `BINDERBRIDGE_SCRYFALL_LOOKUP_LIMIT` / `BINDERBRIDGE_SCRYFALL_LOOKUP_WINDOW_SECONDS`: live Scryfall lookup requests, default `30` per `300` seconds
+- `BINDERBRIDGE_INTEGRATION_ADMIN_LIMIT` / `BINDERBRIDGE_INTEGRATION_ADMIN_WINDOW_SECONDS`: API token and webhook management actions per user, default `20` per `300` seconds
 - `BINDERBRIDGE_WEBHOOK_WORKER_ENABLED`: set to `0`, `false`, `no`, or `off` to disable the webhook delivery worker
 - `BINDERBRIDGE_WEBHOOK_TIMEOUT_SECONDS`: outbound webhook request timeout, default `5`
 - `BINDERBRIDGE_WEBHOOK_DELIVERY_INTERVAL_SECONDS`: webhook worker polling interval, default `30`
@@ -402,15 +457,44 @@ Supported environment variables:
 
 For LAN use, run with `HOST=0.0.0.0` and put the app behind a reverse proxy with HTTPS.
 
-## Docker
+### Background Worker Deployment
 
-Build and run:
+The default `embedded` mode starts one durable background worker inside `app.py`, which is convenient for small self-hosted groups. Jobs are stored in SQLite, claimed with expiring leases, retried with backoff, and visible from `Admin -> Import and job dashboard`.
+
+For a larger deployment, set the same data directory and configuration for both processes, select external mode, and run:
 
 ```powershell
-docker compose up --build
+$env:BINDERBRIDGE_JOB_RUNNER_MODE = "external"
+python app.py
 ```
 
-The compose file stores SQLite data in a named volume.
+```powershell
+$env:BINDERBRIDGE_JOB_RUNNER_MODE = "external"
+python scripts/run_worker.py
+```
+
+Run one external worker initially. SQLite safely coordinates leases and active-job deduplication, while a future database/backend option may support higher worker concurrency.
+
+## Docker
+
+Copy the example environment file, edit it for your host, then start the web and worker containers:
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d --build
+```
+
+The Compose stack runs the web app plus a separate background worker. Both containers share the `binderbridge-data` volume, which stores the SQLite database, backups, Scryfall cache, uploaded card photos, and dispute evidence.
+
+Useful commands:
+
+```powershell
+docker compose ps
+docker compose logs -f binderbridge binderbridge-worker
+docker compose restart binderbridge-worker
+```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production config, reverse-proxy, HTTPS, backup, restore, upgrade, and single-container notes.
 
 ## Release Validation
 
@@ -427,7 +511,7 @@ The smoke checks use temporary data directories to verify fresh initialization, 
 ## Known Alpha Limitations
 
 - This alpha is intended primarily for trusted small groups and evaluation.
-- Background jobs and in-memory rate limits run inside the web process and assume one BinderBridge app instance.
+- The durable job queue supports an embedded or separate worker, and API/integration rate limits can be shared through SQLite; SQLite still favors a single web instance and modest worker concurrency.
 - Internet-facing installs need an HTTPS reverse proxy, persistent operational monitoring, and regular restore drills.
 - Deck-list URL imports are best effort because third-party sites can change or block export endpoints.
 - Magic: The Gathering has the deepest metadata and pricing support; other games currently use generic card records.
@@ -439,7 +523,6 @@ The smoke checks use temporary data directories to verify fresh initialization, 
 Product features:
 
 - Broader game support with per-game card metadata, source adapters, condition labels, finish labels, and pricing/display rules
-- Saved searches and reusable filter presets for collection, wishlist, browse, and trade-building views
 - Trade packages for bundling named groups of cards into reusable offers
 - Import source profile editor and community-shareable adapter packs
 - Collection/deck collaboration tools such as shared binders, shared wishlists, and group-curated trade boxes
@@ -454,17 +537,17 @@ Imports and integrations:
 Security, operations, and maintenance:
 
 - Passkey policy controls, recovery guidance, and admin-facing enrollment visibility for self-hosted groups
-- Background job runner abstraction with scheduling controls for imports, Scryfall refreshes, backups, webhooks, and email delivery
-- Deployment hardening guide with HTTPS reverse proxy, SMTP setup, backup restore drills, Docker volume notes, scheduled job expectations, and recommended production settings
+- Background job schedule controls, per-job run history, and richer progress reporting for long-running imports and Scryfall refreshes
+- Packaged release image publishing and signed release artifacts
 - Theme and accessibility polish such as high-contrast mode, reduced motion, and larger tap targets
 
 ## Security Notes
 
-Passwords are hashed with PBKDF2-HMAC-SHA256 and sessions use HttpOnly cookies. Authenticated browser forms include CSRF tokens, and sensitive routes use simple in-memory rate limits. Password reset tokens are stored as hashes, expire, and work once. Users can enable TOTP two-factor authentication from the Account page using an authenticator app, and BinderBridge generates one-time recovery codes for account recovery. Users can also register passkeys for passwordless login; passkeys work on localhost for development, but self-hosted deployments should use HTTPS and set `BINDERBRIDGE_PUBLIC_BASE_URL` to the public site origin. API tokens are stored as hashes and webhooks are signed with per-endpoint secrets. This self-hosted build is suitable for trusted small groups, but a public internet deployment should add HTTPS, persistent/distributed rate limiting, regular restore drills, and stricter production hardening.
+Passwords are hashed with PBKDF2-HMAC-SHA256 and sessions use HttpOnly cookies. Authenticated browser forms include CSRF tokens, and sensitive routes use rate limits. API and integration limits are stored in SQLite by default so they survive restarts and are shared by processes using the same database, with a memory fallback if persistence is disabled or temporarily unavailable. Password reset tokens are stored as hashes, expire, and work once. Pending or denied registrations cannot start sessions, complete passkey login, or use integrations. Registration moderation uses hashed signals for email, IP, network range, and user agent rather than raw network identifiers. Users can enable TOTP two-factor authentication from the Account page using an authenticator app, and BinderBridge generates one-time recovery codes for account recovery. Users can also register passkeys for passwordless login; passkeys work on localhost for development, but self-hosted deployments should use HTTPS and set `BINDERBRIDGE_PUBLIC_BASE_URL` to the public site origin. API tokens are stored as hashes and webhooks are signed with per-endpoint secrets. This self-hosted build is suitable for trusted small groups, but a public internet deployment should add HTTPS, regular restore drills, monitoring, and stricter production hardening.
 
 Profile changes require the current password. Password changes keep the current session active and sign out other active sessions.
 
-The first registered user is made an admin automatically. If an existing database has users but no admin yet, startup promotes the earliest user to admin. Admins can ban users, unban users, issue secure password recovery links, reset two-factor authentication, manage admin access, manage trusted trade status, set the completed-trade threshold for earning trust, and save private moderation notes.
+The first registered user is made an admin automatically. If an existing database has users but no admin yet, startup promotes the earliest user to admin. Admins can ban users, unban users, approve or deny pending registrations, issue secure password recovery links, reset two-factor authentication, manage admin access, manage trusted trade status, set the completed-trade threshold for earning trust, and save private moderation notes.
 
 Successful admin actions are recorded in the admin activity log. The log covers account moderation, role changes, trusted-status overrides, two-factor resets, invite and registration settings, trade fairness settings, trade issue reviews, and backup or restore actions.
 

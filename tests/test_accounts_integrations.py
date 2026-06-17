@@ -1,5 +1,7 @@
 """Account security, API, webhook, and account preference tests."""
 
+from http import HTTPStatus
+
 from tests.base import *  # noqa: F401,F403
 
 
@@ -313,6 +315,57 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertTrue(handled)
         self.assertIsNotNone(audit_log)
         self.assertEqual(request.error[0], "A valid API bearer token is required.")
+
+    def test_api_read_and_health_rate_limits_are_enforced(self):
+        user_id = app.create_user("api-limited", "password123", "API Limited")
+        token = app.create_api_token(user_id, "Read token", ["read"])["token"]
+        original_limits = dict(app.RATE_LIMITS)
+
+        class DummyApiRequest:
+            command = "GET"
+            _request_path = "/api/v1/me"
+
+            def __init__(self, auth_token=None):
+                self.headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+                self.response = None
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def api_authenticate(self, required_scope="read"):
+                return app.api_authenticate(self, required_scope)
+
+            def client_ip(self):
+                return "198.51.100.8"
+
+        try:
+            app.RATE_LIMITS["api_read"] = (1, 60)
+            request = DummyApiRequest(token)
+            app.api_dispatch(request, "GET", "/api/v1/me", {})
+            self.assertEqual(request.response[1], HTTPStatus.OK)
+
+            limited = DummyApiRequest(token)
+            app.api_dispatch(limited, "GET", "/api/v1/me", {})
+            self.assertEqual(limited.response[1], HTTPStatus.TOO_MANY_REQUESTS)
+            self.assertIn("read", limited.response[0]["error"])
+
+            app.clear_rate_limits()
+            app.RATE_LIMITS["api_health"] = (1, 60)
+            health = DummyApiRequest()
+            app.api_dispatch(health, "GET", "/api/v1/health", {})
+            self.assertEqual(health.response[1], HTTPStatus.OK)
+
+            health_limited = DummyApiRequest()
+            app.api_dispatch(health_limited, "GET", "/api/v1/health", {})
+            self.assertEqual(health_limited.response[1], HTTPStatus.TOO_MANY_REQUESTS)
+            self.assertIn("health", health_limited.response[0]["error"])
+        finally:
+            app.RATE_LIMITS.clear()
+            app.RATE_LIMITS.update(original_limits)
+            app.clear_rate_limits()
 
     def test_notification_webhooks_are_queued_and_delivered_with_payload(self):
         user_id = app.create_user("hookuser", "password123", "Hook User")

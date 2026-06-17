@@ -451,6 +451,7 @@ def admin_user_list():
             (SELECT MAX(requested_at) FROM password_recovery_requests WHERE user_id = users.id AND status = 'pending') AS recovery_requested_at
         FROM users
         ORDER BY is_banned DESC,
+            CASE registration_status WHEN 'pending' THEN 3 WHEN 'denied' THEN 2 ELSE 1 END DESC,
             CASE role
                 WHEN 'owner' THEN 50 WHEN 'admin' THEN 40 WHEN 'moderator' THEN 35
                 WHEN 'organizer' THEN 30 WHEN 'member' THEN 20 ELSE 10
@@ -474,23 +475,26 @@ def admin_set_user_ban(admin_user_id, target_user_id, should_ban, reason=""):
     if not target:
         raise ValueError("User not found.")
     require_user_management(admin_user_id, target, CAP_MODERATE_USERS)
-    execute(
-        """
-        UPDATE users
-        SET is_banned = ?, ban_reason = ?, banned_at = ?, updated_at = ?
-        WHERE id = ?
-        """,
-        (1 if should_ban else 0, sanitize_text_input(reason, max_length=1000).strip() if should_ban else "", now_iso() if should_ban else "", now_iso(), target_user_id),
-    )
-    if should_ban:
-        execute("DELETE FROM sessions WHERE user_id = ?", (target_user_id,))
+    timestamp = now_iso()
+    clean_reason = sanitize_text_input(reason, max_length=1000).strip() if should_ban else ""
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET is_banned = ?, ban_reason = ?, banned_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (1 if should_ban else 0, clean_reason, timestamp if should_ban else "", timestamp, target_user_id),
+        )
+        if should_ban:
+            revoke_user_access_for_moderation(conn, target_user_id, revoke_invites=True)
     log_admin_action(
         admin_user_id,
         "user_banned" if should_ban else "user_unbanned",
         target_user_id,
         "user",
         admin_audit_user_label(target),
-        sanitize_text_input(reason, max_length=1000).strip() if should_ban else "",
+        clean_reason,
     )
 
 

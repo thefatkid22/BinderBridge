@@ -700,6 +700,7 @@ def render_collection(user, query, notice=None, status="info"):
         </details>
         {collection_datalists}
     </form>
+    {render_saved_search_controls(user["id"], "collection", query)}
     {active_filter_chips}
     <section class="panel flush">{table}</section>
     {pagination}
@@ -1172,6 +1173,7 @@ def render_browse(user, query, notice=None, status="info"):
         </details>
         {browse_datalists}
     </form>
+    {render_saved_search_controls(user["id"], "browse", query)}
     {active_filter_chips}
     <section class="panel flush">{table}</section>
     {pagination}

@@ -189,7 +189,7 @@ def add_trade_comment(trade_id, user_id, body):
                 trade_id,
                 conn=conn,
             )
-    send_pending_trade_notification_emails()
+    start_notification_worker()
 
 
 
@@ -821,7 +821,7 @@ def update_trade_response(trade_id, user_id, decision, response_note="", fairnes
             (decision, sanitize_text_input(response_note, max_length=1200).strip(), timestamp, trade_id),
         )
         notify_trade_status_change(conn, trade_id, user_id, decision, response_note)
-    send_pending_trade_notification_emails()
+    start_notification_worker()
 
 
 def cancel_trade_offer(trade_id, user_id):
@@ -835,7 +835,7 @@ def cancel_trade_offer(trade_id, user_id):
             raise ValueError("Trade not found.")
         conn.execute("UPDATE trades SET status = 'cancelled', updated_at = ? WHERE id = ?", (timestamp, trade_id))
         notify_trade_status_change(conn, trade_id, user_id, "cancelled")
-    send_pending_trade_notification_emails()
+    start_notification_worker()
 
 
 def insert_trade_item_record(conn, trade_id, owner_id, item, quantity, side):
@@ -932,7 +932,7 @@ def create_trade_offer(proposer_id, recipient_id, proposer_note, offered, reques
                 trade_id,
                 conn=conn,
             )
-    send_pending_trade_notification_emails()
+    start_notification_worker()
     return trade_id
 
 
@@ -1130,7 +1130,7 @@ def complete_trade(trade_id, completed_by_user_id=None):
                     trade_id,
                     conn=conn,
                 )
-    send_pending_trade_notification_emails()
+    start_notification_worker()
 
 
 __all__ = [

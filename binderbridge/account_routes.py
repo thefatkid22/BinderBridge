@@ -24,6 +24,10 @@ def login(self, method, user):
         return self.html(render_login(notice="That username and password did not match.", status="error"), HTTPStatus.UNAUTHORIZED)
     if found["is_banned"]:
         return self.html(render_login(notice="This account has been banned. Contact an administrator.", status="error"), HTTPStatus.FORBIDDEN)
+    if row_value(found, "registration_status", "active") == REGISTRATION_STATUS_PENDING:
+        return self.html(render_login(notice="This account is waiting for administrator approval.", status="warning"), HTTPStatus.FORBIDDEN)
+    if row_value(found, "registration_status", "active") == REGISTRATION_STATUS_DENIED:
+        return self.html(render_login(notice="This account registration was not approved. Contact an administrator if this was unexpected.", status="error"), HTTPStatus.FORBIDDEN)
     if two_factor_enabled(found):
         challenge_token, _ = create_two_factor_challenge(found["id"])
         return self.html(render_two_factor_login(challenge_token))
@@ -145,14 +149,49 @@ def register(self, method, user, query=None):
         return self.html(render_register(invite_token=invite_token, invite=invite, invite_required=invite_required, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
     if len(password) < 8:
         return self.html(render_register(invite_token=invite_token, invite=invite, invite_required=invite_required, notice="Password must be at least 8 characters.", status="error"), HTTPStatus.BAD_REQUEST)
+    user_count_before = row("SELECT COUNT(*) AS count FROM users")["count"]
+    assessment = registration_risk_assessment(
+        username,
+        display_name or username,
+        email,
+        invite,
+        self.client_ip(),
+        self.headers.get("User-Agent", ""),
+    )
+    registration_status = registration_status_for_new_account(user_count_before, assessment["score"])
     try:
-        user_id = create_user(username, password, display_name or username, email=email)
+        user_id = create_user(
+            username,
+            password,
+            display_name or username,
+            email=email,
+            registration_status=registration_status,
+        )
+        record_registration_attempt(
+            user_id,
+            username,
+            display_name or username,
+            email,
+            invite,
+            self.client_ip(),
+            self.headers.get("User-Agent", ""),
+            assessment,
+            registration_status,
+        )
         if invite:
             accept_registration_invite(invite_token, user_id)
     except sqlite3.IntegrityError:
         return self.html(render_register(invite_token=invite_token, invite=invite, invite_required=invite_required, notice="That username is already taken.", status="error"), HTTPStatus.CONFLICT)
     except ValueError as exc:
         return self.html(render_register(invite_token=invite_token, invite=invite, invite_required=invite_required, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    if registration_status == REGISTRATION_STATUS_PENDING:
+        notify_registration_review_needed(user_id, assessment)
+        return self.html(
+            render_login(
+                notice="Account created. An administrator needs to approve it before you can sign in.",
+                status="info",
+            )
+        )
     token, expires_at = create_session(user_id)
     self.redirect_with_session("/", token, expires_at)
 

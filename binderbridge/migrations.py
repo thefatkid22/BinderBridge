@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 13
 
 
 def db_schema_version(conn):
@@ -419,6 +419,135 @@ def migrate_password_recovery(conn):
     )
 
 
+def migrate_background_job_runner(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS background_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_type TEXT NOT NULL,
+            unique_key TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
+            priority INTEGER NOT NULL DEFAULT 0,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 5,
+            available_at TEXT NOT NULL,
+            lease_owner TEXT NOT NULL DEFAULT '',
+            leased_until TEXT NOT NULL DEFAULT '',
+            progress_current INTEGER NOT NULL DEFAULT 0,
+            progress_total INTEGER NOT NULL DEFAULT 0,
+            progress_message TEXT NOT NULL DEFAULT '',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT NOT NULL DEFAULT '',
+            completed_at TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_background_jobs_claim
+            ON background_jobs(status, available_at, priority DESC, created_at, id);
+        CREATE INDEX IF NOT EXISTS idx_background_jobs_type_status
+            ON background_jobs(job_type, status, updated_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_background_jobs_lease
+            ON background_jobs(status, leased_until);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_background_jobs_active_unique
+            ON background_jobs(unique_key)
+            WHERE unique_key != '' AND status IN ('pending', 'running');
+        """
+    )
+
+
+def migrate_saved_searches(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS saved_searches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            context TEXT NOT NULL,
+            name TEXT NOT NULL COLLATE NOCASE,
+            query_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, context, name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_saved_searches_user_context
+            ON saved_searches(user_id, context, name COLLATE NOCASE, id);
+        """
+    )
+
+
+def migrate_rate_limit_events(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS rate_limit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bucket TEXT NOT NULL,
+            rate_key TEXT NOT NULL,
+            event_at REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rate_limit_events_bucket_key_time
+            ON rate_limit_events(bucket, rate_key, event_at);
+        CREATE INDEX IF NOT EXISTS idx_rate_limit_events_event_at
+            ON rate_limit_events(event_at);
+        """
+    )
+
+
+def migrate_registration_moderation(conn):
+    user_columns = {column["name"] for column in conn.execute("PRAGMA table_info(users)").fetchall()}
+    for name, definition in {
+        "registration_status": "TEXT NOT NULL DEFAULT 'active'",
+        "registration_review_note": "TEXT NOT NULL DEFAULT ''",
+        "registration_reviewed_by_user_id": "INTEGER NOT NULL DEFAULT 0",
+        "registration_reviewed_at": "TEXT NOT NULL DEFAULT ''",
+    }.items():
+        if name not in user_columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {name} {definition}")
+    conn.execute("UPDATE users SET registration_status = 'active' WHERE registration_status NOT IN ('active', 'pending', 'denied')")
+    conn.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_users_registration_status
+            ON users(registration_status, is_banned, created_at);
+
+        CREATE TABLE IF NOT EXISTS registration_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            invite_id INTEGER REFERENCES registration_invites(id) ON DELETE SET NULL,
+            inviter_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            username TEXT NOT NULL DEFAULT '',
+            display_name TEXT NOT NULL DEFAULT '',
+            email_domain TEXT NOT NULL DEFAULT '',
+            email_hash TEXT NOT NULL DEFAULT '',
+            ip_hash TEXT NOT NULL DEFAULT '',
+            subnet_hash TEXT NOT NULL DEFAULT '',
+            user_agent_hash TEXT NOT NULL DEFAULT '',
+            risk_score INTEGER NOT NULL DEFAULT 0,
+            risk_reasons_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active',
+            decision_note TEXT NOT NULL DEFAULT '',
+            reviewed_by_user_id INTEGER NOT NULL DEFAULT 0,
+            reviewed_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_registration_attempts_status
+            ON registration_attempts(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_registration_attempts_user
+            ON registration_attempts(user_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_registration_attempts_email_hash
+            ON registration_attempts(email_hash, status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_registration_attempts_ip_hash
+            ON registration_attempts(ip_hash, status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_registration_attempts_subnet_hash
+            ON registration_attempts(subnet_hash, status, created_at);
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
@@ -429,6 +558,10 @@ SCHEMA_MIGRATIONS = (
     (7, "wanted card share links", migrate_want_share_links),
     (8, "database maintenance history and storage snapshots", migrate_database_maintenance),
     (9, "secure password recovery requests and reset tokens", migrate_password_recovery),
+    (10, "durable background job runner", migrate_background_job_runner),
+    (11, "saved searches and filter presets", migrate_saved_searches),
+    (12, "persistent API rate limiting", migrate_rate_limit_events),
+    (13, "registration moderation and ban-evasion signals", migrate_registration_moderation),
 )
 
 
@@ -477,6 +610,10 @@ __all__ = [
     "migrate_want_share_links",
     "migrate_database_maintenance",
     "migrate_password_recovery",
+    "migrate_background_job_runner",
+    "migrate_saved_searches",
+    "migrate_rate_limit_events",
+    "migrate_registration_moderation",
     "SCHEMA_MIGRATIONS",
     "migration_timestamp",
     "record_schema_migration_history",
