@@ -1,15 +1,46 @@
+x-binderbridge-common: &binderbridge-common
+  build: .
+  image: binderbridge:local
+  restart: unless-stopped
+  init: true
+  volumes:
+    - binderbridge-data:/data
+    - ./deploy/binderbridge.production.ini:/config/binderbridge.ini:ro
+
+x-binderbridge-environment: &binderbridge-environment
+  BINDERBRIDGE_CONFIG: /config/binderbridge.ini
+  BINDERBRIDGE_DATA: /data
+  BINDERBRIDGE_HOST: 0.0.0.0
+  BINDERBRIDGE_PORT: 8000
+  BINDERBRIDGE_PUBLIC_BASE_URL: ${BINDERBRIDGE_PUBLIC_BASE_URL:-}
+  BINDERBRIDGE_SOURCE_URL: ${BINDERBRIDGE_SOURCE_URL:-https://github.com/thefatkid22/BinderBridge}
+  BINDERBRIDGE_SMTP_HOST: ${BINDERBRIDGE_SMTP_HOST:-}
+  BINDERBRIDGE_SMTP_PORT: ${BINDERBRIDGE_SMTP_PORT:-587}
+  BINDERBRIDGE_SMTP_USERNAME: ${BINDERBRIDGE_SMTP_USERNAME:-}
+  BINDERBRIDGE_SMTP_PASSWORD: ${BINDERBRIDGE_SMTP_PASSWORD:-}
+  BINDERBRIDGE_SMTP_FROM: ${BINDERBRIDGE_SMTP_FROM:-}
+  BINDERBRIDGE_SMTP_TLS: ${BINDERBRIDGE_SMTP_TLS:-true}
+  BINDERBRIDGE_SMTP_SSL: ${BINDERBRIDGE_SMTP_SSL:-false}
+  BINDERBRIDGE_JOB_RUNNER_MODE: ${BINDERBRIDGE_JOB_RUNNER_MODE:-external}
+
 services:
   binderbridge:
-    build: .
+    <<: *binderbridge-common
     ports:
-      - "8000:8000"
+      - "${BINDERBRIDGE_PUBLISHED_PORT:-8000}:8000"
     environment:
-      HOST: 0.0.0.0
-      PORT: 8000
-      BINDERBRIDGE_DATA: /data
-    volumes:
-      - binderbridge-data:/data
-    restart: unless-stopped
+      <<: *binderbridge-environment
+
+  binderbridge-worker:
+    <<: *binderbridge-common
+    command: ["python", "scripts/run_worker.py"]
+    depends_on:
+      binderbridge:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    environment:
+      <<: *binderbridge-environment
 
 volumes:
   binderbridge-data:

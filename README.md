@@ -95,6 +95,8 @@ Data is stored in `data/binderbridge.sqlite3` by default. Set `BINDERBRIDGE_DATA
 
 The first registered user becomes the site owner. For upgrades, create a backup first, stop BinderBridge, update the checkout, and restart it. SQLite migrations run automatically on startup.
 
+For Docker Compose, production config, worker, reverse-proxy, backup, and upgrade guidance, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ## CSV Import
 
 Open `My Cards -> Import` in the app and upload a CSV export. Built-in source profiles support ManaBox, Archidekt, Deckbox, Moxfield, Dragon Shield, and Delver Lens exports. Auto detect selects a profile from the file headers, while `Generic CSV` handles common headers including:
@@ -240,6 +242,8 @@ python -m unittest discover -s tests
 - `background_jobs.py`: legacy batched external price-refresh queue compatibility
 - `job_runner.py`: durable leased job queue, retries, recurring schedules, progress, and embedded/external worker orchestration
 - `scripts/run_worker.py`: standalone background worker entrypoint for deployments that separate web and worker processes
+- `deploy/binderbridge.production.ini`: Docker-oriented production defaults that can be overridden by environment variables
+- `docs/DEPLOYMENT.md`: Docker Compose, reverse-proxy, backup, upgrade, and worker operations guide
 - `views.py`: compatibility facade for feature-specific page renderers
 - `components.py`: shared HTML controls such as sort bars, active filter chips, pagination, and trade-picker paging
 - `saved_searches.py`, `saved_search_routes.py`: private reusable filter/sort presets and their save/delete actions
@@ -473,13 +477,24 @@ Run one external worker initially. SQLite safely coordinates leases and active-j
 
 ## Docker
 
-Build and run:
+Copy the example environment file, edit it for your host, then start the web and worker containers:
 
 ```powershell
-docker compose up --build
+Copy-Item .env.example .env
+docker compose up -d --build
 ```
 
-The compose file stores SQLite data in a named volume.
+The Compose stack runs the web app plus a separate background worker. Both containers share the `binderbridge-data` volume, which stores the SQLite database, backups, Scryfall cache, uploaded card photos, and dispute evidence.
+
+Useful commands:
+
+```powershell
+docker compose ps
+docker compose logs -f binderbridge binderbridge-worker
+docker compose restart binderbridge-worker
+```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production config, reverse-proxy, HTTPS, backup, restore, upgrade, and single-container notes.
 
 ## Release Validation
 
@@ -523,7 +538,7 @@ Security, operations, and maintenance:
 
 - Passkey policy controls, recovery guidance, and admin-facing enrollment visibility for self-hosted groups
 - Background job schedule controls, per-job run history, and richer progress reporting for long-running imports and Scryfall refreshes
-- Deployment hardening guide with HTTPS reverse proxy, SMTP setup, backup restore drills, Docker volume notes, scheduled job expectations, and recommended production settings
+- Packaged release image publishing and signed release artifacts
 - Theme and accessibility polish such as high-contrast mode, reduced motion, and larger tap targets
 
 ## Security Notes
