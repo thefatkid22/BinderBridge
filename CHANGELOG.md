@@ -6,18 +6,24 @@ The project uses semantic versioning while releases are published. During the al
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.2.0-alpha.2] - 2026-06-17
+
 ### Added
 
 - Durable SQLite-backed background job runner with leases, retries, recurring schedules, progress, cancellation, admin controls, and an optional standalone worker process
 - Personal saved filter and sort presets for collection, browse, wishlist, and both sides of the trade builder
 - SQLite-backed API and integration rate limits for failed auth, health checks, authenticated reads, writes, Scryfall lookups, and token/webhook management
 - Registration moderation with optional approval queues, privacy-safe ban-evasion signals, pending-account review, and stronger ban cleanup for sessions, API tokens, webhooks, and unused invites
+- Docker deployment polish with a non-root image, healthcheck, two-service Compose stack, production config template, `.env.example`, and deployment guide
 
 ### Changed
 
 - Routed Scryfall enrichment and refreshes, automatic backups, notification email delivery, webhooks, and legacy price work through the durable runner
 - Made normal notification and webhook request paths queue work instead of blocking on outbound delivery
 - Made rate limits configurable through the INI file or environment variables, with persistent storage enabled by default
+- Documented first-run setup, reverse-proxy/HTTPS expectations, backup and restore drills, Docker volume notes, worker operations, upgrades, and AGPL source requirements
 
 ## [0.2.0-alpha.1] - 2026-06-15
 
@@ -76,6 +82,7 @@ The project uses semantic versioning while releases are published. During the al
 - Broader non-MTG metadata and pricing support is not yet implemented
 - Confirmed large collection imports can take several minutes while the applied rows are written
 
-[Unreleased]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.1...HEAD
+[Unreleased]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.2...HEAD
+[0.2.0-alpha.2]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.1...v0.2.0-alpha.2
 [0.2.0-alpha.1]: https://github.com/thefatkid22/BinderBridge/compare/v0.1.0-alpha.1...v0.2.0-alpha.1
 [0.1.0-alpha.1]: https://github.com/thefatkid22/BinderBridge/releases/tag/v0.1.0-alpha.1
