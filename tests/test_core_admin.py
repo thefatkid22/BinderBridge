@@ -338,6 +338,58 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertNotIn("Trade issue queue", organizer_html)
         self.assertIn('href="/admin"', moderator_layout)
 
+    def test_admin_setup_wizard_renders_first_run_controls(self):
+        owner = factory.user_row("setup-owner", display_name="Setup Owner")
+
+        html = app.render_admin_setup_wizard(owner)
+
+        self.assertIn("First-run setup wizard", html)
+        self.assertIn('action="/admin/setup/public-url"', html)
+        self.assertIn('action="/admin/setup/registration"', html)
+        self.assertIn('action="/admin/setup/backup"', html)
+        self.assertIn('action="/admin/setup/scryfall"', html)
+        self.assertIn('name="redirect_to" value="/admin/setup"', html)
+        self.assertIn("Open setup wizard", app.render_admin(owner))
+
+    def test_admin_setup_public_url_setting_feeds_generated_links(self):
+        owner = factory.user_row("setup-url-owner", display_name="Setup URL Owner")
+
+        checklist = app.admin_onboarding_checklist()
+        public_item = next(item for item in checklist["items"] if item["key"] == "public_url")
+        self.assertFalse(public_item["complete"])
+
+        saved = app.set_public_base_url_setting("https://cards.example.test/")
+        fake_request = type("FakeRequest", (), {"headers": {}})()
+
+        updated = app.admin_onboarding_checklist()
+        updated_public_item = next(item for item in updated["items"] if item["key"] == "public_url")
+        html = app.render_admin_setup_wizard(owner)
+
+        self.assertEqual(saved, "https://cards.example.test")
+        self.assertEqual(app.public_base_url(fake_request), "https://cards.example.test")
+        self.assertTrue(updated_public_item["complete"])
+        self.assertIn("https://cards.example.test", html)
+        with self.assertRaisesRegex(ValueError, "http:// or https://"):
+            app.set_public_base_url_setting("cards.example.test")
+
+    def test_admin_setup_summary_tracks_registration_backup_and_complete_marker(self):
+        owner_id = app.create_user("setup-summary-owner", "password123", "Setup Summary Owner")
+
+        app.set_invite_only_registration(True)
+        app.set_registration_moderation_settings("suspicious", "25")
+        app.create_backup_archive(owner_id)
+        completed_at = app.mark_admin_setup_complete()
+        summary = app.admin_setup_summary()
+        registration_item = next(item for item in summary["checklist"]["items"] if item["key"] == "registration")
+        backup_item = next(item for item in summary["checklist"]["items"] if item["key"] == "backup")
+
+        self.assertTrue(summary["registration_invite_only"])
+        self.assertEqual(summary["registration_moderation"]["approval_mode"], "suspicious")
+        self.assertEqual(summary["registration_moderation"]["risk_threshold"], 25)
+        self.assertEqual(summary["completed_at"], completed_at)
+        self.assertIn("Invite-only", registration_item["detail"])
+        self.assertTrue(backup_item["complete"])
+
     def test_moderator_can_manage_members_but_not_higher_roles(self):
         owner_id = factory.create_user("mod-owner", display_name="Mod Owner")
         moderator_id = factory.create_user("mod-user", display_name="Mod User", role="moderator")
@@ -405,7 +457,10 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn('<table class="admin-table responsive-card-table">', html)
         self.assertIn('data-label="Controls"', html)
         self.assertIn("Onboarding checklist", html)
-        self.assertIn("0 of 5 complete", html)
+        self.assertIn("1 of 7 complete", html)
+        self.assertIn("Set public site URL", html)
+        self.assertIn("Choose registration policy", html)
+        self.assertIn("Open setup wizard", html)
         self.assertIn("Configure SMTP", html)
         self.assertIn("Create first backup", html)
         self.assertIn("Sync Scryfall bulk data", html)
@@ -443,6 +498,7 @@ class CoreAdminTests(BinderBridgeTestCase):
         original_email_configured = app.email_delivery_configured
         app.email_delivery_configured = lambda: True
         try:
+            app.set_public_base_url_setting("https://cards.example.test")
             app.create_backup_archive(admin["id"])
             app.store_scryfall_bulk_cards([
                 {
@@ -468,9 +524,10 @@ class CoreAdminTests(BinderBridgeTestCase):
             app.email_delivery_configured = original_email_configured
 
         self.assertTrue(checklist["is_complete"])
-        self.assertEqual(checklist["complete_count"], 5)
-        self.assertIn("5 of 5 complete", html)
+        self.assertEqual(checklist["complete_count"], 7)
+        self.assertIn("7 of 7 complete", html)
         self.assertIn("Complete", html)
+        self.assertIn("Links use https://cards.example.test.", html)
         self.assertIn("1 backup archive available", html)
         self.assertIn("1 invite created", html)
         self.assertIn("1 applied collection import recorded", html)

@@ -21,6 +21,12 @@ def admin_page(self, user, notice=None, status="info"):
     return self.html(render_admin(user, notice=notice, status=status))
 
 
+def admin_setup_page(self, user, notice=None, status="info", invite_result=None):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
+        return self.not_found(user)
+    return self.html(render_admin_setup_wizard(user, notice=notice, status=status, invite_result=invite_result))
+
+
 def admin_logs_page(self, user, query):
     if not require_capability(user, CAP_VIEW_AUDIT_LOG):
         return self.not_found(user)
@@ -419,6 +425,140 @@ def admin_registration_settings(self, user):
     return self.html(render_admin(updated, notice=f"Registration mode set to {mode}. Approval mode: {moderation['approval_mode_label']}."))
 
 
+def admin_setup_public_url(self, user):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
+        return self.not_found(user)
+    form = self.read_form()
+    try:
+        if form.get("intent", ["save"])[0] == "clear":
+            clear_public_base_url_setting()
+            public_url = ""
+            notice = "Public base URL cleared."
+        else:
+            public_url = set_public_base_url_setting(form.get("public_base_url", [""])[0])
+            notice = f"Public base URL saved as {public_url}."
+    except ValueError as exc:
+        return self.html(render_admin_setup_wizard(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    log_admin_action(
+        user["id"],
+        "setup_public_url_updated",
+        None,
+        "setting",
+        "Public base URL",
+        public_url or "Public base URL cleared.",
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    return self.html(render_admin_setup_wizard(updated, notice=notice))
+
+
+def admin_setup_registration(self, user):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
+        return self.not_found(user)
+    form = self.read_form()
+    enabled = form.get("invite_only_registration", [""])[0] == "1"
+    try:
+        moderation = set_registration_moderation_settings(
+            form.get("registration_approval_mode", [DEFAULT_REGISTRATION_APPROVAL_MODE])[0],
+            form.get("registration_risk_threshold", [DEFAULT_REGISTRATION_RISK_THRESHOLD])[0],
+        )
+    except ValueError as exc:
+        return self.html(render_admin_setup_wizard(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    invite_only = set_invite_only_registration(enabled)
+    log_admin_action(
+        user["id"],
+        "setup_registration_updated",
+        None,
+        "setting",
+        "First-run registration",
+        (
+            ("Invite-only registration enabled. " if invite_only else "Open registration enabled. ")
+            + f"Approval mode: {moderation['approval_mode_label']}; risk threshold {moderation['risk_threshold']}."
+        ),
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    mode = "invite-only" if invite_only else "open"
+    return self.html(render_admin_setup_wizard(updated, notice=f"Registration policy saved: {mode}; {moderation['approval_mode_label']}."))
+
+
+def admin_setup_backup(self, user):
+    if not require_capability(user, CAP_MANAGE_BACKUPS):
+        return self.not_found(user)
+    form = self.read_form()
+    try:
+        settings = set_automatic_backup_settings(
+            form.get("automatic_backup_enabled", [""])[0] == "1",
+            form.get("automatic_backup_interval_hours", [""])[0],
+            form.get("automatic_backup_retention_count", [""])[0],
+            form.get("automatic_backup_retention_days", [""])[0],
+        )
+        pruned = prune_backup_archives(settings["retention_count"], settings["retention_days"])
+        run_result = run_automatic_backup_once(force=True) if form.get("run_backup_now", [""])[0] == "1" else None
+    except ValueError as exc:
+        return self.html(render_admin_setup_wizard(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    mode = "enabled" if settings["enabled"] else "paused"
+    notice = f"Automatic backups {mode}."
+    if run_result:
+        if not run_result.get("success"):
+            notice = run_result.get("error", "Automatic backup failed.")
+            return self.html(render_admin_setup_wizard(user, notice=notice, status="error"), HTTPStatus.BAD_REQUEST)
+        notice += f" Created {run_result['archive']}."
+    if pruned.get("deleted"):
+        notice += f" Removed {len(pruned['deleted'])} old automatic backup{'s' if len(pruned['deleted']) != 1 else ''}."
+    log_admin_action(
+        user["id"],
+        "setup_backup_updated",
+        None,
+        "backup",
+        "First-run backups",
+        f"Automatic backups {mode}; every {settings['interval_hours']} hour(s); keep {settings['retention_count']}; retention {settings['retention_days']} day(s).",
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    return self.html(render_admin_setup_wizard(updated, notice=notice, status="warning" if pruned.get("failed") else "info"))
+
+
+def admin_setup_scryfall_sync(self, user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
+        return self.not_found(user)
+    started = start_scryfall_bulk_sync()
+    notice = "Scryfall bulk data sync started." if started else "Scryfall bulk data sync is already queued or running."
+    log_admin_action(
+        user["id"],
+        "setup_scryfall_sync_started",
+        None,
+        "scryfall",
+        "First-run Scryfall sync",
+        notice,
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    return self.html(render_admin_setup_wizard(updated, notice=notice))
+
+
+def admin_setup_complete(self, user):
+    if not require_capability(user, CAP_MANAGE_SETTINGS):
+        return self.not_found(user)
+    completed_at = mark_admin_setup_complete()
+    log_admin_action(
+        user["id"],
+        "setup_wizard_completed",
+        None,
+        "setting",
+        "First-run setup",
+        f"Marked complete at {completed_at}.",
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    return self.html(render_admin_setup_wizard(updated, notice="First-run setup marked complete."))
+
+
 def admin_registration_review(self, user, path):
     if not require_capability(user, CAP_MODERATE_USERS):
         return self.not_found(user)
@@ -461,6 +601,8 @@ def admin_invite_create(self, user):
         return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = f"Invite created for {invite_result['email']}. {invite_result['email_status']}"
+    if form.get("redirect_to", [""])[0] == "/admin/setup":
+        return self.html(render_admin_setup_wizard(updated, notice=notice, invite_result=invite_result))
     return self.html(render_admin(updated, notice=notice, invite_result=invite_result))
 
 
@@ -814,6 +956,7 @@ __all__ = [
     "admin_request_ip",
     "admin_user_agent",
     "admin_page",
+    "admin_setup_page",
     "admin_logs_page",
     "admin_health_page",
     "admin_collection_health_page",
@@ -836,6 +979,11 @@ __all__ = [
     "admin_trade_policy_settings",
     "admin_integration_policy_settings",
     "admin_registration_settings",
+    "admin_setup_public_url",
+    "admin_setup_registration",
+    "admin_setup_backup",
+    "admin_setup_scryfall_sync",
+    "admin_setup_complete",
     "admin_registration_review",
     "admin_invite_create",
     "admin_invite_revoke",

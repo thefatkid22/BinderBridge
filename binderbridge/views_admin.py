@@ -168,6 +168,7 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
             <div><p class="eyebrow">Overview</p><h2>Site operations at a glance</h2><p class="muted compact">Open a focused dashboard for imports, card data, maintenance, or database work.</p></div>
         </div>
         <div class="admin-operation-grid">
+            <a class="admin-operation-card" href="/admin/setup"><span class="pill">Setup</span><strong>First-run setup</strong><span>Walk through public URL, registration, backups, Scryfall, invites, and first import.</span></a>
             <a class="admin-operation-card" href="/admin/jobs"><span class="pill">Jobs</span><strong>Import and jobs</strong><span>Review imports, enrichment, price refreshes, and failed notifications.</span></a>
             <a class="admin-operation-card" href="/admin/collection-health"><span class="pill">Cards</span><strong>Collection health</strong><span>Find duplicates, invalid finishes, stale prices, and visibility coverage.</span></a>
             <a class="admin-operation-card" href="/admin/health"><span class="pill">Health</span><strong>Maintenance health</strong><span>See setup warnings, queued work, backup status, and failed delivery.</span></a>
@@ -430,6 +431,7 @@ def render_admin_onboarding_checklist():
                 <p class="muted compact">A short setup path for new admins bringing a fresh BinderBridge site online.</p>
             </div>
             <span class="status {'accepted' if checklist["is_complete"] else 'pending'}">{e(done_label)}</span>
+            <a class="button secondary small" href="/admin/setup">Open setup wizard</a>
         </div>
         <div class="onboarding-progress-row">
             <span>{e(complete_count)} of {e(total)} complete</span>
@@ -440,6 +442,203 @@ def render_admin_onboarding_checklist():
         <ul class="stack-list onboarding-list">{rows_html}</ul>
     </section>
     """
+
+
+def render_setup_status(complete, label=None):
+    return f'<span class="status {"accepted" if complete else "pending"}">{e(label or ("Complete" if complete else "Needs setup"))}</span>'
+
+
+def render_admin_setup_wizard(user, notice=None, status="info", invite_result=None):
+    summary = admin_setup_summary()
+    checklist = summary["checklist"]
+    complete_count = int(checklist["complete_count"])
+    total = int(checklist["total"] or 1)
+    progress = min(100, max(0, round((complete_count / total) * 100)))
+    completed_at = summary.get("completed_at", "")
+    setup_status = "Marked complete" if completed_at else "In progress"
+    setup_status_class = "accepted" if completed_at else "pending"
+    public_config = summary.get("public_base_url_config", "")
+    public_saved = summary.get("public_base_url_saved", "")
+    public_value = summary.get("public_base_url", "")
+    public_locked = bool(public_config)
+    public_detail = (
+        "Managed by environment or config file."
+        if public_locked
+        else "Saved in BinderBridge settings."
+        if public_saved
+        else "Not set yet. BinderBridge will infer links from each request until this is saved."
+    )
+    public_form_controls = (
+        f"""
+        <input class="span-2" id="setup-public-base-url" readonly name="public_base_url" value="{e(public_value)}">
+        <p class="muted compact span-2">This value is managed outside the UI. Change `BINDERBRIDGE_PUBLIC_BASE_URL` or `[server] public_base_url` in config to update it.</p>
+        """
+        if public_locked
+        else f"""
+        <input class="span-2" id="setup-public-base-url" name="public_base_url" type="url" maxlength="240" placeholder="https://cards.example.com" value="{e(public_value)}">
+        <p class="muted compact span-2">Use the real site origin users open in their browser. For passkeys and public installs, use HTTPS.</p>
+        <div class="form-actions span-2">
+            <button class="button primary" type="submit">Save public URL</button>
+            <button class="button ghost" name="intent" value="clear" type="submit">Clear</button>
+        </div>
+        """
+    )
+    moderation = summary.get("registration_moderation", {})
+    approval_options = option_tags(REGISTRATION_APPROVAL_MODE_OPTIONS, moderation.get("approval_mode", DEFAULT_REGISTRATION_APPROVAL_MODE))
+    invite_only = bool(summary.get("registration_invite_only"))
+    registration_label = "Invite-only" if invite_only else "Open registration"
+    smtp_configured = bool(summary.get("smtp_configured"))
+    smtp_status = "Configured" if smtp_configured else "Not configured"
+    backup = summary["backups"]["automatic"]
+    backup_rows = "".join(
+        f'<li><strong>{e(archive["name"])}</strong><span>{e(archive["size_label"])} - {e(archive["created_at"])}</span></li>'
+        for archive in summary["backups"].get("archives", [])
+    ) or '<li class="muted">No backup archives yet.</li>'
+    scryfall = summary.get("scryfall_bulk", {})
+    scryfall_count = int(scryfall.get("card_count", 0) or 0)
+    scryfall_error = scryfall.get("error", "")
+    scryfall_running = str(scryfall.get("status", "")).lower() in ("running", "queued")
+    scryfall_complete = scryfall_count > 0 and not scryfall_error
+    scryfall_status = "Synced" if scryfall_complete else "Running" if scryfall_running else "Error" if scryfall_error else "Not synced"
+    invite_result_panel = ""
+    if invite_result:
+        invite_result_panel = f"""
+        <div class="invite-result span-2">
+            <strong>Invite link</strong>
+            <input readonly value="{e(invite_result["link"])}" onclick="this.select()">
+            <span class="subtle">Expires {e(invite_result["expires_at"][:10])}</span>
+        </div>
+        """
+    checklist_rows = "".join(render_admin_onboarding_item(item) for item in checklist["items"])
+    content = f"""
+    <section class="section-heading">
+        <div>
+            <p class="eyebrow">Admin setup</p>
+            <h1>First-run setup wizard</h1>
+            <p class="muted compact">Bring a fresh BinderBridge site online with the important operations in one place.</p>
+        </div>
+        <div class="actions">
+            <a class="button secondary" href="/admin">Back to admin</a>
+            <a class="button secondary" href="/admin/health">Maintenance health</a>
+        </div>
+    </section>
+    <section class="panel setup-wizard-overview">
+        <div class="panel-heading">
+            <div>
+                <h2>Setup progress</h2>
+                <p class="muted compact">{e(complete_count)} of {e(total)} setup checks complete.</p>
+            </div>
+            <span class="status {setup_status_class}">{e(setup_status)}</span>
+        </div>
+        <div class="onboarding-progress-row">
+            <span>{e(progress)}% ready</span>
+            <div class="onboarding-progress" aria-label="{e(complete_count)} of {e(total)} onboarding steps complete">
+                <span style="width: {e(progress)}%"></span>
+            </div>
+        </div>
+        <ul class="stack-list onboarding-list">{checklist_rows}</ul>
+    </section>
+    <section class="setup-wizard-grid">
+        <form class="panel form-grid compact-form setup-step-card" id="setup-public-url" method="post" action="/admin/setup/public-url">
+            <div class="span-2 panel-heading">
+                <div><h2>1. Public URL</h2><p class="muted compact">{e(public_detail)}</p></div>
+                {render_setup_status(bool(public_value), "Configured" if public_value else "Missing")}
+            </div>
+            <label class="span-2" for="setup-public-base-url">Public base URL</label>
+            {public_form_controls}
+        </form>
+        <form class="panel form-grid compact-form setup-step-card" id="setup-registration" method="post" action="/admin/setup/registration">
+            <div class="span-2 panel-heading">
+                <div><h2>2. Registration</h2><p class="muted compact">Pick the default path for new members.</p></div>
+                <span class="pill">{e(registration_label)}</span>
+            </div>
+            <label class="checkbox-line span-2">
+                <input type="checkbox" name="invite_only_registration" value="1"{checked(invite_only)}>
+                Require an invite link for new accounts
+            </label>
+            <label class="span-2">Account approval
+                <select name="registration_approval_mode">{approval_options}</select>
+            </label>
+            <label>Suspicious score threshold
+                <input name="registration_risk_threshold" type="number" min="0" max="1000" step="1" value="{e(moderation.get("risk_threshold", DEFAULT_REGISTRATION_RISK_THRESHOLD))}">
+            </label>
+            <p class="muted compact span-2">For local groups, invite-only plus suspicious-account review is a comfortable default.</p>
+            <div class="form-actions span-2"><button class="button primary" type="submit">Save registration policy</button></div>
+        </form>
+        <article class="panel setup-step-card" id="setup-smtp">
+            <div class="panel-heading">
+                <div><h2>3. Email delivery</h2><p class="muted compact">SMTP powers invite emails, password recovery email, and optional notification email.</p></div>
+                {render_setup_status(smtp_configured, smtp_status)}
+            </div>
+            <p class="muted compact">SMTP is configured from environment variables or `binderbridge.ini`. Without SMTP, admins can still create manual invite and recovery links.</p>
+            <div class="actions"><a class="button secondary" href="/admin/health">Open email health</a><a class="button ghost" href="/account/profile#account-notifications">Notification settings</a></div>
+        </article>
+        <form class="panel form-grid compact-form setup-step-card" id="setup-backups" method="post" action="/admin/setup/backup">
+            <div class="span-2 panel-heading">
+                <div><h2>4. Backups</h2><p class="muted compact">Create a first safety backup and choose automatic backup retention.</p></div>
+                {render_setup_status(bool(summary["backups"].get("archives")), "Backed up" if summary["backups"].get("archives") else "No backups")}
+            </div>
+            <label class="checkbox-line span-2">
+                <input type="checkbox" name="automatic_backup_enabled" value="1"{checked(backup["enabled"])}>
+                Run scheduled backups
+            </label>
+            <label>Every hours
+                <input name="automatic_backup_interval_hours" type="number" min="1" step="1" value="{e(backup["interval_hours"])}">
+            </label>
+            <label>Keep newest
+                <input name="automatic_backup_retention_count" type="number" min="1" step="1" value="{e(backup["retention_count"])}">
+            </label>
+            <label>Delete older than days
+                <input name="automatic_backup_retention_days" type="number" min="0" step="1" value="{e(backup["retention_days"])}">
+            </label>
+            <label class="checkbox-line">
+                <input type="checkbox" name="run_backup_now" value="1">
+                Create a backup now
+            </label>
+            <div class="form-actions span-2"><button class="button primary" type="submit">Save backup plan</button><a class="button ghost" href="/admin#admin-operations">Open backup tools</a></div>
+            <ul class="stack-list compact-stack span-2">{backup_rows}</ul>
+        </form>
+        <form class="panel setup-step-card" id="setup-scryfall" method="post" action="/admin/setup/scryfall">
+            <div class="panel-heading">
+                <div><h2>5. Scryfall data</h2><p class="muted compact">Local bulk data improves imports, lookup matching, finish checks, and price refreshes.</p></div>
+                {render_setup_status(scryfall_complete, scryfall_status)}
+            </div>
+            <p class="muted compact">{e(scryfall_count)} cached card records. Last update: {e(str(scryfall.get("updated_at", "") or "Never")[:16].replace("T", " "))}.</p>
+            {f'<p class="notice error compact">{e(scryfall_error)}</p>' if scryfall_error else ''}
+            <div class="actions"><button class="button primary" type="submit"{' disabled' if scryfall_running else ''}>{e("Sync running" if scryfall_running else "Start Scryfall sync")}</button><a class="button ghost" href="/admin/jobs">Open jobs</a></div>
+        </form>
+        <form class="panel form-grid compact-form setup-step-card" id="setup-invite" method="post" action="/admin/invites">
+            <input type="hidden" name="redirect_to" value="/admin/setup">
+            <div class="span-2 panel-heading">
+                <div><h2>6. First invite</h2><p class="muted compact">Create a first invite for another member or tester.</p></div>
+                {render_setup_status(summary["invite_count"] > 0, f'{summary["invite_count"]} created')}
+            </div>
+            <label class="span-2">Recipient email
+                <input required name="email" type="email" maxlength="254" autocomplete="email">
+            </label>
+            <p class="muted compact span-2">If SMTP is not configured, BinderBridge will show a copyable invite link.</p>
+            <div class="form-actions span-2"><button class="button primary" type="submit">Create invite</button><a class="button ghost" href="/admin#admin-invites">Review invites</a></div>
+            {invite_result_panel}
+        </form>
+        <article class="panel setup-step-card" id="setup-import">
+            <div class="panel-heading">
+                <div><h2>7. First collection import</h2><p class="muted compact">Import collection CSVs after backup and Scryfall setup are ready.</p></div>
+                {render_setup_status(summary["import_count"] > 0, f'{summary["import_count"]} imports')}
+            </div>
+            <p class="muted compact">Use ManaBox, Archidekt, Deckbox, Moxfield, Dragon Shield, Delver Lens, or a custom CSV mapping preset.</p>
+            <div class="actions"><a class="button primary" href="/import">Open import</a><a class="button ghost" href="/collection">Open collection</a></div>
+        </article>
+        <form class="panel setup-step-card" id="setup-complete" method="post" action="/admin/setup/complete">
+            <div class="panel-heading">
+                <div><h2>Finish setup</h2><p class="muted compact">Mark the wizard complete once the site is ready for your group.</p></div>
+                {render_setup_status(bool(completed_at), "Complete" if completed_at else "Optional")}
+            </div>
+            <p class="muted compact">You can come back to this page any time. The admin health page continues to show operational warnings.</p>
+            <div class="actions"><button class="button primary" type="submit">Mark setup complete</button><a class="button secondary" href="/admin">Return to admin</a></div>
+        </form>
+    </section>
+    """
+    return render_layout(user, "First-run setup", content, active="admin", notice=notice, status=status)
 
 
 def health_time_label(value):
