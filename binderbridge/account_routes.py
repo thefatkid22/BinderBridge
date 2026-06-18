@@ -270,7 +270,7 @@ def logout(self):
     self.end_headers()
 
 def public_base_url(self):
-    configured = config_str("BINDERBRIDGE_PUBLIC_BASE_URL", "PUBLIC_BASE_URL", default="", section="server", key="public_base_url")
+    configured = configured_public_base_url() if globals().get("configured_public_base_url") else config_str("BINDERBRIDGE_PUBLIC_BASE_URL", "PUBLIC_BASE_URL", default="", section="server", key="public_base_url")
     if configured:
         return configured.rstrip("/")
     host = sanitize_text_input(self.headers.get("Host", ""), max_length=120).strip()

@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from binderbridge.config import config_bool, config_int, config_str
 
@@ -26,6 +27,8 @@ AUTOMATIC_BACKUP_RETENTION_DAYS_KEY = "automatic_backup_retention_days"
 AUTOMATIC_BACKUP_LAST_RUN_KEY = "automatic_backup_last_run"
 AUTOMATIC_BACKUP_LAST_SUCCESS_KEY = "automatic_backup_last_success"
 AUTOMATIC_BACKUP_LAST_ERROR_KEY = "automatic_backup_last_error"
+PUBLIC_BASE_URL_SETTING_KEY = "public_base_url"
+ADMIN_SETUP_COMPLETED_AT_KEY = "admin_setup_completed_at"
 BACKUP_INTEGRITY_LAST_CHECK_KEY = "backup_integrity_last_check"
 BACKUP_INTEGRITY_LAST_STATUS_KEY = "backup_integrity_last_status"
 BACKUP_INTEGRITY_LAST_MESSAGE_KEY = "backup_integrity_last_message"
@@ -82,6 +85,68 @@ INDEX_USAGE_SAMPLE_QUERIES = (
         ("", ""),
     ),
 )
+
+
+def config_public_base_url():
+    return config_str(
+        "BINDERBRIDGE_PUBLIC_BASE_URL",
+        "PUBLIC_BASE_URL",
+        default="",
+        section="server",
+        key="public_base_url",
+    ).strip().rstrip("/")
+
+
+def saved_public_base_url():
+    return get_setting(PUBLIC_BASE_URL_SETTING_KEY, "").strip().rstrip("/")
+
+
+def configured_public_base_url():
+    return config_public_base_url() or saved_public_base_url()
+
+
+def normalize_public_base_url(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("Public base URL must start with http:// or https:// and include a host.")
+    if parsed.username or parsed.password:
+        raise ValueError("Public base URL cannot include a username or password.")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Public base URL cannot include query strings or fragments.")
+    if parsed.path and parsed.path != "/":
+        raise ValueError("Public base URL should be the site origin only, without an extra path.")
+    host = parsed.hostname or ""
+    if not host or len(host) > 253:
+        raise ValueError("Public base URL host is not valid.")
+    netloc = parsed.netloc.lower()
+    return f"{parsed.scheme}://{netloc}".rstrip("/")
+
+
+def set_public_base_url_setting(value):
+    if config_public_base_url():
+        raise ValueError("Public base URL is managed by the config file or environment variables.")
+    clean = normalize_public_base_url(value)
+    set_setting(PUBLIC_BASE_URL_SETTING_KEY, clean)
+    return clean
+
+
+def clear_public_base_url_setting():
+    if config_public_base_url():
+        raise ValueError("Public base URL is managed by the config file or environment variables.")
+    set_setting(PUBLIC_BASE_URL_SETTING_KEY, "")
+
+
+def mark_admin_setup_complete():
+    timestamp = now_iso()
+    set_setting(ADMIN_SETUP_COMPLETED_AT_KEY, timestamp)
+    return timestamp
+
+
+def admin_setup_completed_at():
+    return get_setting(ADMIN_SETUP_COMPLETED_AT_KEY, "")
 
 
 def backup_directory():
@@ -929,6 +994,12 @@ def admin_onboarding_checklist():
     bulk_status_func = globals().get("scryfall_bulk_status")
     bulk_status = bulk_status_func() if bulk_status_func else {}
     email_configured = email_delivery_configured()
+    public_url = configured_public_base_url()
+    invite_only_func = globals().get("invite_only_registration_enabled")
+    moderation_settings_func = globals().get("registration_moderation_settings")
+    invite_only = bool(invite_only_func()) if invite_only_func else False
+    moderation = moderation_settings_func() if moderation_settings_func else {}
+    approval_mode_label = moderation.get("approval_mode_label", "Off")
     backup_count = len(backups.get("archives", []))
     bulk_card_count = int(bulk_status.get("card_count", 0) or 0)
     bulk_state = str(bulk_status.get("status", "idle") or "idle")
@@ -954,6 +1025,26 @@ def admin_onboarding_checklist():
         else "Not synced"
     )
     items = [
+        {
+            "key": "public_url",
+            "title": "Set public site URL",
+            "detail": f"Links use {public_url}." if public_url else "Set the public URL used for invites, password recovery, passkeys, and notification links.",
+            "complete": bool(public_url),
+            "status_label": "Complete" if public_url else "Not set",
+            "action_label": "Open setup",
+            "action_url": "/admin/setup",
+            "action_method": "get",
+        },
+        {
+            "key": "registration",
+            "title": "Choose registration policy",
+            "detail": f"{'Invite-only' if invite_only else 'Open registration'}; approval mode: {approval_mode_label}.",
+            "complete": True,
+            "status_label": "Configured",
+            "action_label": "Review policy",
+            "action_url": "/admin/setup#setup-registration",
+            "action_method": "get",
+        },
         {
             "key": "smtp",
             "title": "Configure SMTP",
@@ -1024,6 +1115,37 @@ def admin_onboarding_checklist():
         "complete_count": complete_count,
         "total": len(items),
         "is_complete": complete_count == len(items),
+        "completed_at": admin_setup_completed_at(),
+    }
+
+
+def admin_setup_summary():
+    checklist = admin_onboarding_checklist()
+    backups = backup_status(limit=3)
+    bulk_status_func = globals().get("scryfall_bulk_status")
+    bulk_status = bulk_status_func() if bulk_status_func else {}
+    moderation_settings_func = globals().get("registration_moderation_settings")
+    invite_only_func = globals().get("invite_only_registration_enabled")
+    return {
+        "checklist": checklist,
+        "public_base_url": configured_public_base_url(),
+        "public_base_url_config": config_public_base_url(),
+        "public_base_url_saved": saved_public_base_url(),
+        "registration_invite_only": bool(invite_only_func()) if invite_only_func else False,
+        "registration_moderation": moderation_settings_func() if moderation_settings_func else {},
+        "smtp_configured": email_delivery_configured(),
+        "backups": backups,
+        "scryfall_bulk": bulk_status,
+        "invite_count": int(row("SELECT COUNT(*) AS count FROM registration_invites")["count"] or 0),
+        "import_count": int(row(
+            """
+            SELECT COUNT(*) AS count
+            FROM import_batches
+            WHERE import_type = 'collection_csv'
+                AND status IN ('applied', 'undone')
+            """
+        )["count"] or 0),
+        "completed_at": admin_setup_completed_at(),
     }
 
 
@@ -1094,7 +1216,7 @@ def maintenance_setup_warnings(health):
             "Open database tools",
             "/admin/database",
         )
-    if not config_str("BINDERBRIDGE_PUBLIC_BASE_URL", "PUBLIC_BASE_URL", default="", section="server", key="public_base_url").strip():
+    if not configured_public_base_url():
         add("info", "Public base URL is not set", "Email and webhook links may be relative until a public base URL is configured.", "Open admin panel", "/admin")
 
     return warnings
@@ -1717,6 +1839,8 @@ __all__ = [
     "AUTOMATIC_BACKUP_LAST_RUN_KEY",
     "AUTOMATIC_BACKUP_LAST_SUCCESS_KEY",
     "AUTOMATIC_BACKUP_LAST_ERROR_KEY",
+    "PUBLIC_BASE_URL_SETTING_KEY",
+    "ADMIN_SETUP_COMPLETED_AT_KEY",
     "BACKUP_INTEGRITY_LAST_CHECK_KEY",
     "BACKUP_INTEGRITY_LAST_STATUS_KEY",
     "BACKUP_INTEGRITY_LAST_MESSAGE_KEY",
@@ -1738,6 +1862,14 @@ __all__ = [
     "JOB_DASHBOARD_RETRY_STATUSES",
     "DATABASE_MAINTENANCE_ACTIONS",
     "INDEX_USAGE_SAMPLE_QUERIES",
+    "config_public_base_url",
+    "saved_public_base_url",
+    "configured_public_base_url",
+    "normalize_public_base_url",
+    "set_public_base_url_setting",
+    "clear_public_base_url_setting",
+    "mark_admin_setup_complete",
+    "admin_setup_completed_at",
     "backup_directory",
     "bytes_label",
     "database_related_file_size",
@@ -1773,6 +1905,7 @@ __all__ = [
     "maintenance_failed_notification_rows",
     "maintenance_job_dashboard",
     "admin_onboarding_checklist",
+    "admin_setup_summary",
     "maintenance_count_for_statuses",
     "maintenance_setup_warnings",
     "retry_recoverable_maintenance_jobs",

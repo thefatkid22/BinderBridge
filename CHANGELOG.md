@@ -6,7 +6,13 @@ The project uses semantic versioning while releases are published. During the al
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- First-run admin setup wizard for public URL, registration policy, email readiness, backups, Scryfall sync, first invites, and first collection import
+
+### Changed
+
+- Admin onboarding now includes public URL and registration-policy checks, with saved public URLs feeding invite and password-recovery link generation when no config value is set
 
 ## [0.2.0-alpha.2] - 2026-06-17
 

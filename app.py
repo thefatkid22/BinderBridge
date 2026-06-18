@@ -500,6 +500,18 @@ class App(BaseHTTPRequestHandler):
                 return self.condition_finish_audit_normalize_all(user)
             if path == "/admin":
                 return self.admin_page(user)
+            if path == "/admin/setup":
+                return self.admin_setup_page(user)
+            if path == "/admin/setup/public-url" and method == "POST":
+                return self.admin_setup_public_url(user)
+            if path == "/admin/setup/registration" and method == "POST":
+                return self.admin_setup_registration(user)
+            if path == "/admin/setup/backup" and method == "POST":
+                return self.admin_setup_backup(user)
+            if path == "/admin/setup/scryfall" and method == "POST":
+                return self.admin_setup_scryfall_sync(user)
+            if path == "/admin/setup/complete" and method == "POST":
+                return self.admin_setup_complete(user)
             if path == "/admin/health":
                 return self.admin_health_page(user)
             if path == "/admin/collection-health":
