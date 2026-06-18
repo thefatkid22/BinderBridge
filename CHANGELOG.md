@@ -6,6 +6,10 @@ The project uses semantic versioning while releases are published. During the al
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.2.0-alpha.3] - 2026-06-18
+
 ### Added
 
 - First-run admin setup wizard for public URL, registration policy, email readiness, backups, Scryfall sync, first invites, and first collection import
@@ -89,7 +93,8 @@ The project uses semantic versioning while releases are published. During the al
 - Broader non-MTG metadata and pricing support is not yet implemented
 - Confirmed large collection imports can take several minutes while the applied rows are written
 
-[Unreleased]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.2...HEAD
+[Unreleased]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.3...HEAD
+[0.2.0-alpha.3]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.2...v0.2.0-alpha.3
 [0.2.0-alpha.2]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.1...v0.2.0-alpha.2
 [0.2.0-alpha.1]: https://github.com/thefatkid22/BinderBridge/compare/v0.1.0-alpha.1...v0.2.0-alpha.1
 [0.1.0-alpha.1]: https://github.com/thefatkid22/BinderBridge/releases/tag/v0.1.0-alpha.1
