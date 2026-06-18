@@ -13,6 +13,7 @@ The project uses semantic versioning while releases are published. During the al
 ### Changed
 
 - Admin onboarding now includes public URL and registration-policy checks, with saved public URLs feeding invite and password-recovery link generation when no config value is set
+- Polished the first-run setup experience with small-local-group recommendations, a setup-complete admin banner, direct configuration documentation links, and copyable manual invite links
 
 ## [0.2.0-alpha.2] - 2026-06-17
 

@@ -231,6 +231,40 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             }});
         }})();
         (function () {{
+            document.addEventListener("click", async function (event) {{
+                var button = event.target.closest("[data-copy-target]");
+                if (!button) return;
+                var target = document.querySelector(button.getAttribute("data-copy-target"));
+                if (!target) return;
+                event.preventDefault();
+
+                var value = target.value || target.textContent || "";
+                var original = button.getAttribute("data-copy-label") || button.textContent || "Copy";
+                try {{
+                    if (navigator.clipboard && window.isSecureContext) {{
+                        await navigator.clipboard.writeText(value);
+                    }} else {{
+                        if (typeof target.focus === "function") target.focus();
+                        if (typeof target.select === "function") target.select();
+                        document.execCommand("copy");
+                    }}
+                    button.textContent = "Copied";
+                    button.classList.add("copied");
+                    window.setTimeout(function () {{
+                        button.textContent = original;
+                        button.classList.remove("copied");
+                    }}, 1800);
+                }} catch (error) {{
+                    if (typeof target.focus === "function") target.focus();
+                    if (typeof target.select === "function") target.select();
+                    button.textContent = "Select and copy";
+                    window.setTimeout(function () {{
+                        button.textContent = original;
+                    }}, 2200);
+                }}
+            }});
+        }})();
+        (function () {{
             var dialog = document.getElementById("confirm-dialog");
             var message = document.getElementById("confirm-dialog-message");
             var confirmButton = document.getElementById("confirm-dialog-confirm");

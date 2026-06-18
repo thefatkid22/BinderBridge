@@ -27,7 +27,7 @@ License: **GNU AGPL-3.0**
 - Admin maintenance health dashboard for database size, backup status, Scryfall refresh status, queued jobs, email configuration, failed notifications, setup warnings, and needs-attention grouping
 - Admin collection health dashboard for duplicate rows, missing Scryfall data, invalid finishes, stale prices, per-user issue concentration, and public/private coverage
 - Admin data retention controls for pruning read notifications, audit logs, completed webhook delivery records, and resolved dispute evidence
-- Admin first-run setup wizard and onboarding checklist for public URL, registration settings, SMTP readiness, backups, Scryfall sync, first invites, and first collection import
+- Admin first-run setup wizard and onboarding checklist with small-group recommended defaults, public URL/config documentation links, SMTP readiness, backups, Scryfall sync, copyable manual invite links, and first collection import
 - Admin import/job dashboard for CSV imports, Scryfall enrichment, Scryfall price refresh status, failed jobs, retries, and import undo
 - Admin maintenance health actions for retrying recoverable jobs, replaying failed notification emails, checking backup integrity, and surfacing setup warnings
 - Personal collection tracking
@@ -95,7 +95,7 @@ Data is stored in `data/binderbridge.sqlite3` by default. Set `BINDERBRIDGE_DATA
 
 The first registered user becomes the site owner. For upgrades, create a backup first, stop BinderBridge, update the checkout, and restart it. SQLite migrations run automatically on startup.
 
-After the owner account is created, open `Admin -> First-run setup` to walk through public URL, registration policy, email readiness, scheduled backups, Scryfall bulk data, first invites, and first collection import.
+After the owner account is created, open `Admin -> First-run setup` to walk through public URL, recommended registration defaults for small local groups, email readiness, scheduled backups, Scryfall bulk data, first invites, and first collection import. When SMTP is not configured, the wizard shows copyable manual invite links.
 
 For Docker Compose, production config, worker, reverse-proxy, backup, and upgrade guidance, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 

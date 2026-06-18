@@ -349,7 +349,23 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn('action="/admin/setup/backup"', html)
         self.assertIn('action="/admin/setup/scryfall"', html)
         self.assertIn('name="redirect_to" value="/admin/setup"', html)
+        self.assertIn("Recommended defaults for small local groups", html)
+        self.assertIn("Recommended for small local groups", html)
+        self.assertIn("Configuration reference", html)
+        self.assertIn("Deployment first-run checklist", html)
+        self.assertIn("Public URL guidance", html)
         self.assertIn("Open setup wizard", app.render_admin(owner))
+
+        invite_html = app.render_admin_setup_wizard(owner, invite_result={
+            "email": "friend@example.com",
+            "link": "https://cards.example.test/register?invite=abc123",
+            "expires_at": "2026-07-01T00:00:00+00:00",
+            "email_status": "Manual link created.",
+        })
+
+        self.assertIn("Manual invite link", invite_html)
+        self.assertIn("Copy invite link", invite_html)
+        self.assertIn('data-copy-target="#setup-invite-link"', invite_html)
 
     def test_admin_setup_public_url_setting_feeds_generated_links(self):
         owner = factory.user_row("setup-url-owner", display_name="Setup URL Owner")
@@ -380,6 +396,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         app.create_backup_archive(owner_id)
         completed_at = app.mark_admin_setup_complete()
         summary = app.admin_setup_summary()
+        owner = app.row("SELECT * FROM users WHERE id = ?", (owner_id,))
+        admin_html = app.render_admin(owner)
         registration_item = next(item for item in summary["checklist"]["items"] if item["key"] == "registration")
         backup_item = next(item for item in summary["checklist"]["items"] if item["key"] == "backup")
 
@@ -387,6 +405,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertEqual(summary["registration_moderation"]["approval_mode"], "suspicious")
         self.assertEqual(summary["registration_moderation"]["risk_threshold"], 25)
         self.assertEqual(summary["completed_at"], completed_at)
+        self.assertIn("First-run setup complete", admin_html)
+        self.assertIn("Review setup wizard", admin_html)
         self.assertIn("Invite-only", registration_item["detail"])
         self.assertTrue(backup_item["complete"])
 
@@ -457,6 +477,7 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn('<table class="admin-table responsive-card-table">', html)
         self.assertIn('data-label="Controls"', html)
         self.assertIn("Onboarding checklist", html)
+        self.assertNotIn("First-run setup complete", html)
         self.assertIn("1 of 7 complete", html)
         self.assertIn("Set public site URL", html)
         self.assertIn("Choose registration policy", html)
