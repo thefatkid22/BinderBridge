@@ -1,15 +1,15 @@
-# BinderBridge v0.2.0-alpha.2
+# BinderBridge v0.2.0-alpha.3
 
-BinderBridge v0.2.0-alpha.2 is a stability, moderation, and deployment release for the self-hostable trading-card collection and trade-management application. It focuses on durable background work, reusable saved filters, registration moderation, API rate limiting, and Docker-based deployment polish.
+BinderBridge v0.2.0-alpha.3 is a first-run setup and self-hosting polish release for the trading-card collection and trade-management app. It focuses on helping a new owner bring a fresh install online with fewer loose ends.
 
 ## Highlights
 
-- Run Scryfall enrichment, price refreshes, imports, backups, notifications, webhooks, and legacy price work through a durable SQLite-backed job runner
-- Save reusable filter and sort presets across collection, browse, wishlist, and trade-builder screens
-- Protect API and integration endpoints with configurable SQLite-backed rate limits
-- Review pending registrations and suspicious signup signals before accounts can sign in
-- Deploy with a non-root Docker image, healthcheck, production config template, `.env.example`, and a two-service Compose stack with a dedicated worker
-- Use the new deployment guide for first-run setup, reverse proxy, backups, upgrades, worker operations, and AGPL source notes
+- Walk new owners through public URL, registration policy, SMTP readiness, backups, Scryfall sync, first invites, and first collection import from `Admin -> First-run setup`
+- Show recommended defaults for small local groups, including invite-only registration, suspicious-signup review, daily backups, and optional SMTP
+- Show a setup-complete banner on the admin dashboard after the first-run wizard is marked complete
+- Link directly from setup steps to configuration, deployment, HTTPS/public URL, and backup documentation
+- Create copyable manual invite links from the setup wizard when SMTP is not configured
+- Use saved public URLs for generated invite and password-recovery links when no environment or config value is set
 
 ## Installation
 
@@ -18,7 +18,7 @@ Requires Python 3.10 or newer:
 ```bash
 git clone https://github.com/thefatkid22/BinderBridge.git
 cd BinderBridge
-git checkout v0.2.0-alpha.2
+git checkout v0.2.0-alpha.3
 python app.py
 ```
 
@@ -35,29 +35,26 @@ docker compose up -d --build
 
 1. Create and download a backup from `Admin -> Backup and restore`.
 2. Stop BinderBridge.
-3. Update the checkout to `v0.2.0-alpha.2`.
+3. Update the checkout to `v0.2.0-alpha.3`.
 4. Start BinderBridge. SQLite migrations run automatically.
-5. Confirm the Admin health and database-maintenance pages show no errors.
+5. Open `Admin -> First-run setup` and review the setup checklist.
+6. Confirm `Admin -> Maintenance Health` shows no operational warnings.
 
 ## Alpha Notes
 
 - This release is intended for evaluation and trusted small-group use.
 - Back up the SQLite database before upgrades and periodically test restoration.
 - Use an HTTPS reverse proxy and set `BINDERBRIDGE_PUBLIC_BASE_URL` for any internet-facing deployment.
-- The Docker Compose deployment runs one web process and one worker process against the same SQLite volume. Keep worker concurrency modest.
-- Confirmed large collection imports can take several minutes while the applied rows are written.
+- SMTP is optional; manual invite and password-recovery links remain available for local groups.
 - Operators publishing modified versions should set `BINDERBRIDGE_SOURCE_URL` to the corresponding source repository.
 
 ## Validation
 
-- Focused registration/admin/auth tests: 68 tests
-- Full automated test suite: 229 tests
-- Fresh install and upgrade smoke checks through schema version 13
-- Published `v0.2.0-alpha.1` database migration from schema version 9 to schema version 13
-- Backup creation, restore, and post-restore SQLite integrity checks
-- Complete multi-user trade offer, acceptance, completion, card-transfer, and notification workflow
-- Confirmed 5,000-row CSV collection import
-- Docker Compose build, startup, worker start, `/api/v1/health`, and `/login` smoke checks
+- Focused admin/setup tests: 48 tests
+- Full automated test suite: 232 tests
+- Clean Docker fresh-install smoke test covering first owner registration, setup wizard, public URL, registration policy, backup creation, manual invite link, CSV import, and setup completion banner
+- Release smoke covering fresh install, schema upgrade, backup/restore integrity, complete trade workflow, and 5,000-row CSV import
+- Published `v0.2.0-alpha.2` database upgrade smoke to `v0.2.0-alpha.3` with preserved collection data and SQLite integrity checks
 - GitHub Actions PR checks for Python 3.10, 3.12, 3.13, and Docker startup smoke test
 
 BinderBridge is licensed under the GNU Affero General Public License v3.0.
