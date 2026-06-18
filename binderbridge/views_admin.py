@@ -3,6 +3,21 @@
 This module is wired by binderbridge.views; shared app helpers are injected at runtime.
 """
 
+def render_copyable_field(field_id, label, value, help_text="", button_label="Copy"):
+    help_html = f'<span class="subtle">{e(help_text)}</span>' if help_text else ""
+    return f"""
+    <div class="copyable-field span-2">
+        <label for="{e(field_id)}">{e(label)}
+            <input id="{e(field_id)}" readonly value="{e(value)}" onclick="this.select()">
+        </label>
+        <div class="copyable-field-actions">
+            <button class="button secondary small" type="button" data-copy-target="#{e(field_id)}" data-copy-label="{e(button_label)}">{e(button_label)}</button>
+            {help_html}
+        </div>
+    </div>
+    """
+
+
 def render_staff_admin(user, notice=None, status="info", invite_result=None, recovery_result=None):
     can_moderate = user_has_capability(user, CAP_MODERATE_USERS)
     can_disputes = user_has_capability(user, CAP_MODERATE_DISPUTES)
@@ -25,7 +40,7 @@ def render_staff_admin(user, notice=None, status="info", invite_result=None, rec
             result_panel = f"""
             <div class="invite-result span-2">
                 <strong>Invite link</strong>
-                <input readonly value="{e(invite_result["link"])}" onclick="this.select()">
+                {render_copyable_field("staff-invite-link", "Invite link", invite_result["link"], "Share this link directly with the intended user.", "Copy invite link")}
             </div>
             """
         invite_panel = f"""
@@ -106,8 +121,7 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
         invite_result_panel = f"""
         <div class="invite-result span-2">
             <strong>Invite link</strong>
-            <input readonly value="{e(invite_result["link"])}" onclick="this.select()">
-            <span class="subtle">Expires {e(invite_result["expires_at"][:10])}</span>
+            {render_copyable_field("admin-invite-link", "Invite link", invite_result["link"], f'Expires {invite_result["expires_at"][:10]}', "Copy invite link")}
         </div>
         """
     recovery_result_panel = ""
@@ -119,9 +133,7 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
                 <span class="status pending">Share securely</span>
             </div>
             <p class="muted compact span-2">This one-time link was shown because email delivery was unavailable. Share it directly with the intended user. It expires {e(recovery_result["expires_at"][:16].replace("T", " "))} UTC.</p>
-            <label class="span-2">Recovery link
-                <input readonly value="{e(recovery_result["link"])}" onclick="this.select()">
-            </label>
+            {render_copyable_field("admin-recovery-link", "Recovery link", recovery_result["link"], "Share this securely. It can only be used once.", "Copy recovery link")}
         </article>
         """
     backups = backup_status()
@@ -147,6 +159,7 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
     recent_disputes = trade_dispute_admin_rows({"status": ""}, limit=5)
     recent_dispute_rows = "".join(render_trade_dispute_summary_item(item) for item in recent_disputes) or '<li class="muted">No trade issues reported yet.</li>'
     onboarding_panel = render_admin_onboarding_checklist()
+    setup_completion_banner = render_admin_setup_completion_banner()
     content = f"""
     <section class="section-heading">
         <div>
@@ -163,6 +176,7 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
         ("#admin-users", "Users", "Roles, trust, and recovery"),
     ], label="Admin control panel")}
     {recovery_result_panel}
+    {setup_completion_banner}
     <section class="workspace-section" id="admin-overview">
         <div class="workspace-section-heading">
             <div><p class="eyebrow">Overview</p><h2>Site operations at a glance</h2><p class="muted compact">Open a focused dashboard for imports, card data, maintenance, or database work.</p></div>
@@ -444,6 +458,30 @@ def render_admin_onboarding_checklist():
     """
 
 
+def render_admin_setup_completion_banner():
+    summary = admin_setup_summary()
+    completed_at = summary.get("completed_at", "")
+    if not completed_at:
+        return ""
+    completed_label = completed_at[:16].replace("T", " ")
+    return f"""
+    <section class="panel setup-completion-banner" aria-label="First-run setup status">
+        <div class="panel-heading">
+            <div>
+                <p class="eyebrow">Setup complete</p>
+                <h2>First-run setup complete</h2>
+                <p class="muted compact">Marked complete {e(completed_label)}. Keep the health dashboard handy for ongoing operations.</p>
+            </div>
+            <span class="status accepted">Ready</span>
+        </div>
+        <div class="actions">
+            <a class="button secondary" href="/admin/setup">Review setup wizard</a>
+            <a class="button ghost" href="/admin/health">Open maintenance health</a>
+        </div>
+    </section>
+    """
+
+
 def render_setup_status(complete, label=None):
     return f'<span class="status {"accepted" if complete else "pending"}">{e(label or ("Complete" if complete else "Needs setup"))}</span>'
 
@@ -500,13 +538,27 @@ def render_admin_setup_wizard(user, notice=None, status="info", invite_result=No
     scryfall_running = str(scryfall.get("status", "")).lower() in ("running", "queued")
     scryfall_complete = scryfall_count > 0 and not scryfall_error
     scryfall_status = "Synced" if scryfall_complete else "Running" if scryfall_running else "Error" if scryfall_error else "Not synced"
+    docs_base = str(SOURCE_URL or "").rstrip("/")
+    readme_config_url = f"{docs_base}/blob/HEAD/README.md#configuration"
+    deployment_first_run_url = f"{docs_base}/blob/HEAD/docs/DEPLOYMENT.md#3-first-run-admin-checklist"
+    deployment_config_url = f"{docs_base}/blob/HEAD/docs/DEPLOYMENT.md#configuration-files"
+    deployment_https_url = f"{docs_base}/blob/HEAD/docs/DEPLOYMENT.md#reverse-proxy-and-https"
+    deployment_backup_url = f"{docs_base}/blob/HEAD/docs/DEPLOYMENT.md#backups-and-restore-drills"
+    setup_doc_links = f"""
+    <div class="setup-doc-links" aria-label="Setup documentation links">
+        <a class="button ghost small" href="{e(readme_config_url)}" target="_blank" rel="noreferrer">Configuration reference</a>
+        <a class="button ghost small" href="{e(deployment_first_run_url)}" target="_blank" rel="noreferrer">Deployment first-run checklist</a>
+        <a class="button ghost small" href="{e(deployment_https_url)}" target="_blank" rel="noreferrer">HTTPS and public URL</a>
+        <a class="button ghost small" href="{e(deployment_backup_url)}" target="_blank" rel="noreferrer">Backup drills</a>
+    </div>
+    """
     invite_result_panel = ""
     if invite_result:
         invite_result_panel = f"""
         <div class="invite-result span-2">
-            <strong>Invite link</strong>
-            <input readonly value="{e(invite_result["link"])}" onclick="this.select()">
-            <span class="subtle">Expires {e(invite_result["expires_at"][:10])}</span>
+            <strong>Manual invite link</strong>
+            <p class="muted compact">Copy this link and send it directly if SMTP is not configured, or if you want to invite someone outside the automatic email flow.</p>
+            {render_copyable_field("setup-invite-link", "Invite link", invite_result["link"], f'Expires {invite_result["expires_at"][:10]}', "Copy invite link")}
         </div>
         """
     checklist_rows = "".join(render_admin_onboarding_item(item) for item in checklist["items"])
@@ -538,6 +590,24 @@ def render_admin_setup_wizard(user, notice=None, status="info", invite_result=No
         </div>
         <ul class="stack-list onboarding-list">{checklist_rows}</ul>
     </section>
+    <section class="panel setup-recommendation">
+        <div class="panel-heading">
+            <div>
+                <p class="eyebrow">Recommended defaults</p>
+                <h2>Recommended defaults for small local groups</h2>
+                <p class="muted compact">These defaults keep a small trusted group easy to run while leaving room to grow later.</p>
+            </div>
+            <span class="pill">Local group friendly</span>
+        </div>
+        <ul class="setup-recommendation-list">
+            <li><strong>Registration:</strong> invite-only with suspicious-signup review at a 25 risk threshold.</li>
+            <li><strong>Public URL:</strong> set the exact URL members use; use HTTPS for passkeys, password recovery, and internet-facing installs.</li>
+            <li><strong>Backups:</strong> automatic every 24 hours, keep 14 backups for up to 30 days, and create one manual backup before upgrades.</li>
+            <li><strong>Email:</strong> SMTP is optional for local groups because manual invite and recovery links still work.</li>
+            <li><strong>Scryfall:</strong> run the bulk sync before large imports so card matching and finish checks stay fast.</li>
+        </ul>
+        {setup_doc_links}
+    </section>
     <section class="setup-wizard-grid">
         <form class="panel form-grid compact-form setup-step-card" id="setup-public-url" method="post" action="/admin/setup/public-url">
             <div class="span-2 panel-heading">
@@ -546,6 +616,10 @@ def render_admin_setup_wizard(user, notice=None, status="info", invite_result=No
             </div>
             <label class="span-2" for="setup-public-base-url">Public base URL</label>
             {public_form_controls}
+            <div class="setup-doc-links span-2">
+                <a class="button ghost small" href="{e(deployment_https_url)}" target="_blank" rel="noreferrer">Public URL guidance</a>
+                <a class="button ghost small" href="{e(readme_config_url)}" target="_blank" rel="noreferrer">Config reference</a>
+            </div>
         </form>
         <form class="panel form-grid compact-form setup-step-card" id="setup-registration" method="post" action="/admin/setup/registration">
             <div class="span-2 panel-heading">
@@ -562,7 +636,7 @@ def render_admin_setup_wizard(user, notice=None, status="info", invite_result=No
             <label>Suspicious score threshold
                 <input name="registration_risk_threshold" type="number" min="0" max="1000" step="1" value="{e(moderation.get("risk_threshold", DEFAULT_REGISTRATION_RISK_THRESHOLD))}">
             </label>
-            <p class="muted compact span-2">For local groups, invite-only plus suspicious-account review is a comfortable default.</p>
+            <p class="muted compact span-2">Recommended for small local groups: enable invite-only registration, choose suspicious-signup review, and use a threshold around 25.</p>
             <div class="form-actions span-2"><button class="button primary" type="submit">Save registration policy</button></div>
         </form>
         <article class="panel setup-step-card" id="setup-smtp">
@@ -571,7 +645,7 @@ def render_admin_setup_wizard(user, notice=None, status="info", invite_result=No
                 {render_setup_status(smtp_configured, smtp_status)}
             </div>
             <p class="muted compact">SMTP is configured from environment variables or `binderbridge.ini`. Without SMTP, admins can still create manual invite and recovery links.</p>
-            <div class="actions"><a class="button secondary" href="/admin/health">Open email health</a><a class="button ghost" href="/account/profile#account-notifications">Notification settings</a></div>
+            <div class="actions"><a class="button secondary" href="/admin/health">Open email health</a><a class="button ghost" href="{e(deployment_config_url)}" target="_blank" rel="noreferrer">SMTP config docs</a><a class="button ghost" href="/account/profile#account-notifications">Notification settings</a></div>
         </article>
         <form class="panel form-grid compact-form setup-step-card" id="setup-backups" method="post" action="/admin/setup/backup">
             <div class="span-2 panel-heading">
@@ -595,7 +669,8 @@ def render_admin_setup_wizard(user, notice=None, status="info", invite_result=No
                 <input type="checkbox" name="run_backup_now" value="1">
                 Create a backup now
             </label>
-            <div class="form-actions span-2"><button class="button primary" type="submit">Save backup plan</button><a class="button ghost" href="/admin#admin-operations">Open backup tools</a></div>
+            <p class="muted compact span-2">Recommended for most small groups: run every 24 hours, keep 14 backups, and remove automatic backups older than 30 days.</p>
+            <div class="form-actions span-2"><button class="button primary" type="submit">Save backup plan</button><a class="button ghost" href="/admin#admin-operations">Open backup tools</a><a class="button ghost" href="{e(deployment_backup_url)}" target="_blank" rel="noreferrer">Backup docs</a></div>
             <ul class="stack-list compact-stack span-2">{backup_rows}</ul>
         </form>
         <form class="panel setup-step-card" id="setup-scryfall" method="post" action="/admin/setup/scryfall">
@@ -605,7 +680,7 @@ def render_admin_setup_wizard(user, notice=None, status="info", invite_result=No
             </div>
             <p class="muted compact">{e(scryfall_count)} cached card records. Last update: {e(str(scryfall.get("updated_at", "") or "Never")[:16].replace("T", " "))}.</p>
             {f'<p class="notice error compact">{e(scryfall_error)}</p>' if scryfall_error else ''}
-            <div class="actions"><button class="button primary" type="submit"{' disabled' if scryfall_running else ''}>{e("Sync running" if scryfall_running else "Start Scryfall sync")}</button><a class="button ghost" href="/admin/jobs">Open jobs</a></div>
+            <div class="actions"><button class="button primary" type="submit"{' disabled' if scryfall_running else ''}>{e("Sync running" if scryfall_running else "Start Scryfall sync")}</button><a class="button ghost" href="/admin/jobs">Open jobs</a><a class="button ghost" href="{e(deployment_first_run_url)}" target="_blank" rel="noreferrer">First-run docs</a></div>
         </form>
         <form class="panel form-grid compact-form setup-step-card" id="setup-invite" method="post" action="/admin/invites">
             <input type="hidden" name="redirect_to" value="/admin/setup">

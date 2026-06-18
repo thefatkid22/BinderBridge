@@ -42,14 +42,14 @@ Open `http://localhost:8000` or the configured public URL. The first registered 
 
 After creating the owner account:
 
-- Open `Admin -> Maintenance Health`
-- Confirm the database is healthy
-- Confirm the background worker is processing jobs
+- Open `Admin -> First-run setup`
+- Set the public URL users will open in their browsers
+- Review the small-local-group defaults: invite-only registration, suspicious-signup review, daily automatic backups, and manual invite links when SMTP is not configured
 - Configure SMTP if you want email invites, password recovery email, or notification email
-- Create a first backup from `Admin -> Backup and restore`
-- Review `Admin -> Registration` and choose open, invite-only, or approval-based registration
+- Create a first backup and confirm automatic backup retention
 - Run or confirm Scryfall bulk sync before large imports
 - Create an invite or import a first collection
+- Open `Admin -> Maintenance Health` to confirm the database and background jobs are healthy
 
 ## Configuration Files
 

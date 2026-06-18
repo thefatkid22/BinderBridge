@@ -2567,6 +2567,57 @@ summary:focus-visible,
     margin-bottom: 1rem;
 }
 
+.setup-completion-banner,
+.setup-recommendation {
+    margin-bottom: 1rem;
+}
+
+.setup-completion-banner {
+    border-color: var(--success-border);
+    background: linear-gradient(135deg, var(--success-bg), var(--surface));
+}
+
+.setup-completion-banner > .actions,
+.setup-doc-links,
+.copyable-field-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+}
+
+.setup-recommendation-list {
+    display: grid;
+    gap: 0.65rem;
+    margin: 0 0 1rem;
+    padding-left: 1.15rem;
+    color: var(--text-soft);
+}
+
+.setup-recommendation-list li {
+    padding-left: 0.15rem;
+}
+
+.copyable-field {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.copyable-field label {
+    display: grid;
+    gap: 0.38rem;
+}
+
+.copyable-field-actions {
+    min-height: 2.25rem;
+}
+
+.button.copied {
+    border-color: var(--success-border);
+    background: var(--success-bg);
+    color: var(--ink);
+}
+
 .setup-wizard-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
