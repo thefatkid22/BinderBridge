@@ -6,7 +6,10 @@ The project uses semantic versioning while releases are published. During the al
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- Playwright browser smoke test covering first-run setup, CSV import preview/apply, collection and wishlist flows, browse-to-trade proposal, and recipient notifications
+- Rich demo data seeding for local evaluation, including sample users, collections, wants, groups, trades, feedback, disputes, notifications, price history, condition photos, and a reusable seed script
 
 ## [0.2.0-alpha.3] - 2026-06-18
 

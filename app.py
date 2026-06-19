@@ -949,42 +949,8 @@ _install_feature_module(_admin_routes)
 for _admin_route_name in _admin_routes.__all__:
     setattr(App, _admin_route_name, globals()[_admin_route_name])
 
-def seed_demo_data():
-    if not config_bool("BINDERBRIDGE_DEMO", default=False, section="app", key="demo"):
-        return
-    if row("SELECT COUNT(*) AS count FROM users")["count"]:
-        return
-    alice_id = create_user("alice", "password123", "Alice")
-    bob_id = create_user("bob", "password123", "Bob")
-    samples = [
-        (alice_id, "Sol Ring", "Commander Masters", "703", 4, 2, "NM", "Regular"),
-        (alice_id, "Counterspell", "Dominaria Remastered", "45", 3, 1, "LP", "Foil"),
-        (bob_id, "Lightning Bolt", "Secret Lair", "182", 4, 2, "NM", "Foil"),
-        (bob_id, "Rhystic Study", "Wilds of Eldraine", "63", 1, 1, "LP", "Regular"),
-    ]
-    for user_id, name, set_name, number, qty, trade_qty, condition, finish in samples:
-        execute(
-            """
-            INSERT INTO collection_items
-                (user_id, game, card_name, set_name, collector_number, finish, condition, language, quantity, quantity_for_trade, created_at, updated_at)
-            VALUES (?, 'mtg', ?, ?, ?, ?, ?, 'English', ?, ?, ?, ?)
-            """,
-            (user_id, name, set_name, number, finish, condition, qty, trade_qty, now_iso(), now_iso()),
-        )
-    execute(
-        """
-        INSERT INTO want_items (user_id, game, card_name, desired_quantity, notes, created_at, updated_at)
-        VALUES (?, 'mtg', 'Cyclonic Rift', 1, 'Commander copy wanted', ?, ?)
-        """,
-        (alice_id, now_iso(), now_iso()),
-    )
-    execute(
-        """
-        INSERT INTO want_items (user_id, game, card_name, desired_quantity, notes, created_at, updated_at)
-        VALUES (?, 'mtg', 'Dockside Extortionist', 1, '', ?, ?)
-        """,
-        (bob_id, now_iso(), now_iso()),
-    )
+from binderbridge import demo_data as _demo_data
+_install_feature_module(_demo_data)
 
 
 def main():

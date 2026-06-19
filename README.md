@@ -231,6 +231,17 @@ Webhook endpoints are also managed from `Account -> API access`. BinderBridge se
 python -m unittest discover -s tests
 ```
 
+Browser smoke coverage is available through Playwright. It starts BinderBridge
+with a temporary database, registers the first owner, checks the setup and
+health pages, previews and applies a CSV import, verifies collection/wishlist
+matching, proposes a trade from Browse, and confirms the recipient notification.
+
+```powershell
+python -m pip install playwright
+python -m playwright install chromium
+python scripts/browser_smoke.py
+```
+
 ## Project Layout
 
 `app.py` remains the public entrypoint and HTTP router so existing scripts can still run `python app.py` or `import app`. Feature code is split into focused modules under `binderbridge/`:
@@ -302,7 +313,7 @@ Schema migrations run automatically during startup. Migration history introduced
 
 ## Demo Data
 
-Start with sample users and cards:
+Start with a richer sample local group:
 
 ```powershell
 $env:BINDERBRIDGE_DEMO = "1"
@@ -311,10 +322,26 @@ python app.py
 
 Demo accounts:
 
-- `alice` / `password123`
-- `bob` / `password123`
+- `alice` / `password123` - owner account with admin access
+- `bob` / `password123` - trusted member with trade cards
+- `cara` / `password123` - organizer with groups and wants
+- `drew` / `password123` - read-only account for browsing tests
 
-Demo data is only inserted when the database has no users.
+Demo data is only inserted automatically when the database has no users. It includes sample collections, wants with trade-match indicators, deck/binder/wishlist groups, public profile data, a pending trade, a completed trade with feedback, an active dispute with evidence, notifications, price history, an invite, and a condition photo.
+
+You can also seed a development database on demand:
+
+```powershell
+python scripts/seed_demo_data.py
+```
+
+For repeatable UI testing in a disposable database:
+
+```powershell
+python scripts/seed_demo_data.py --reset-demo
+```
+
+`--reset-demo` deletes only the known demo users before recreating the sample data. Use `--allow-existing` only for throwaway/dev databases where adding demo users beside existing accounts is acceptable.
 
 ## Configuration
 
@@ -506,9 +533,10 @@ Run the full automated suite and release-critical smoke checks:
 python -m unittest discover -s tests
 python scripts/release_smoke.py
 python scripts/release_upgrade_smoke.py v0.1.0-alpha.1
+python scripts/browser_smoke.py
 ```
 
-The smoke checks use temporary data directories to verify fresh initialization, schema upgrades, backup/restore, a complete multi-user trade lifecycle, SQLite integrity, and a large CSV import. The published-release upgrade check creates a database with the specified release tag and migrates it using the current checkout. GitHub Actions also builds and starts the Docker image. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the complete release process.
+The smoke checks use temporary data directories to verify fresh initialization, schema upgrades, backup/restore, a complete multi-user trade lifecycle, SQLite integrity, a large CSV import, and high-traffic browser flows. The published-release upgrade check creates a database with the specified release tag and migrates it using the current checkout. GitHub Actions also builds and starts the Docker image and runs the Playwright browser smoke test. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the complete release process.
 
 ## Known Alpha Limitations
 

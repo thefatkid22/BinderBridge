@@ -15,6 +15,7 @@ python -m compileall -q app.py binderbridge tests scripts
 python -m unittest discover -s tests
 python scripts/release_smoke.py
 python scripts/release_upgrade_smoke.py v0.1.0-alpha.1
+python scripts/browser_smoke.py
 ```
 
 - Confirm fresh initialization reaches the current schema.
@@ -22,6 +23,7 @@ python scripts/release_upgrade_smoke.py v0.1.0-alpha.1
 - Confirm backup restore, SQLite quick check, and foreign-key check pass.
 - Confirm the complete trade smoke workflow reaches `completed`.
 - Confirm the 5,000-row import completes.
+- Confirm the Playwright browser smoke covers first-run setup, import preview/apply, collection search, wishlist matching, browse-to-trade proposal, and recipient notifications.
 
 ## Manual Smoke
 
