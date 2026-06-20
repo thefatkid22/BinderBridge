@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from binderbridge.collection_service import collection_item_photo_count
 from binderbridge.config import config_bool, config_float, config_int
-from binderbridge.trade_queries import trade_item_photo_rows
+from binderbridge.trade_queries import trade_comment_rows, trade_detail_for_user, trade_item_photo_rows
 
 
 API_TOKEN_PREFIX = "bbapi_"
@@ -1055,7 +1055,10 @@ def api_collection_create(self, user):
     if data["game"] == "mtg" and form.get("lookup_on_save", [""])[0] == "1":
         if not rate_limit_allowed("scryfall_lookup", f"api:user:{user['id']}"):
             return self.api_error("Too many Scryfall lookup requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
-        data.update(scryfall_lookup_for_card(data["card_name"], data["set_code"], data["collector_number"]) or {})
+        try:
+            data = enrich_collection_data_from_scryfall(data)
+        except ScryfallError as exc:
+            return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
     merge_value = payload.get("merge", True)
     merge = str(merge_value).strip().lower() not in ("0", "false", "no", "off")
     action, item_id = upsert_collection_item(user["id"], data, merge=merge, return_id=True)
@@ -1156,9 +1159,72 @@ def api_want_create(self, user):
     return self.api_json({"data": api_want_item_dict(item)}, HTTPStatus.CREATED)
 
 
-def api_trade_dict(trade):
+def api_want_detail(self, user, want_id):
+    item = row("SELECT * FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
+    if not item:
+        return self.api_error("Want item not found.", HTTPStatus.NOT_FOUND)
+    return self.api_json({"data": api_want_item_dict(item)})
+
+
+def api_want_update(self, user, want_id):
+    existing = row("SELECT * FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
+    if not existing:
+        return self.api_error("Want item not found.", HTTPStatus.NOT_FOUND)
+    payload = self.api_read_json()
+    merged = dict(existing)
+    merged.update(payload)
+    data = validate_want_form(api_payload_to_form(merged))
+    updated = update_want_item(user["id"], want_id, data)
+    if not updated:
+        return self.api_error("Want item not found.", HTTPStatus.NOT_FOUND)
+    item = row("SELECT * FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        f"Want item #{want_id}",
+        f"Updated wanted card via API: {item['card_name']}.",
+        "api",
+    )
+    return self.api_json({"data": api_want_item_dict(item)})
+
+
+def api_want_delete(self, user, want_id):
+    with db() as conn:
+        found = conn.execute("SELECT * FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"])).fetchone()
+        if not found:
+            return self.api_error("Want item not found.", HTTPStatus.NOT_FOUND)
+        cursor = conn.execute("DELETE FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
+        deleted = cursor.rowcount
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        f"Want item #{want_id}",
+        "Deleted wanted card via API.",
+        "api",
+    )
+    return self.api_json({"deleted": deleted})
+
+
+def api_card_search(self, user, query):
+    card_name = query_value(query, "q")
+    set_code = query_value(query, "set_code")
+    if not card_name:
+        return self.api_error("Card name is required.", HTTPStatus.BAD_REQUEST)
+    if not rate_limit_allowed("scryfall_lookup", f"api:user:{user['id']}"):
+        return self.api_error("Too many Scryfall lookup requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
+    limit = max(1, min(query_int(query, "limit", 8), 20))
+    try:
+        matches = search_scryfall_cards(card_name, set_code=set_code, limit=limit)
+    except ScryfallError as exc:
+        return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
+    return self.api_json({"data": matches})
+
+
+def api_trade_dict(trade, include_comments=False):
     trade_items = rows("SELECT * FROM trade_items WHERE trade_id = ? ORDER BY side, card_name", (trade["id"],))
-    return {
+    data = {
         "id": int(trade["id"]),
         "status": trade["status"],
         "proposer": {"id": int(trade["proposer_id"]), "display_name": row_value(trade, "proposer_name", "")},
@@ -1186,6 +1252,18 @@ def api_trade_dict(trade):
             for item in trade_items
         ],
     }
+    if include_comments:
+        data["comments"] = [
+            {
+                "id": int(comment["id"]),
+                "user_id": int(comment["user_id"]),
+                "display_name": row_value(comment, "display_name", ""),
+                "body": comment["body"],
+                "created_at": comment["created_at"],
+            }
+            for comment in trade_comment_rows(trade["id"])
+        ]
+    return data
 
 
 def api_trades_list(self, user, query):
@@ -1212,6 +1290,26 @@ def api_trades_list(self, user, query):
     })
 
 
+def api_trade_detail(self, user, trade_id):
+    trade = trade_detail_for_user(trade_id, user["id"])
+    if not trade:
+        return self.api_error("Trade not found.", HTTPStatus.NOT_FOUND)
+    return self.api_json({"data": api_trade_dict(trade, include_comments=True)})
+
+
+def api_notification_dict(item):
+    return {
+        "id": int(item["id"]),
+        "kind": item["kind"],
+        "title": item["title"],
+        "body": item["body"],
+        "url": item["url"],
+        "related_trade_id": row_value(item, "related_trade_id"),
+        "is_read": bool(item["is_read"]),
+        "created_at": item["created_at"],
+    }
+
+
 def api_notifications_list(self, user, query):
     page, per_page, offset = api_pagination(query)
     total = row("SELECT COUNT(*) AS count FROM user_notifications WHERE user_id = ?", (user["id"],))["count"]
@@ -1226,21 +1324,37 @@ def api_notifications_list(self, user, query):
         (user["id"], per_page, offset),
     )
     return self.api_json({
-        "data": [
-            {
-                "id": int(item["id"]),
-                "kind": item["kind"],
-                "title": item["title"],
-                "body": item["body"],
-                "url": item["url"],
-                "related_trade_id": row_value(item, "related_trade_id"),
-                "is_read": bool(item["is_read"]),
-                "created_at": item["created_at"],
-            }
-            for item in items
-        ],
+        "data": [api_notification_dict(item) for item in items],
         "pagination": {"page": page, "per_page": per_page, "total": int(total)},
     })
+
+
+def api_notification_detail(self, user, notification_id):
+    item = row("SELECT * FROM user_notifications WHERE id = ? AND user_id = ?", (notification_id, user["id"]))
+    if not item:
+        return self.api_error("Notification not found.", HTTPStatus.NOT_FOUND)
+    return self.api_json({"data": api_notification_dict(item)})
+
+
+def api_notification_mark_read(self, user, notification_id):
+    item = row("SELECT * FROM user_notifications WHERE id = ? AND user_id = ?", (notification_id, user["id"]))
+    if not item:
+        return self.api_error("Notification not found.", HTTPStatus.NOT_FOUND)
+    mark_notification_read(user["id"], notification_id)
+    refreshed = row("SELECT * FROM user_notifications WHERE id = ? AND user_id = ?", (notification_id, user["id"]))
+    return self.api_json({"data": api_notification_dict(refreshed)})
+
+
+def api_notifications_mark_all_read(self, user):
+    mark_all_notifications_read(user["id"])
+    return self.api_json({"read_all": True})
+
+
+def api_notification_delete(self, user, notification_id):
+    deleted = delete_notification(user["id"], notification_id)
+    if not deleted:
+        return self.api_error("Notification not found.", HTTPStatus.NOT_FOUND)
+    return self.api_json({"deleted": deleted})
 
 
 def api_dispatch(self, method, path, query):
@@ -1268,6 +1382,12 @@ def api_dispatch(self, method, path, query):
                     "email": user["email"],
                     "role": user_role(user),
                     "is_admin": bool(user["is_admin"]),
+                    "api_token": {
+                        "name": row_value(token_row, "name", "API token"),
+                        "scopes": normalize_api_token_scopes(row_value(token_row, "scopes", "read")),
+                        "token_hint": row_value(token_row, "token_hint", ""),
+                        "expires_at": row_value(token_row, "expires_at", ""),
+                    },
                 }
             })
         if path == "/api/v1/collection":
@@ -1291,10 +1411,44 @@ def api_dispatch(self, method, path, query):
                 return self.api_wants_list(user, query)
             if method == "POST":
                 return self.api_want_create(user)
+        if path.startswith("/api/v1/wants/"):
+            try:
+                want_id = int(path.rsplit("/", 1)[1])
+            except ValueError:
+                return self.api_error("Want item id must be a number.", HTTPStatus.NOT_FOUND)
+            if method == "GET":
+                return self.api_want_detail(user, want_id)
+            if method in ("POST", "PUT", "PATCH"):
+                return self.api_want_update(user, want_id)
+            if method == "DELETE":
+                return self.api_want_delete(user, want_id)
+        if path == "/api/v1/cards/search" and method == "GET":
+            return self.api_card_search(user, query)
         if path == "/api/v1/trades" and method == "GET":
             return self.api_trades_list(user, query)
+        if path.startswith("/api/v1/trades/") and method == "GET":
+            try:
+                trade_id = int(path.rsplit("/", 1)[1])
+            except ValueError:
+                return self.api_error("Trade id must be a number.", HTTPStatus.NOT_FOUND)
+            return self.api_trade_detail(user, trade_id)
         if path == "/api/v1/notifications" and method == "GET":
             return self.api_notifications_list(user, query)
+        if path == "/api/v1/notifications/read-all" and method == "POST":
+            return self.api_notifications_mark_all_read(user)
+        if path.startswith("/api/v1/notifications/"):
+            parts = path.strip("/").split("/")
+            try:
+                notification_id = int(parts[3])
+            except (ValueError, IndexError):
+                return self.api_error("Notification id must be a number.", HTTPStatus.NOT_FOUND)
+            action = parts[4] if len(parts) > 4 else ""
+            if not action and method == "GET":
+                return self.api_notification_detail(user, notification_id)
+            if action == "read" and method in ("POST", "PUT", "PATCH"):
+                return self.api_notification_mark_read(user, notification_id)
+            if not action and method == "DELETE":
+                return self.api_notification_delete(user, notification_id)
     except ValueError as exc:
         return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
     return self.api_error("API endpoint not found.", HTTPStatus.NOT_FOUND)
@@ -1312,8 +1466,19 @@ API_ROUTE_METHODS = (
     "api_collection_delete",
     "api_wants_list",
     "api_want_create",
+    "api_want_detail",
+    "api_want_update",
+    "api_want_delete",
+    "api_card_search",
+    "api_trade_dict",
     "api_trades_list",
+    "api_trade_detail",
+    "api_notification_dict",
     "api_notifications_list",
+    "api_notification_detail",
+    "api_notification_mark_read",
+    "api_notifications_mark_all_read",
+    "api_notification_delete",
     "api_dispatch",
     "account_api_token_create",
     "account_api_token_revoke",
