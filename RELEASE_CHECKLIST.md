@@ -36,6 +36,19 @@ python scripts/browser_smoke.py
 - Review Admin health for setup warnings, failed jobs, backup status, and database status.
 - Check one desktop and one narrow mobile viewport.
 
+## Android Client
+
+- Use the separate `BinderBridge-Android` repository for Android release work.
+- Build a debug APK with `./gradlew :app:assembleDebug` from the Android repo.
+- Connect the debug app to a local server with `http://10.0.2.2:8000` on the emulator.
+- Build the signed local-release APK with `./gradlew :app:assembleLocalRelease` from the Android repo when local HTTP device testing is needed.
+- Build a release APK with `./gradlew :app:assembleRelease` from the Android repo.
+- Confirm the release APK is signed with the intended keystore and verifies with `apksigner`.
+- Confirm the release app rejects `http://` BinderBridge URLs and connects to an `https://` origin.
+- Smoke collection browsing, quick add, card lookup, trade alerts, and notification detail with a least-privilege test token, then revoke the token.
+- Confirm signing keys, keystores, and local signing properties were not added to the repository.
+- Confirm the release keystore and passwords are backed up somewhere secure.
+
 ## Publish
 
 - Push a release branch and wait for every GitHub Actions check to pass.

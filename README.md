@@ -218,8 +218,17 @@ Initial API endpoints:
 - `DELETE /api/v1/collection/{id}`
 - `GET /api/v1/wants`
 - `POST /api/v1/wants`
+- `GET /api/v1/wants/{id}`
+- `PATCH /api/v1/wants/{id}`
+- `DELETE /api/v1/wants/{id}`
+- `GET /api/v1/cards/search`
 - `GET /api/v1/trades`
+- `GET /api/v1/trades/{id}`
 - `GET /api/v1/notifications`
+- `GET /api/v1/notifications/{id}`
+- `POST /api/v1/notifications/{id}/read`
+- `POST /api/v1/notifications/read-all`
+- `DELETE /api/v1/notifications/{id}`
 
 Send API tokens with `Authorization: Bearer bbapi_...`.
 
@@ -537,6 +546,8 @@ python scripts/browser_smoke.py
 ```
 
 The smoke checks use temporary data directories to verify fresh initialization, schema upgrades, backup/restore, a complete multi-user trade lifecycle, SQLite integrity, a large CSV import, and high-traffic browser flows. The published-release upgrade check creates a database with the specified release tag and migrates it using the current checkout. GitHub Actions also builds and starts the Docker image and runs the Playwright browser smoke test. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the complete release process.
+
+The native Android client is maintained as a separate `BinderBridge-Android` project. Debug and local-release builds can connect to local HTTP BinderBridge servers for development; production release builds require HTTPS, exclude stored app settings from backup/device transfer, and are minified with R8.
 
 ## Known Alpha Limitations
 
