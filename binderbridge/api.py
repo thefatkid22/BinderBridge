@@ -201,6 +201,19 @@ def revoke_api_token(user_id, token_id):
         return cursor.rowcount
 
 
+def delete_revoked_api_token(user_id, token_id):
+    try:
+        token_id = int(token_id)
+    except (TypeError, ValueError):
+        return 0
+    with db() as conn:
+        cursor = conn.execute(
+            "DELETE FROM api_tokens WHERE id = ? AND user_id = ? AND revoked_at != ''",
+            (token_id, user_id),
+        )
+        return cursor.rowcount
+
+
 def api_token_rows(user_id):
     return rows(
         """
@@ -568,7 +581,7 @@ def render_api_access_panel(user):
                 <h2>API access</h2>
                 <span class="pill">Bearer tokens</span>
             </div>
-            <form class="form-grid compact-form embedded-form" method="post" action="/account/api-tokens">
+            <form class="form-grid compact-form embedded-form" method="post" action="/account/api-tokens#account-integrations">
                 <label>Token name
                     <input required name="name" maxlength="80" placeholder="Collection sync script">
                 </label>
@@ -614,7 +627,7 @@ def render_api_access_panel(user):
                 <h2>Webhooks</h2>
                 <span class="pill">Signed JSON</span>
             </div>
-            <form class="form-grid compact-form embedded-form" method="post" action="/account/webhooks">
+            <form class="form-grid compact-form embedded-form" method="post" action="/account/webhooks#account-integrations">
                 <label>Name
                     <input required name="name" maxlength="80" placeholder="Discord bridge">
                 </label>
@@ -656,11 +669,20 @@ def render_api_token_row(token):
     last_used = row_value(token, "last_used_at", "")[:16].replace("T", " ") if row_value(token, "last_used_at", "") else "Never used"
     revoke = (
         f"""
-        <form method="post" action="/account/api-tokens/{token["id"]}/revoke">
+        <form method="post" action="/account/api-tokens/{token["id"]}/revoke#account-integrations">
             <button class="button ghost small" type="submit">Revoke</button>
         </form>
         """
         if not row_value(token, "revoked_at", "")
+        else ""
+    )
+    delete = (
+        f"""
+        <form method="post" action="/account/api-tokens/{token["id"]}/delete#account-integrations">
+            <button class="button danger small" type="submit" data-confirm="Delete this revoked API token record?">Delete</button>
+        </form>
+        """
+        if row_value(token, "revoked_at", "")
         else ""
     )
     return f"""
@@ -673,6 +695,7 @@ def render_api_token_row(token):
         <div class="inline-actions">
             <span class="status {status_class}">{e(status)}</span>
             {revoke}
+            {delete}
         </div>
     </li>
     """
@@ -696,10 +719,10 @@ def render_webhook_endpoint_row(webhook):
             {error_line}
         </div>
         <div class="inline-actions">
-            <form method="post" action="/account/webhooks/{webhook["id"]}/test">
+            <form method="post" action="/account/webhooks/{webhook["id"]}/test#account-integrations">
                 <button class="button secondary small" type="submit">Send test</button>
             </form>
-            <form method="post" action="/account/webhooks/{webhook["id"]}/delete">
+            <form method="post" action="/account/webhooks/{webhook["id"]}/delete#account-integrations">
                 <button class="button ghost small" type="submit">Delete</button>
             </form>
         </div>
@@ -819,13 +842,13 @@ def account_api_token_create(self, user):
         "Too many integration-management requests. Try again shortly.",
     )
     if not user_can_use_api(user):
-        return self.html(render_account(user, notice=integration_access_error("API"), status="error"), HTTPStatus.FORBIDDEN)
+        return self.html(render_account(user, notice=integration_access_error("API"), status="error", active_section="account-integrations"), HTTPStatus.FORBIDDEN)
     if not verify_password(form.get("current_password", [""])[0], user["password_hash"]):
-        return self.html(render_account(user, notice="Current password is required to create an API token.", status="error"), HTTPStatus.UNAUTHORIZED)
+        return self.html(render_account(user, notice="Current password is required to create an API token.", status="error", active_section="account-integrations"), HTTPStatus.UNAUTHORIZED)
     try:
         token = create_api_token(user["id"], form.get("name", ["API token"])[0], form.get("scope", ["read"]))
     except ValueError as exc:
-        return self.html(render_account(user, notice=str(exc), status="error"), HTTPStatus.FORBIDDEN)
+        return self.html(render_account(user, notice=str(exc), status="error", active_section="account-integrations"), HTTPStatus.FORBIDDEN)
     log_integration_action(
         self,
         user["id"],
@@ -836,7 +859,7 @@ def account_api_token_create(self, user):
     )
     refreshed = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = f"API token created. Copy it now; it will not be shown again: {token['token']}"
-    return self.html(render_account(refreshed, notice=notice, status="info"))
+    return self.html(render_account(refreshed, notice=notice, status="info", active_section="account-integrations"))
 
 
 def account_api_token_revoke(self, user, path):
@@ -863,7 +886,34 @@ def account_api_token_revoke(self, user, path):
     refreshed = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = "API token revoked." if revoked else "API token was not found."
     status = "info" if revoked else "error"
-    return self.html(render_account(refreshed, notice=notice, status=status), HTTPStatus.OK if revoked else HTTPStatus.NOT_FOUND)
+    return self.html(render_account(refreshed, notice=notice, status=status, active_section="account-integrations"), HTTPStatus.OK if revoked else HTTPStatus.NOT_FOUND)
+
+
+def account_api_token_delete(self, user, path):
+    self.enforce_rate_limit(
+        "integration_admin",
+        f"user:{user['id']}",
+        "Too many integration-management requests. Try again shortly.",
+    )
+    try:
+        token_id = int(path.strip("/").split("/")[2])
+    except (IndexError, ValueError):
+        return self.not_found(user)
+    token = row("SELECT * FROM api_tokens WHERE id = ? AND user_id = ?", (token_id, user["id"]))
+    deleted = delete_revoked_api_token(user["id"], token_id)
+    if deleted and token:
+        log_integration_action(
+            self,
+            user["id"],
+            "api_token_deleted",
+            row_value(token, "name", "API token"),
+            f"Deleted revoked token ending {row_value(token, 'token_hint', '')}.",
+            "api_token",
+        )
+    refreshed = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    notice = "Revoked API token deleted." if deleted else "Only revoked API tokens can be deleted."
+    status = "info" if deleted else "error"
+    return self.html(render_account(refreshed, notice=notice, status=status, active_section="account-integrations"), HTTPStatus.OK if deleted else HTTPStatus.BAD_REQUEST)
 
 
 def account_webhook_create(self, user):
@@ -874,9 +924,9 @@ def account_webhook_create(self, user):
         "Too many integration-management requests. Try again shortly.",
     )
     if not user_can_use_webhooks(user):
-        return self.html(render_account(user, notice=integration_access_error("Webhook"), status="error"), HTTPStatus.FORBIDDEN)
+        return self.html(render_account(user, notice=integration_access_error("Webhook"), status="error", active_section="account-integrations"), HTTPStatus.FORBIDDEN)
     if not verify_password(form.get("current_password", [""])[0], user["password_hash"]):
-        return self.html(render_account(user, notice="Current password is required to add a webhook.", status="error"), HTTPStatus.UNAUTHORIZED)
+        return self.html(render_account(user, notice="Current password is required to add a webhook.", status="error", active_section="account-integrations"), HTTPStatus.UNAUTHORIZED)
     try:
         webhook = create_webhook_endpoint(
             user["id"],
@@ -886,7 +936,7 @@ def account_webhook_create(self, user):
             form.get("secret", [""])[0],
         )
     except ValueError as exc:
-        return self.html(render_account(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice=str(exc), status="error", active_section="account-integrations"), HTTPStatus.BAD_REQUEST)
     log_integration_action(
         self,
         user["id"],
@@ -897,7 +947,7 @@ def account_webhook_create(self, user):
     )
     notice = f"Webhook added. Signing secret: {webhook['secret']}"
     refreshed = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_account(refreshed, notice=notice, status="info"))
+    return self.html(render_account(refreshed, notice=notice, status="info", active_section="account-integrations"))
 
 
 def account_webhook_delete(self, user, path):
@@ -924,7 +974,7 @@ def account_webhook_delete(self, user, path):
     refreshed = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = "Webhook deleted." if deleted else "Webhook was not found."
     status = "info" if deleted else "error"
-    return self.html(render_account(refreshed, notice=notice, status=status), HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
+    return self.html(render_account(refreshed, notice=notice, status=status, active_section="account-integrations"), HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
 
 
 def account_webhook_test(self, user, path):
@@ -934,7 +984,7 @@ def account_webhook_test(self, user, path):
         "Too many integration-management requests. Try again shortly.",
     )
     if not user_can_use_webhooks(user):
-        return self.html(render_account(user, notice=integration_access_error("Webhook"), status="error"), HTTPStatus.FORBIDDEN)
+        return self.html(render_account(user, notice=integration_access_error("Webhook"), status="error", active_section="account-integrations"), HTTPStatus.FORBIDDEN)
     try:
         webhook_id = int(path.strip("/").split("/")[2])
     except (IndexError, ValueError):
@@ -970,7 +1020,7 @@ def account_webhook_test(self, user, path):
         "webhook",
     )
     refreshed = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_account(refreshed, notice=f"Webhook test queued. Sent {result['sent']}, failed {result['failed']}.", status="info"))
+    return self.html(render_account(refreshed, notice=f"Webhook test queued. Sent {result['sent']}, failed {result['failed']}.", status="info", active_section="account-integrations"))
 
 
 def api_json(self, payload, status=HTTPStatus.OK):
@@ -1482,6 +1532,7 @@ API_ROUTE_METHODS = (
     "api_dispatch",
     "account_api_token_create",
     "account_api_token_revoke",
+    "account_api_token_delete",
     "account_webhook_create",
     "account_webhook_delete",
     "account_webhook_test",
@@ -1513,6 +1564,7 @@ __all__ = [
     "api_token_has_scope",
     "create_api_token",
     "revoke_api_token",
+    "delete_revoked_api_token",
     "api_token_rows",
     "get_user_by_api_token",
     "normalize_webhook_events",

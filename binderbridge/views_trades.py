@@ -780,7 +780,7 @@ def render_trade_recommendations_panel(recommendations):
     """
 
 
-def render_new_trade(user, recipient_id, query=None, selected_quantities=None, proposer_note="", notice=None, status="info"):
+def render_new_trade(user, recipient_id, query=None, selected_quantities=None, proposer_note="", notice=None, status="info", active_section=""):
     query = query or {}
     selected_quantities = selected_quantities or trade_selected_quantities_from_form(query)
     selected_quantities.setdefault("offer", {})
@@ -841,6 +841,12 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
         price_basis=price_basis,
     )
     recommendation_panel = render_trade_recommendations_panel(recommendations)
+    if not recommendation_panel:
+        recommendation_panel = """
+        <section class="panel">
+            <div class="empty-state compact-empty">No recommendations yet. Pick cards on either side to unlock wishlist and value suggestions.</div>
+        </section>
+        """
     one_way_policy = one_way_trade_policy()
     if user_can_propose_one_way_trade(user):
         if one_way_policy == "anyone":
@@ -873,13 +879,6 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
         <span><strong>2</strong>Add a message</span>
         <span><strong>3</strong>Review and send</span>
     </div>
-    {render_workspace_nav([
-        ("#trade-selected", "Selected cards", "See the live offer and request"),
-        ("#trade-recommendations", "Recommendations", "Use wishlist and value suggestions"),
-        ("#trade-offer", "Your offer", "Choose cards from your collection"),
-        ("#trade-request", "Your request", f"Choose cards from {recipient['display_name']}"),
-        ("#trade-message", "Message", "Add context before review"),
-    ], label="Trade builder")}
     <form id="trade-submit-form" method="post" action="/trades/new">
         <input type="hidden" name="recipient_id" value="{recipient["id"]}">
         <input type="hidden" name="price_source_preference" value="scryfall">
@@ -889,13 +888,26 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
     <div class="trade-builder">
         {render_counter_context_panel(counter_source)}
         <div class="trade-trust-note {trust_class}">{e(trust_message)}</div>
-        <div id="trade-selected">{selection_summary}</div>
-        <div id="trade-recommendations">{recommendation_panel}</div>
-        <div id="trade-offer">{mine_picker}</div>
-        <div id="trade-request">{theirs_picker}</div>
-        <label class="panel note-panel" id="trade-message">Message
-            <textarea form="trade-submit-form" name="proposer_note" rows="4" maxlength="1200" placeholder="Optional note">{e(proposer_note)}</textarea>
-        </label>
+        <section class="workspace-layout tabbed-workspace trade-picker-workspace" data-workspace-tabs{workspace_active_attr(active_section, ["trade-selected", "trade-recommendations", "trade-offer", "trade-request", "trade-message"])}>
+            {render_workspace_nav([
+                ("#trade-selected", "Selected cards", "Live offer and request"),
+                ("#trade-recommendations", "Suggestions", "Wishlist and value helpers"),
+                ("#trade-offer", "Your cards", "Choose from your collection"),
+                ("#trade-request", f"{recipient['display_name']}'s cards", "Choose cards to request"),
+                ("#trade-message", "Message", "Add context before review"),
+            ], label="Trade builder", compact=True, vertical=True)}
+            <div class="workspace-pane-stack">
+                <section class="workspace-section" id="trade-selected">{selection_summary}</section>
+                <section class="workspace-section" id="trade-recommendations">{recommendation_panel}</section>
+                <section class="workspace-section" id="trade-offer">{mine_picker}</section>
+                <section class="workspace-section" id="trade-request">{theirs_picker}</section>
+                <section class="workspace-section" id="trade-message">
+                    <label class="panel note-panel">Message
+                        <textarea form="trade-submit-form" name="proposer_note" rows="4" maxlength="1200" placeholder="Optional note">{e(proposer_note)}</textarea>
+                    </label>
+                </section>
+            </div>
+        </section>
         <div class="form-actions">
             <button class="button primary" form="trade-submit-form" name="intent" value="review" type="submit">Review trade</button>
         </div>
@@ -1339,7 +1351,7 @@ def render_trade_disputes(user, trade, dispute_rows):
     """
 
 
-def render_trade_detail(user, trade_id, notice=None, status="info"):
+def render_trade_detail(user, trade_id, notice=None, status="info", active_section=""):
     trade = trade_detail_for_user(trade_id, user["id"])
     if not trade:
         return None
@@ -1402,6 +1414,14 @@ def render_trade_detail(user, trade_id, notice=None, status="info"):
             <button class="button primary" type="submit">Mark complete</button>
         </form>
         """
+    workspace_items = [
+        ("#trade-response", "Status", "Notes, warnings, and actions"),
+        ("#trade-cards", "Cards", "Review both trade sides"),
+        ("#trade-issues", "Issues", "Report or review a problem"),
+        ("#trade-feedback", "Feedback", "After completion"),
+        ("#trade-comments", "Comments", "Trade conversation"),
+    ]
+    active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])
     content = f"""
     {render_trades_subnav("offers")}
     <section class="section-heading">
@@ -1411,14 +1431,10 @@ def render_trade_detail(user, trade_id, notice=None, status="info"):
         </div>
         <span class="status {e(trade["status"])}">{e(TRADE_STATUS_LABELS.get(trade["status"], trade["status"]))}</span>
     </section>
-    {render_workspace_nav([
-        ("#trade-response", "Status and response", "Notes, warnings, and available actions"),
-        ("#trade-cards", "Cards", "Review both sides of the trade"),
-        ("#trade-issues", "Issues", "Report or review a problem"),
-        ("#trade-feedback", "Feedback", "Leave feedback after completion"),
-        ("#trade-comments", "Comments", "Continue the trade conversation"),
-    ], label="Trade details")}
-    <section id="trade-response" class="panel trade-response-panel">
+    <section class="workspace-layout tabbed-workspace trade-detail-workspace" data-workspace-tabs{active_attr}>
+        {render_workspace_nav(workspace_items, label="Trade details", compact=True, vertical=True)}
+        <div class="workspace-pane-stack">
+    <section id="trade-response" class="workspace-section panel trade-response-panel">
         <div class="panel-heading">
             <div>
                 <p class="eyebrow">Current status</p>
@@ -1438,7 +1454,7 @@ def render_trade_detail(user, trade_id, notice=None, status="info"):
         {one_way_warning}
         {actions}
     </section>
-    <section class="trade-detail-grid" id="trade-cards">
+    <section class="workspace-section trade-detail-grid" id="trade-cards">
         <article class="panel">
             <h2>{e(trade["proposer_name"])} offers</h2>
             {offered_html}
@@ -1447,11 +1463,13 @@ def render_trade_detail(user, trade_id, notice=None, status="info"):
             <h2>{e(trade["proposer_name"])} requests</h2>
             {requested_html}
         </article>
+        {render_trade_value_panel(trade_entries_offered, trade_entries_requested, "Offer value", "Request value")}
     </section>
-    {render_trade_value_panel(trade_entries_offered, trade_entries_requested, "Offer value", "Request value")}
-    <div id="trade-issues">{disputes_html}</div>
-    <div id="trade-feedback">{feedback_html}</div>
-    <div id="trade-comments">{comments_html}</div>
+    <section class="workspace-section" id="trade-issues">{disputes_html}</section>
+    <section class="workspace-section" id="trade-feedback">{feedback_html}</section>
+    <section class="workspace-section" id="trade-comments">{comments_html}</section>
+        </div>
+    </section>
     """
     return render_layout(user, f"Trade #{trade_id}", content, active="trades", notice=notice, status=status)
 

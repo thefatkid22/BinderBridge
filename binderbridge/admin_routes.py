@@ -190,7 +190,7 @@ def admin_health_scryfall_sync(self, user):
     )
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
     if form.get("redirect_to", [""])[0] == "/admin":
-        return self.html(render_admin(updated, notice=notice))
+        return self.html(render_admin(updated, notice=notice, active_section="admin-operations"))
     return self.html(render_admin_health(updated, notice=notice))
 
 
@@ -204,13 +204,16 @@ def admin_health_retention(self, user):
             form.get("admin_log_days", [""])[0],
             form.get("webhook_days", [""])[0],
             form.get("evidence_days", [""])[0],
+            form.get("api_token_days", [""])[0],
+            form.get("invite_days", [""])[0],
         )
         result = prune_data_retention_records(settings) if form.get("intent", ["save"])[0] == "save_run" else None
     except ValueError as exc:
         return self.html(render_admin_health(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
     details = (
         f"Read notifications {settings['notification_days']} day(s); admin logs {settings['admin_log_days']} day(s); "
-        f"webhook deliveries {settings['webhook_days']} day(s); resolved dispute evidence {settings['evidence_days']} day(s)."
+        f"webhook deliveries {settings['webhook_days']} day(s); resolved dispute evidence {settings['evidence_days']} day(s); "
+        f"revoked API tokens {settings['api_token_days']} day(s); inactive invites {settings['invite_days']} day(s)."
     )
     log_admin_action(
         user["id"],
@@ -220,7 +223,8 @@ def admin_health_retention(self, user):
         "Data retention",
         (
             f"{details} Deleted {result['notifications']} notification(s), {result['admin_logs']} log(s), "
-            f"{result['webhook_deliveries']} webhook delivery record(s), and {result['dispute_evidence']} evidence attachment(s)."
+            f"{result['webhook_deliveries']} webhook delivery record(s), {result['dispute_evidence']} evidence attachment(s), "
+            f"{result['api_tokens']} API token record(s), and {result['registration_invites']} invite record(s)."
             if result
             else details
         ),
@@ -286,7 +290,7 @@ def admin_trust_settings(self, user):
     try:
         threshold = set_trusted_trade_threshold(form.get("trusted_trade_threshold", [""])[0])
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-policies"), HTTPStatus.BAD_REQUEST)
     log_admin_action(
         user["id"],
         "trusted_threshold_updated",
@@ -298,7 +302,7 @@ def admin_trust_settings(self, user):
         admin_user_agent(self),
     )
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_admin(updated, notice=f"Trusted trade threshold set to {threshold}."))
+    return self.html(render_admin(updated, notice=f"Trusted trade threshold set to {threshold}.", active_section="admin-policies"))
 
 
 def admin_trade_fairness_settings(self, user):
@@ -311,7 +315,7 @@ def admin_trade_fairness_settings(self, user):
             form.get("fairness_block_percent", [""])[0],
         )
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-policies"), HTTPStatus.BAD_REQUEST)
     log_admin_action(
         user["id"],
         "trade_fairness_updated",
@@ -325,7 +329,7 @@ def admin_trade_fairness_settings(self, user):
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     block_label = f"{settings['block_percent']}%" if settings["block_enabled"] else "off"
     notice = f"Trade fairness rules saved. Warning at {settings['warn_percent']}%, block at {block_label}."
-    return self.html(render_admin(updated, notice=notice))
+    return self.html(render_admin(updated, notice=notice, active_section="admin-policies"))
 
 
 def admin_trade_policy_settings(self, user):
@@ -342,7 +346,7 @@ def admin_trade_policy_settings(self, user):
             dispute_evidence_retention_days(),
         )
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-policies"), HTTPStatus.BAD_REQUEST)
     fairness = settings["fairness"]
     block_label = f"{fairness['block_percent']}%" if fairness["block_enabled"] else "off"
     details = (
@@ -362,7 +366,7 @@ def admin_trade_policy_settings(self, user):
     )
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = "Trade policy settings saved."
-    return self.html(render_admin(updated, notice=notice))
+    return self.html(render_admin(updated, notice=notice, active_section="admin-policies"))
 
 
 def admin_integration_policy_settings(self, user):
@@ -375,7 +379,7 @@ def admin_integration_policy_settings(self, user):
             form.get("webhook_access_policy", [""])[0],
         )
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-policies"), HTTPStatus.BAD_REQUEST)
     details = (
         f"API tokens: {settings['api_policy_label']}; "
         f"webhooks: {settings['webhook_policy_label']}."
@@ -391,7 +395,7 @@ def admin_integration_policy_settings(self, user):
         admin_user_agent(self),
     )
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_admin(updated, notice="Integration access settings saved."))
+    return self.html(render_admin(updated, notice="Integration access settings saved.", active_section="admin-policies"))
 
 
 def admin_registration_settings(self, user):
@@ -405,7 +409,7 @@ def admin_registration_settings(self, user):
             form.get("registration_risk_threshold", [DEFAULT_REGISTRATION_RISK_THRESHOLD])[0],
         )
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-access"), HTTPStatus.BAD_REQUEST)
     invite_only = set_invite_only_registration(enabled)
     log_admin_action(
         user["id"],
@@ -422,7 +426,7 @@ def admin_registration_settings(self, user):
     )
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     mode = "invite-only" if enabled else "open"
-    return self.html(render_admin(updated, notice=f"Registration mode set to {mode}. Approval mode: {moderation['approval_mode_label']}."))
+    return self.html(render_admin(updated, notice=f"Registration mode set to {mode}. Approval mode: {moderation['approval_mode_label']}.", active_section="admin-access"))
 
 
 def admin_setup_public_url(self, user):
@@ -577,14 +581,14 @@ def admin_registration_review(self, user, path):
             form.get("note", [""])[0],
         )
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-access"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = (
         f"Registration approved for {reviewed['display_name']}."
         if decision == "approve"
         else f"Registration denied for {reviewed['display_name']}."
     )
-    return self.html(render_admin(updated, notice=notice, status="info" if decision == "approve" else "warning"))
+    return self.html(render_admin(updated, notice=notice, status="info" if decision == "approve" else "warning", active_section="admin-access"))
 
 
 def admin_invite_create(self, user):
@@ -596,14 +600,14 @@ def admin_invite_create(self, user):
             user["id"],
             form.get("email", [""])[0],
             self.public_base_url(),
-        )
+    )
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-access"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = f"Invite created for {invite_result['email']}. {invite_result['email_status']}"
     if form.get("redirect_to", [""])[0] == "/admin/setup":
         return self.html(render_admin_setup_wizard(updated, notice=notice, invite_result=invite_result))
-    return self.html(render_admin(updated, notice=notice, invite_result=invite_result))
+    return self.html(render_admin(updated, notice=notice, invite_result=invite_result, active_section="admin-access"))
 
 
 def admin_invite_revoke(self, user, path):
@@ -617,9 +621,25 @@ def admin_invite_revoke(self, user, path):
     try:
         revoke_registration_invite(user["id"], invite_id)
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-access"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_admin(updated, notice="Invite revoked."))
+    return self.html(render_admin(updated, notice="Invite revoked.", active_section="admin-access"))
+
+
+def admin_invite_delete(self, user, path):
+    if not require_capability(user, CAP_MANAGE_INVITES):
+        return self.not_found(user)
+    parts = path.strip("/").split("/")
+    try:
+        invite_id = int(parts[2])
+    except (ValueError, IndexError):
+        return self.not_found(user)
+    try:
+        delete_registration_invite(user["id"], invite_id)
+    except ValueError as exc:
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-access"), HTTPStatus.BAD_REQUEST)
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    return self.html(render_admin(updated, notice="Invite deleted.", active_section="admin-access"))
 
 
 def admin_backup_create(self, user):
@@ -628,7 +648,7 @@ def admin_backup_create(self, user):
     try:
         archive_path = create_backup_archive(user["id"])
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-operations"), HTTPStatus.BAD_REQUEST)
     log_admin_action(
         user["id"],
         "backup_created",
@@ -655,7 +675,7 @@ def admin_backup_settings(self, user):
         )
         pruned = prune_backup_archives(settings["retention_count"], settings["retention_days"])
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-operations"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     mode = "enabled" if settings["enabled"] else "paused"
     notice = f"Automatic backups {mode}. Retention cleanup removed {len(pruned['deleted'])} archive{'s' if len(pruned['deleted']) != 1 else ''}."
@@ -671,7 +691,7 @@ def admin_backup_settings(self, user):
         admin_request_ip(self),
         admin_user_agent(self),
     )
-    return self.html(render_admin(updated, notice=notice, status="warning" if pruned["failed"] else "info"))
+    return self.html(render_admin(updated, notice=notice, status="warning" if pruned["failed"] else "info", active_section="admin-operations"))
 
 
 def admin_backup_run(self, user):
@@ -680,7 +700,7 @@ def admin_backup_run(self, user):
     result = run_automatic_backup_once(force=True)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     if not result.get("success"):
-        return self.html(render_admin(updated, notice=result.get("error", "Automatic backup failed."), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(updated, notice=result.get("error", "Automatic backup failed."), status="error", active_section="admin-operations"), HTTPStatus.BAD_REQUEST)
     pruned = result.get("pruned", {})
     notice = f"Automatic backup created: {result['archive']}."
     if pruned.get("deleted"):
@@ -695,7 +715,7 @@ def admin_backup_run(self, user):
         admin_request_ip(self),
         admin_user_agent(self),
     )
-    return self.html(render_admin(updated, notice=notice))
+    return self.html(render_admin(updated, notice=notice, active_section="admin-operations"))
 
 
 def admin_backup_restore(self, user):
@@ -705,16 +725,16 @@ def admin_backup_restore(self, user):
     confirmation = fields.get("confirmation", [""])[0].strip()
     if confirmation != "RESTORE":
         return self.html(
-            render_admin(user, notice='Type "RESTORE" to confirm the restore.', status="error"),
+            render_admin(user, notice='Type "RESTORE" to confirm the restore.', status="error", active_section="admin-operations"),
             HTTPStatus.BAD_REQUEST,
         )
     try:
         result = restore_backup_upload(files.get("backup_file"), user["id"])
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-operations"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
     notice = f"Backup restored. Pre-restore safety backup saved as {result['pre_restore_backup_name']}."
-    return self.html(render_admin(updated, notice=notice))
+    return self.html(render_admin(updated, notice=notice, active_section="admin-operations"))
 
 
 def admin_job_retry_scryfall(self, user):
@@ -947,9 +967,9 @@ def admin_user_action(self, user, path):
         else:
             return self.not_found(user)
     except ValueError as exc:
-        return self.html(render_admin(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_admin(user, notice=str(exc), status="error", active_section="admin-users"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_admin(updated, notice=notice, recovery_result=recovery_result))
+    return self.html(render_admin(updated, notice=notice, recovery_result=recovery_result, active_section="admin-users"))
 
 
 __all__ = [
@@ -987,6 +1007,7 @@ __all__ = [
     "admin_registration_review",
     "admin_invite_create",
     "admin_invite_revoke",
+    "admin_invite_delete",
     "admin_backup_create",
     "admin_backup_settings",
     "admin_backup_run",

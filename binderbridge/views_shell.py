@@ -16,12 +16,47 @@ def render_subnav(items, active_key, label="Section"):
     return f'<nav class="section-tabs" aria-label="{e(label)}">{links}</nav>'
 
 
-def render_workspace_nav(items, label="On this page"):
+def render_workspace_nav(items, label="On this page", compact=False, vertical=False):
+    nav_classes = ["workspace-nav"]
+    if compact:
+        nav_classes.append("compact-workspace-nav")
+    if vertical:
+        nav_classes.append("workspace-side-nav")
+    nav_class = " ".join(nav_classes)
     links = "".join(
         f'<a class="workspace-nav-link" href="{e(href)}"><strong>{e(text)}</strong><span>{e(detail)}</span></a>'
         for href, text, detail in items
     )
-    return f'<nav class="workspace-nav" aria-label="{e(label)}">{links}</nav>'
+    return f'<nav class="{nav_class}" aria-label="{e(label)}">{links}</nav>'
+
+
+def normalize_workspace_section(active_section, allowed_sections, default=""):
+    value = str(active_section or "").strip()
+    allowed = {str(section or "").strip() for section in (allowed_sections or [])}
+    if value in allowed:
+        return value
+    default = str(default or "").strip()
+    return default if default in allowed else ""
+
+
+def workspace_section_from_form(form, allowed_sections, default=""):
+    value = ""
+    try:
+        values = form.get("_workspace_section", [""])
+        value = values[0] if values else ""
+    except (AttributeError, IndexError, TypeError):
+        value = ""
+    return normalize_workspace_section(value, allowed_sections, default=default)
+
+
+def workspace_active_attr(active_section, allowed_sections):
+    section = normalize_workspace_section(active_section, allowed_sections)
+    return f' data-active-section="{e(section)}"' if section else ""
+
+
+def workspace_redirect_path(path, form, allowed_sections, default=""):
+    section = workspace_section_from_form(form, allowed_sections, default=default)
+    return f"{path}#{section}" if section else path
 
 
 def render_cards_subnav(active_key):
@@ -228,6 +263,98 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             }});
             document.addEventListener("keydown", function (event) {{
                 if (event.key === "Escape") setOpen(false);
+            }});
+        }})();
+        (function () {{
+            var workspaces = Array.prototype.slice.call(document.querySelectorAll("[data-workspace-tabs]"));
+            if (!workspaces.length) return;
+
+            function idFromHash(hash) {{
+                if (!hash || hash.charAt(0) !== "#") return "";
+                try {{
+                    return decodeURIComponent(hash.slice(1));
+                }} catch (error) {{
+                    return hash.slice(1);
+                }}
+            }}
+
+            workspaces.forEach(function (workspace) {{
+                var links = Array.prototype.slice.call(workspace.querySelectorAll(".workspace-nav-link[href^='#']"));
+                var sections = links.map(function (link) {{
+                    return document.getElementById(idFromHash(link.getAttribute("href")));
+                }}).filter(function (section) {{
+                    return section && section.classList.contains("workspace-section") && workspace.contains(section);
+                }});
+                if (!links.length || !sections.length) return;
+
+                function activate(sectionId, updateHash) {{
+                    var target = sections.find(function (section) {{ return section.id === sectionId; }}) || sections[0];
+                    sections.forEach(function (section) {{
+                        var isActive = section === target;
+                        section.hidden = !isActive;
+                        section.classList.toggle("active", isActive);
+                    }});
+                    links.forEach(function (link) {{
+                        var isActive = idFromHash(link.getAttribute("href")) === target.id;
+                        link.classList.toggle("active", isActive);
+                        if (isActive) {{
+                            link.setAttribute("aria-current", "true");
+                        }} else {{
+                            link.removeAttribute("aria-current");
+                        }}
+                    }});
+                    if (updateHash && window.history && window.history.pushState) {{
+                        window.history.pushState(null, "", "#" + encodeURIComponent(target.id));
+                    }}
+                }}
+
+                links.forEach(function (link) {{
+                    link.addEventListener("click", function (event) {{
+                        var sectionId = idFromHash(link.getAttribute("href"));
+                        if (!sectionId) return;
+                        event.preventDefault();
+                        activate(sectionId, true);
+                    }});
+                }});
+
+                workspace.addEventListener("submit", function (event) {{
+                    var form = event.target;
+                    if (!form || !form.tagName || form.tagName.toLowerCase() !== "form") return;
+                    var submitter = event.submitter || null;
+                    var section = submitter ? submitter.closest(".workspace-section") : null;
+                    if (!section || !workspace.contains(section)) {{
+                        section = sections.find(function (item) {{ return item.classList.contains("active") || !item.hidden; }}) || sections[0];
+                    }}
+                    if (!section || !section.id) return;
+                    var field = form.querySelector("input[name='_workspace_section']");
+                    if (!field) {{
+                        field = document.createElement("input");
+                        field.type = "hidden";
+                        field.name = "_workspace_section";
+                        form.appendChild(field);
+                    }}
+                    field.value = section.id;
+                    var rawAction = submitter && submitter.hasAttribute("formaction")
+                        ? submitter.getAttribute("formaction")
+                        : form.getAttribute("action");
+                    rawAction = rawAction || window.location.href;
+                    try {{
+                        var actionUrl = new URL(rawAction, window.location.href);
+                        if (actionUrl.origin !== window.location.origin || actionUrl.hash) return;
+                        actionUrl.hash = section.id;
+                        var localAction = actionUrl.pathname + actionUrl.search + actionUrl.hash;
+                        if (submitter && submitter.hasAttribute("formaction")) {{
+                            submitter.setAttribute("formaction", localAction);
+                        }} else {{
+                            form.setAttribute("action", localAction);
+                        }}
+                    }} catch (error) {{}}
+                }}, true);
+
+                activate(idFromHash(window.location.hash) || workspace.getAttribute("data-active-section") || "", false);
+                window.addEventListener("hashchange", function () {{
+                    activate(idFromHash(window.location.hash), false);
+                }});
             }});
         }})();
         (function () {{
@@ -622,13 +749,13 @@ def render_two_factor_account_panel(user, recovery_codes=None):
         controls = f"""
             <p class="muted compact span-2">{enabled_detail}. You will need an authenticator code or recovery code after entering your password.</p>
             {recovery_panel}
-            <form class="embedded-security-form span-2" method="post" action="/account/2fa/recovery-codes">
+            <form class="embedded-security-form span-2" method="post" action="/account/2fa/recovery-codes#account-security">
                 <label>Current password
                     <input required name="current_password" type="password" autocomplete="current-password">
                 </label>
                 <button class="button secondary" type="submit">Generate new recovery codes</button>
             </form>
-            <form class="embedded-security-form span-2" method="post" action="/account/2fa/disable">
+            <form class="embedded-security-form span-2" method="post" action="/account/2fa/disable#account-security">
                 <label>Current password
                     <input required name="current_password" type="password" autocomplete="current-password">
                 </label>
@@ -651,7 +778,7 @@ def render_two_factor_account_panel(user, recovery_codes=None):
             <label class="span-2">Authenticator URI
                 <input readonly value="{e(setup["otpauth_uri"])}" onclick="this.select()">
             </label>
-            <form class="embedded-security-form span-2" method="post" action="/account/2fa/enable">
+            <form class="embedded-security-form span-2" method="post" action="/account/2fa/enable#account-security">
                 <label>Authenticator code
                     <input required name="two_factor_code" inputmode="numeric" autocomplete="one-time-code">
                 </label>
@@ -660,7 +787,7 @@ def render_two_factor_account_panel(user, recovery_codes=None):
                 </label>
                 <button class="button primary" type="submit">Enable 2FA</button>
             </form>
-            <form class="embedded-security-form span-2" method="post" action="/account/2fa/start">
+            <form class="embedded-security-form span-2" method="post" action="/account/2fa/start#account-security">
                 <label>Current password
                     <input required name="current_password" type="password" autocomplete="current-password">
                 </label>
@@ -670,7 +797,7 @@ def render_two_factor_account_panel(user, recovery_codes=None):
     else:
         controls = """
             <p class="muted compact span-2">Protect your login with a six-digit code from an authenticator app. Recovery codes are generated after setup.</p>
-            <form class="embedded-security-form span-2" method="post" action="/account/2fa/start">
+            <form class="embedded-security-form span-2" method="post" action="/account/2fa/start#account-security">
                 <label>Current password
                     <input required name="current_password" type="password" autocomplete="current-password">
                 </label>
@@ -702,7 +829,7 @@ def render_passkey_account_panel(user):
                 <strong>{e(row_value(credential, "nickname", "") or "Passkey")}</strong>
                 <span class="subtle">Added {e(time_label(row_value(credential, "created_at", "")))} - Last used {e(time_label(row_value(credential, "last_used_at", "")))}</span>
             </div>
-            <form class="inline-admin-form" method="post" action="/account/passkeys/{credential["id"]}/delete">
+            <form class="inline-admin-form" method="post" action="/account/passkeys/{credential["id"]}/delete#account-security">
                 <input required name="current_password" type="password" autocomplete="current-password" placeholder="Current password">
                     <button class="button danger small" type="submit" data-confirm="Remove this passkey from your account?">Remove</button>
             </form>
@@ -810,7 +937,7 @@ def render_passkey_account_panel(user):
                 <span class="status {setup_class}">{e(setup_status)}</span>
             </div>
             <p class="muted compact span-2">Use a device passkey for passwordless sign-in. Passkeys require browser support and user verification such as a PIN, fingerprint, or face unlock.</p>
-            <form class="embedded-security-form span-2" method="post" action="/account/passkeys/register" id="passkey-register-form">
+            <form class="embedded-security-form span-2" method="post" action="/account/passkeys/register#account-security" id="passkey-register-form">
                 <label>Passkey name
                     <input name="nickname" maxlength="80" placeholder="Laptop, phone, or security key">
                 </label>
@@ -829,7 +956,15 @@ def render_passkey_account_panel(user):
     """
 
 
-def render_account(user, notice=None, status="info", recovery_codes=None):
+def render_account(user, notice=None, status="info", recovery_codes=None, active_section=""):
+    summary = get_collection_summary(user["id"])
+    needs_action_count = trade_count_for_user(user["id"], {"direction": "needs_action"})
+    unread_count = unread_notification_count(user["id"])
+    passkey_count = len(passkey_existing_credentials(user["id"]))
+    security_label = "2FA enabled" if two_factor_enabled(user) else "2FA off"
+    security_detail = f"{passkey_count} passkey{'s' if passkey_count != 1 else ''} registered"
+    attention_label = f"{needs_action_count} trade{'s' if needs_action_count != 1 else ''}"
+    attention_detail = f"{unread_count} unread notification{'s' if unread_count != 1 else ''}"
     public_email_checked = checked(bool(user["public_email"]))
     value_visibility_options = "".join(
         f'<option value="{e(value)}"{selected(row_value(user, "collection_value_visibility", VISIBILITY_MEMBERS), value)}>{e(label)}</option>'
@@ -956,6 +1091,8 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
     if integration_panel:
         workspace_items.append(("#account-integrations", "Integrations", "API tokens and webhooks"))
     workspace_items.append(("#account-data", "Data", "Export and cleanup"))
+    section_ids = [href.lstrip("#") for href, _text, _detail in workspace_items]
+    active_attr = workspace_active_attr(active_section, section_ids)
     content = f"""
     <section class="section-heading">
         <div>
@@ -964,7 +1101,31 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
             <p class="muted compact">Manage your profile, alerts, sign-in security, integrations, and account data. Role: <strong>{e(role_label(user))}</strong></p>
         </div>
     </section>
-    {render_workspace_nav(workspace_items, label="Account settings")}
+    <section class="settings-summary account-summary" aria-label="Account status summary">
+        <article class="settings-summary-card">
+            <span>Collection</span>
+            <strong>{e(summary["unique_cards"])} entries</strong>
+            <small>{e(summary["trade_cards"])} cards marked for trade</small>
+        </article>
+        <article class="settings-summary-card">
+            <span>Wishlist</span>
+            <strong>{e(summary["wants_count"])} wanted</strong>
+            <small>Used for matching and alerts</small>
+        </article>
+        <article class="settings-summary-card">
+            <span>Attention</span>
+            <strong>{e(attention_label)}</strong>
+            <small>{e(attention_detail)}</small>
+        </article>
+        <article class="settings-summary-card">
+            <span>Security</span>
+            <strong>{e(security_label)}</strong>
+            <small>{e(security_detail)}</small>
+        </article>
+    </section>
+    <section class="workspace-layout tabbed-workspace" data-workspace-tabs{active_attr}>
+        {render_workspace_nav(workspace_items, label="Account settings", compact=True, vertical=True)}
+        <div class="workspace-pane-stack">
     {role_notice}
     <form class="account-settings-form" method="post" action="/account/profile">
         <section class="workspace-section" id="account-profile">
@@ -1034,7 +1195,7 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
             <div><p class="eyebrow">Security</p><h2>Sign-in protection</h2><p class="muted compact">Manage your password and add stronger ways to protect or access your account.</p></div>
         </div>
         <div class="account-section-grid">
-            <form class="panel form-grid compact-form" method="post" action="/account/password">
+            <form class="panel form-grid compact-form" method="post" action="/account/password#account-security">
                 <div class="span-2 panel-heading"><h2>Password</h2></div>
                 <label class="span-2">Current password<input required name="current_password" type="password" autocomplete="current-password"></label>
                 <label class="span-2">New password<input required name="new_password" type="password" minlength="8" autocomplete="new-password"></label>
@@ -1061,8 +1222,10 @@ def render_account(user, notice=None, status="info", recovery_codes=None):
             </div>
         </article>
     </section>
+        </div>
+    </section>
     """
     return render_layout(user, "Account", content, active="account", notice=notice, status=status)
 
 
-__all__ = ['render_subnav', 'render_workspace_nav', 'render_cards_subnav', 'render_wishlist_subnav', 'render_trades_subnav', 'group_listing_url', 'render_layout', 'render_login', 'render_password_recovery', 'render_password_reset', 'render_two_factor_login', 'render_register', 'render_recovery_code_panel', 'render_two_factor_account_panel', 'render_passkey_account_panel', 'render_account']
+__all__ = ['render_subnav', 'render_workspace_nav', 'normalize_workspace_section', 'workspace_section_from_form', 'workspace_active_attr', 'workspace_redirect_path', 'render_cards_subnav', 'render_wishlist_subnav', 'render_trades_subnav', 'group_listing_url', 'render_layout', 'render_login', 'render_password_recovery', 'render_password_reset', 'render_two_factor_login', 'render_register', 'render_recovery_code_panel', 'render_two_factor_account_panel', 'render_passkey_account_panel', 'render_account']

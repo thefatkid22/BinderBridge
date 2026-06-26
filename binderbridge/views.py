@@ -55,3 +55,4 @@ __all__.extend(['render_collection_health_issue', 'render_collection_health_visi
 __all__.extend(['render_database_storage_chart', 'render_database_maintenance_run', 'render_database_index_row', 'render_database_migration_row', 'render_admin_database'])
 __all__.extend(['render_password_recovery', 'render_password_reset'])
 __all__.append('render_workspace_nav')
+__all__.extend(['normalize_workspace_section', 'workspace_section_from_form', 'workspace_active_attr', 'workspace_redirect_path'])

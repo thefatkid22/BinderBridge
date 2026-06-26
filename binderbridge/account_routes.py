@@ -283,8 +283,9 @@ def public_base_url(self):
 
 def account_profile(self, user):
     form = self.read_form()
+    active_section = workspace_section_from_form(form, ("account-profile", "account-notifications"), default="account-profile")
     if not verify_password(form.get("current_password", [""])[0], user["password_hash"]):
-        return self.html(render_account(user, notice="Current password is incorrect.", status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice="Current password is incorrect.", status="error", active_section=active_section), HTTPStatus.BAD_REQUEST)
     preferred_price_source = form.get("preferred_price_source", [""])[0]
     notify_trade_offer_enabled = form.get("notify_trade_offer_enabled", [""])[0] == "1"
     notify_trade_comment_enabled = form.get("notify_trade_comment_enabled", [""])[0] == "1"
@@ -361,7 +362,7 @@ def account_profile(self, user):
             form.get("collection_value_visibility", [VISIBILITY_MEMBERS])[0],
         )
     except ValueError as exc:
-        return self.html(render_account(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice=str(exc), status="error", active_section=active_section), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
     notice = "Profile updated."
     price_basis = normalize_price_basis(preferred_price_source)
@@ -375,7 +376,7 @@ def account_profile(self, user):
             notice += f" Applied {applied} cached {price_provider_label(price_basis)} prices."
         elif not price_provider_ready(price_basis):
             notice += f" {price_provider_label(price_basis)} is not configured yet."
-    return self.html(render_account(updated, notice=notice))
+    return self.html(render_account(updated, notice=notice, active_section=active_section))
 
 def account_password(self, user):
     form = self.read_form()
@@ -388,48 +389,48 @@ def account_password(self, user):
             keep_session_token=self.current_session_token(),
         )
     except ValueError as exc:
-        return self.html(render_account(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice=str(exc), status="error", active_section="account-security"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_account(updated, notice="Password changed. Other sessions were signed out."))
+    return self.html(render_account(updated, notice="Password changed. Other sessions were signed out.", active_section="account-security"))
 
 def account_two_factor_start(self, user):
     form = self.read_form()
     if not verify_password(form.get("current_password", [""])[0], user["password_hash"]):
-        return self.html(render_account(user, notice="Current password is incorrect.", status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice="Current password is incorrect.", status="error", active_section="account-security"), HTTPStatus.BAD_REQUEST)
     start_user_totp_setup(user["id"])
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_account(updated, notice="Two-factor setup started. Add the setup key to your authenticator app, then enter the code."))
+    return self.html(render_account(updated, notice="Two-factor setup started. Add the setup key to your authenticator app, then enter the code.", active_section="account-security"))
 
 def account_two_factor_enable(self, user):
     form = self.read_form()
     if not verify_password(form.get("current_password", [""])[0], user["password_hash"]):
-        return self.html(render_account(user, notice="Current password is incorrect.", status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice="Current password is incorrect.", status="error", active_section="account-security"), HTTPStatus.BAD_REQUEST)
     try:
         recovery_codes = enable_user_totp(user["id"], form.get("two_factor_code", [""])[0])
     except ValueError as exc:
         updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
-        return self.html(render_account(updated, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(updated, notice=str(exc), status="error", active_section="account-security"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_account(updated, notice="Two-factor authentication enabled. Save your recovery codes now.", recovery_codes=recovery_codes))
+    return self.html(render_account(updated, notice="Two-factor authentication enabled. Save your recovery codes now.", recovery_codes=recovery_codes, active_section="account-security"))
 
 def account_two_factor_disable(self, user):
     form = self.read_form()
     if not verify_password(form.get("current_password", [""])[0], user["password_hash"]):
-        return self.html(render_account(user, notice="Current password is incorrect.", status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice="Current password is incorrect.", status="error", active_section="account-security"), HTTPStatus.BAD_REQUEST)
     disable_user_totp(user["id"])
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_account(updated, notice="Two-factor authentication disabled."))
+    return self.html(render_account(updated, notice="Two-factor authentication disabled.", active_section="account-security"))
 
 def account_two_factor_recovery_codes(self, user):
     form = self.read_form()
     if not verify_password(form.get("current_password", [""])[0], user["password_hash"]):
-        return self.html(render_account(user, notice="Current password is incorrect.", status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice="Current password is incorrect.", status="error", active_section="account-security"), HTTPStatus.BAD_REQUEST)
     try:
         recovery_codes = regenerate_user_totp_recovery_codes(user["id"])
     except ValueError as exc:
-        return self.html(render_account(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice=str(exc), status="error", active_section="account-security"), HTTPStatus.BAD_REQUEST)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
-    return self.html(render_account(updated, notice="New recovery codes generated. Save them now.", recovery_codes=recovery_codes))
+    return self.html(render_account(updated, notice="New recovery codes generated. Save them now.", recovery_codes=recovery_codes, active_section="account-security"))
 
 def account_passkey_register_options(self, user):
     try:
@@ -461,11 +462,11 @@ def account_passkey_delete(self, user, path):
         return self.redirect("/account")
     form = self.read_form()
     if not verify_password(form.get("current_password", [""])[0], user["password_hash"]):
-        return self.html(render_account(user, notice="Current password is incorrect.", status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_account(user, notice="Current password is incorrect.", status="error", active_section="account-security"), HTTPStatus.BAD_REQUEST)
     deleted = delete_passkey_credential(user["id"], credential_id)
     updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
     notice = "Passkey removed." if deleted else "Passkey not found."
-    return self.html(render_account(updated, notice=notice, status="info" if deleted else "warning"))
+    return self.html(render_account(updated, notice=notice, status="info" if deleted else "warning", active_section="account-security"))
 
 def account_export(self, user):
     filename, data = export_account_json(user["id"])

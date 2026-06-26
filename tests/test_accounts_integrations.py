@@ -164,7 +164,9 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
             app.email_delivery_configured = original_configured
 
         self.assertIn('action="/account/profile"', html)
-        self.assertIn('action="/account/password"', html)
+        self.assertIn('action="/account/password#account-security"', html)
+        self.assertIn('data-workspace-tabs', html)
+        self.assertIn('workspace-side-nav', html)
         self.assertIn('aria-label="Account settings"', html)
         self.assertIn('id="account-profile"', html)
         self.assertIn('id="account-notifications"', html)
@@ -174,8 +176,9 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertIn('href="/account/export"', html)
         self.assertIn("Download account data", html)
         self.assertIn("API access", html)
-        self.assertIn('action="/account/api-tokens"', html)
-        self.assertIn('action="/account/webhooks"', html)
+        self.assertIn('action="/account/api-tokens#account-integrations"', html)
+        self.assertIn('action="/account/webhooks#account-integrations"', html)
+        self.assertIn('submitter.hasAttribute("formaction")', html)
         self.assertIn("Show email on my member profile", html)
         self.assertIn("Notification preferences", html)
         self.assertIn("Price alerts", html)
@@ -221,13 +224,53 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         created = app.create_api_token(user_id, "Sync token", ["read", "write"])
         found_user, token_row = app.get_user_by_api_token(created["token"])
         app.revoke_api_token(user_id, created["id"])
+        revoked_html = app.render_account(app.row("SELECT * FROM users WHERE id = ?", (user_id,)))
+        deleted = app.delete_revoked_api_token(user_id, created["id"])
         revoked_user, revoked_token = app.get_user_by_api_token(created["token"])
 
         self.assertTrue(created["token"].startswith(app.API_TOKEN_PREFIX))
         self.assertEqual(found_user["username"], "apiuser")
         self.assertEqual(token_row["scopes"], "read,write")
+        self.assertIn(f'action="/account/api-tokens/{created["id"]}/delete#account-integrations"', revoked_html)
+        self.assertEqual(deleted, 1)
+        self.assertIsNone(app.row("SELECT * FROM api_tokens WHERE id = ?", (created["id"],)))
         self.assertIsNone(revoked_user)
         self.assertIsNone(revoked_token)
+
+    def test_api_token_post_handlers_keep_integrations_section_active(self):
+        class FakeRequest:
+            headers = {}
+            client_address = ("127.0.0.1", 0)
+
+            def __init__(self, form=None):
+                self.form = form or {}
+                self.status = None
+
+            def read_form(self):
+                return self.form
+
+            def enforce_rate_limit(self, *args, **kwargs):
+                return None
+
+            def html(self, body, status=app.HTTPStatus.OK):
+                self.status = status
+                return body
+
+        user_id = app.create_user("token-nav", "password123", "Token Nav")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+
+        created_html = app.account_api_token_create(
+            FakeRequest({"name": ["CLI"], "scope": ["read"], "current_password": ["password123"]}),
+            user,
+        )
+        token = app.row("SELECT * FROM api_tokens WHERE user_id = ?", (user_id,))
+        app.revoke_api_token(user_id, token["id"])
+        deleted_html = app.account_api_token_delete(FakeRequest(), user, f"/account/api-tokens/{token['id']}/delete")
+
+        self.assertIn('data-active-section="account-integrations"', created_html)
+        self.assertIn("API token created.", created_html)
+        self.assertIn('data-active-section="account-integrations"', deleted_html)
+        self.assertIn("Revoked API token deleted.", deleted_html)
 
     def test_integration_access_policy_hides_and_enforces_api_and_webhooks(self):
         admin_id = app.create_user("admin", "password123", "Admin")
@@ -244,8 +287,8 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(settings["api_policy"], "admins")
         self.assertEqual(settings["webhook_policy"], "trusted")
         self.assertNotIn("API access", restricted_html)
-        self.assertNotIn('action="/account/api-tokens"', restricted_html)
-        self.assertNotIn('action="/account/webhooks"', restricted_html)
+        self.assertNotIn('action="/account/api-tokens#account-integrations"', restricted_html)
+        self.assertNotIn('action="/account/webhooks#account-integrations"', restricted_html)
         self.assertEqual(app.get_user_by_api_token(token["token"]), (None, None))
         with self.assertRaisesRegex(ValueError, "API access"):
             app.create_api_token(user_id, "Blocked", ["read"])
@@ -264,10 +307,10 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
             "secret",
         )
 
-        self.assertNotIn('action="/account/api-tokens"', trusted_html)
-        self.assertIn('action="/account/webhooks"', trusted_html)
-        self.assertIn('action="/account/api-tokens"', admin_html)
-        self.assertIn('action="/account/webhooks"', admin_html)
+        self.assertNotIn('action="/account/api-tokens#account-integrations"', trusted_html)
+        self.assertIn('action="/account/webhooks#account-integrations"', trusted_html)
+        self.assertIn('action="/account/api-tokens#account-integrations"', admin_html)
+        self.assertIn('action="/account/webhooks#account-integrations"', admin_html)
         self.assertTrue(trusted_hook["id"])
 
         with app.db() as conn:

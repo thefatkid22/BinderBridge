@@ -37,6 +37,8 @@ BACKUP_INTEGRITY_LAST_FAILED_KEY = "backup_integrity_last_failed"
 DATA_RETENTION_NOTIFICATION_DAYS_KEY = "data_retention_notification_days"
 DATA_RETENTION_ADMIN_LOG_DAYS_KEY = "data_retention_admin_log_days"
 DATA_RETENTION_WEBHOOK_DAYS_KEY = "data_retention_webhook_days"
+DATA_RETENTION_API_TOKEN_DAYS_KEY = "data_retention_api_token_days"
+DATA_RETENTION_INVITE_DAYS_KEY = "data_retention_invite_days"
 DATA_RETENTION_LAST_RUN_KEY = "data_retention_last_run"
 DATA_RETENTION_LAST_RESULT_KEY = "data_retention_last_result"
 DEFAULT_AUTOMATIC_BACKUP_ENABLED = config_bool("BINDERBRIDGE_BACKUP_AUTO_ENABLED", "BACKUP_AUTO_ENABLED", default=True, section="backups", key="auto_enabled")
@@ -46,6 +48,9 @@ DEFAULT_AUTOMATIC_BACKUP_RETENTION_DAYS = max(0, config_int("BINDERBRIDGE_BACKUP
 DEFAULT_DATA_RETENTION_NOTIFICATION_DAYS = max(0, config_int("BINDERBRIDGE_NOTIFICATION_RETENTION_DAYS", default=90, section="retention", key="notification_days"))
 DEFAULT_DATA_RETENTION_ADMIN_LOG_DAYS = max(0, config_int("BINDERBRIDGE_ADMIN_LOG_RETENTION_DAYS", default=365, section="retention", key="admin_log_days"))
 DEFAULT_DATA_RETENTION_WEBHOOK_DAYS = max(0, config_int("BINDERBRIDGE_WEBHOOK_RETENTION_DAYS", default=90, section="retention", key="webhook_days"))
+DEFAULT_DATA_RETENTION_API_TOKEN_DAYS = max(0, config_int("BINDERBRIDGE_API_TOKEN_RETENTION_DAYS", default=90, section="retention", key="api_token_days"))
+DEFAULT_DATA_RETENTION_INVITE_DAYS = max(0, config_int("BINDERBRIDGE_INVITE_RETENTION_DAYS", default=90, section="retention", key="invite_days"))
+DATA_RETENTION_WORKER_CHECK_SECONDS = max(3600, config_int("BINDERBRIDGE_DATA_RETENTION_INTERVAL_SECONDS", default=86400, section="retention", key="interval_seconds"))
 AUTOMATIC_BACKUP_WORKER_CHECK_SECONDS = 60
 
 _automatic_backup_worker_lock = threading.Lock()
@@ -589,17 +594,28 @@ def data_retention_settings():
         "admin_log_days": data_retention_setting(DATA_RETENTION_ADMIN_LOG_DAYS_KEY, DEFAULT_DATA_RETENTION_ADMIN_LOG_DAYS),
         "webhook_days": data_retention_setting(DATA_RETENTION_WEBHOOK_DAYS_KEY, DEFAULT_DATA_RETENTION_WEBHOOK_DAYS),
         "evidence_days": dispute_evidence_retention_days(),
+        "api_token_days": data_retention_setting(DATA_RETENTION_API_TOKEN_DAYS_KEY, DEFAULT_DATA_RETENTION_API_TOKEN_DAYS),
+        "invite_days": data_retention_setting(DATA_RETENTION_INVITE_DAYS_KEY, DEFAULT_DATA_RETENTION_INVITE_DAYS),
         "last_run": get_setting(DATA_RETENTION_LAST_RUN_KEY, ""),
         "last_result": get_setting(DATA_RETENTION_LAST_RESULT_KEY, ""),
     }
 
 
-def set_data_retention_settings(notification_days, admin_log_days, webhook_days, evidence_days):
+def set_data_retention_settings(notification_days, admin_log_days, webhook_days, evidence_days, api_token_days=None, invite_days=None):
+    current = data_retention_settings()
     settings = {
         "notification_days": normalize_data_retention_days(notification_days, "Read notification retention"),
         "admin_log_days": normalize_data_retention_days(admin_log_days, "Admin log retention"),
         "webhook_days": normalize_data_retention_days(webhook_days, "Webhook delivery retention"),
         "evidence_days": normalize_data_retention_days(evidence_days, "Resolved dispute evidence retention"),
+        "api_token_days": normalize_data_retention_days(
+            current["api_token_days"] if api_token_days is None else api_token_days,
+            "Revoked API token retention",
+        ),
+        "invite_days": normalize_data_retention_days(
+            current["invite_days"] if invite_days is None else invite_days,
+            "Inactive invite retention",
+        ),
     }
     with db() as conn:
         for key, value in (
@@ -607,6 +623,8 @@ def set_data_retention_settings(notification_days, admin_log_days, webhook_days,
             (DATA_RETENTION_ADMIN_LOG_DAYS_KEY, settings["admin_log_days"]),
             (DATA_RETENTION_WEBHOOK_DAYS_KEY, settings["webhook_days"]),
             (DISPUTE_EVIDENCE_RETENTION_DAYS_KEY, settings["evidence_days"]),
+            (DATA_RETENTION_API_TOKEN_DAYS_KEY, settings["api_token_days"]),
+            (DATA_RETENTION_INVITE_DAYS_KEY, settings["invite_days"]),
         ):
             conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, str(value)))
     return data_retention_settings()
@@ -624,14 +642,19 @@ def data_retention_eligible_counts(settings=None, reference_time=None):
     settings = settings or data_retention_settings()
     cutoffs = {
         key: data_retention_cutoff(settings[key], reference_time)
-        for key in ("notification_days", "admin_log_days", "webhook_days", "evidence_days")
+        for key in ("notification_days", "admin_log_days", "webhook_days", "evidence_days", "api_token_days", "invite_days")
     }
     counts = {
         "notifications": 0,
         "admin_logs": 0,
         "webhook_deliveries": 0,
         "dispute_evidence": 0,
+        "api_tokens": 0,
+        "registration_invites": 0,
     }
+    expire_invites = globals().get("expire_registration_invites")
+    if expire_invites:
+        expire_invites()
     if cutoffs["notification_days"]:
         counts["notifications"] = row(
             "SELECT COUNT(*) AS count FROM user_notifications WHERE is_read = 1 AND created_at < ?",
@@ -666,6 +689,21 @@ def data_retention_eligible_counts(settings=None, reference_time=None):
             """,
             (cutoffs["evidence_days"],),
         )["count"]
+    if cutoffs["api_token_days"]:
+        counts["api_tokens"] = row(
+            "SELECT COUNT(*) AS count FROM api_tokens WHERE revoked_at != '' AND revoked_at < ?",
+            (cutoffs["api_token_days"],),
+        )["count"]
+    if cutoffs["invite_days"]:
+        counts["registration_invites"] = row(
+            """
+            SELECT COUNT(*) AS count
+            FROM registration_invites
+            WHERE status IN ('accepted', 'expired', 'revoked')
+                AND COALESCE(NULLIF(accepted_at, ''), NULLIF(updated_at, ''), expires_at, created_at) < ?
+            """,
+            (cutoffs["invite_days"],),
+        )["count"]
     counts["total"] = sum(counts.values())
     return counts
 
@@ -682,16 +720,21 @@ def prune_data_retention_records(settings=None, reference_time=None):
     settings = settings or data_retention_settings()
     cutoffs = {
         key: data_retention_cutoff(settings[key], reference_time)
-        for key in ("notification_days", "admin_log_days", "webhook_days", "evidence_days")
+        for key in ("notification_days", "admin_log_days", "webhook_days", "evidence_days", "api_token_days", "invite_days")
     }
     deleted = {
         "notifications": 0,
         "admin_logs": 0,
         "webhook_deliveries": 0,
         "dispute_evidence": 0,
+        "api_tokens": 0,
+        "registration_invites": 0,
     }
     timestamp = now_iso()
     with db() as conn:
+        expire_invites = globals().get("expire_registration_invites")
+        if expire_invites:
+            expire_invites(conn)
         if cutoffs["notification_days"]:
             deleted["notifications"] = conn.execute(
                 "DELETE FROM user_notifications WHERE is_read = 1 AND created_at < ?",
@@ -723,6 +766,20 @@ def prune_data_retention_records(settings=None, reference_time=None):
                 )
                 """,
                 (cutoffs["evidence_days"],),
+            ).rowcount
+        if cutoffs["api_token_days"]:
+            deleted["api_tokens"] = conn.execute(
+                "DELETE FROM api_tokens WHERE revoked_at != '' AND revoked_at < ?",
+                (cutoffs["api_token_days"],),
+            ).rowcount
+        if cutoffs["invite_days"]:
+            deleted["registration_invites"] = conn.execute(
+                """
+                DELETE FROM registration_invites
+                WHERE status IN ('accepted', 'expired', 'revoked')
+                    AND COALESCE(NULLIF(accepted_at, ''), NULLIF(updated_at, ''), expires_at, created_at) < ?
+                """,
+                (cutoffs["invite_days"],),
             ).rowcount
         deleted["total"] = sum(deleted.values())
         conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (DATA_RETENTION_LAST_RUN_KEY, timestamp))
