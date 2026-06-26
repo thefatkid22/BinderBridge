@@ -177,8 +177,10 @@ def propose_trade_from_browse(page, base_url: str) -> int:
     expect(page.get_by_role("heading", name=re.compile("Offer to Bob Trader", re.I))).to_be_visible()
     expect(page.locator("#trade-selected")).to_contain_text("Lightning Bolt")
 
+    page.locator('a[href="#trade-offer"]').click()
     page.locator('input[data-side="offer"][data-card-name="Sol Ring"]').fill("1")
     expect(page.locator("#trade-selected")).to_contain_text("Sol Ring")
+    page.locator('a[href="#trade-message"]').click()
     page.get_by_label("Message").fill("Browser smoke trade request.")
     page.get_by_role("button", name="Review trade").click()
     expect(page.get_by_role("heading", name=re.compile("Confirm with Bob Trader", re.I))).to_be_visible()
