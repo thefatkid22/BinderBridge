@@ -12,23 +12,23 @@ def wants_export(self, user):
     filename, data = export_wants_csv(user["id"])
     return self.binary(data, "text/csv; charset=utf-8", filename)
 
-def cleanup_page(self, user, notice=None, status="info"):
-    return self.html(render_cleanup(user, notice=notice, status=status))
+def cleanup_page(self, user, notice=None, status="info", active_section=""):
+    return self.html(render_cleanup(user, notice=notice, status=status, active_section=active_section))
 
 def cleanup_collection(self, user):
     form = self.read_form()
     result = cleanup_collection_duplicates(user["id"], form.get("group_key", []))
     notice = f"Merged {result['merged']} duplicate collection row{'s' if result['merged'] != 1 else ''} across {result['groups']} group{'s' if result['groups'] != 1 else ''}."
-    return self.cleanup_page(user, notice=notice)
+    return self.cleanup_page(user, notice=notice, active_section="cleanup-collection")
 
 def cleanup_wants(self, user):
     form = self.read_form()
     result = cleanup_want_duplicates(user["id"], form.get("group_key", []))
     notice = f"Merged {result['merged']} duplicate wanted-card row{'s' if result['merged'] != 1 else ''} across {result['groups']} group{'s' if result['groups'] != 1 else ''}."
-    return self.cleanup_page(user, notice=notice)
+    return self.cleanup_page(user, notice=notice, active_section="cleanup-wants")
 
-def condition_finish_audit_page(self, user, query=None, notice=None, status="info"):
-    return self.html(render_condition_finish_audit(user, query or {}, notice=notice, status=status))
+def condition_finish_audit_page(self, user, query=None, notice=None, status="info", active_section=""):
+    return self.html(render_condition_finish_audit(user, query or {}, notice=notice, status=status, active_section=active_section))
 
 def condition_finish_audit_query_from_form(self, form):
     redirect_to = safe_local_redirect_path(
@@ -44,10 +44,10 @@ def condition_finish_audit_update(self, user):
     try:
         condition, finish = parse_condition_finish_audit_update(form)
     except ValueError as exc:
-        return self.condition_finish_audit_page(user, query, notice=str(exc), status="error")
+        return self.condition_finish_audit_page(user, query, notice=str(exc), status="error", active_section="audit-results")
     updated = update_collection_condition_finish_by_ids(user["id"], form.get("item_id", []), condition, finish)
     notice = f"Updated {updated} selected card{'s' if updated != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice)
+    return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
 
 def condition_finish_audit_update_all(self, user):
     form = self.read_form()
@@ -56,17 +56,17 @@ def condition_finish_audit_update_all(self, user):
     try:
         condition, finish = parse_condition_finish_audit_update(form)
     except ValueError as exc:
-        return self.condition_finish_audit_page(user, query, notice=str(exc), status="error")
+        return self.condition_finish_audit_page(user, query, notice=str(exc), status="error", active_section="audit-results")
     updated = update_collection_condition_finish_matching(user["id"], filters, condition, finish)
     notice = f"Updated {updated} matching card{'s' if updated != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice)
+    return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
 
 def condition_finish_audit_normalize(self, user):
     form = self.read_form()
     query = self.condition_finish_audit_query_from_form(form)
     updated = normalize_collection_condition_finish_by_ids(user["id"], form.get("item_id", []))
     notice = f"Normalized {updated} selected card{'s' if updated != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice)
+    return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
 
 def condition_finish_audit_normalize_all(self, user):
     form = self.read_form()
@@ -74,7 +74,7 @@ def condition_finish_audit_normalize_all(self, user):
     filters = condition_finish_audit_filter_values(form)
     updated = normalize_collection_condition_finish_matching(user["id"], filters)
     notice = f"Normalized {updated} matching card{'s' if updated != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice)
+    return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
 
 def collection_import(self, method, user):
     if method == "GET":
@@ -192,7 +192,7 @@ def import_undo(self, user, path):
                 group_id = int(parts[1])
             except (ValueError, IndexError):
                 return self.html(render_import(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error", active_section="group-import"), HTTPStatus.BAD_REQUEST)
         return self.html(render_import(user, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
     notice = f"Undid import batch #{result['batch_id']} ({result['undone_items']} change{'s' if result['undone_items'] != 1 else ''} reverted)."
     if redirect_to.startswith("/groups/"):
@@ -201,7 +201,7 @@ def import_undo(self, user, path):
             group_id = int(parts[1])
         except (ValueError, IndexError):
             return self.redirect("/import")
-        page = render_group_detail(user, group_id, notice=notice)
+        page = render_group_detail(user, group_id, notice=notice, active_section="group-import")
         if not page:
             return self.redirect("/import")
         return self.html(page)

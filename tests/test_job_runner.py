@@ -135,6 +135,7 @@ class BackgroundJobRunnerTests(BinderBridgeTestCase):
         self.assertTrue({
             "system:scryfall-price-refresh",
             "system:automatic-backup",
+            "system:data-retention",
             "system:notification-delivery",
             "system:scryfall-enrichment",
         }.issubset(keys))

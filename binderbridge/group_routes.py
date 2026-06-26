@@ -47,7 +47,7 @@ def group_action(self, method, user, path, query=None):
     if len(parts) == 3 and parts[2] == "visibility" and method == "POST":
         form = self.read_form()
         update_card_group_visibility(user["id"], group_id, form_visibility(form))
-        return self.redirect(f"/groups/{group_id}")
+        return self.redirect(f"/groups/{group_id}#group-sharing")
     if len(parts) == 3 and parts[2] == "sharing" and method == "POST":
         form = self.read_form()
         update_card_group_sharing_defaults(
@@ -58,7 +58,7 @@ def group_action(self, method, user, path, query=None):
             form.get("show_values", [""])[0] == "1",
             form.get("show_photos", [""])[0] == "1",
         )
-        return self.html(render_group_detail(user, group_id, notice="Sharing defaults updated. Existing card visibility was not changed."))
+        return self.html(render_group_detail(user, group_id, notice="Sharing defaults updated. Existing card visibility was not changed.", active_section="group-sharing"))
     if len(parts) == 3 and parts[2] == "share-links" and method == "POST":
         form = self.read_form()
         try:
@@ -71,19 +71,19 @@ def group_action(self, method, user, path, query=None):
                 form.get("show_photos", [""])[0] == "1",
             )
         except ValueError as exc:
-            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error", active_section="group-sharing"), HTTPStatus.BAD_REQUEST)
         share_result = {
             "url": f"{self.public_base_url()}/share/{token}",
             "link": link,
         }
-        return self.html(render_group_detail(user, group_id, notice="Private share link created. Copy it now; the token is not stored.", share_result=share_result))
+        return self.html(render_group_detail(user, group_id, notice="Private share link created. Copy it now; the token is not stored.", share_result=share_result, active_section="group-sharing"))
     if len(parts) == 5 and parts[2] == "share-links" and parts[4] == "revoke" and method == "POST":
         try:
             share_id = int(parts[3])
         except ValueError:
             return self.not_found(user)
         revoke_group_share_link(user["id"], group_id, share_id)
-        return self.html(render_group_detail(user, group_id, notice="Share link revoked."))
+        return self.html(render_group_detail(user, group_id, notice="Share link revoked.", active_section="group-sharing"))
     if len(parts) == 3 and parts[2] == "export" and method == "GET":
         return self.group_export(user, group)
     if len(parts) == 3 and parts[2] == "import" and method == "POST":
@@ -103,15 +103,15 @@ def group_action(self, method, user, path, query=None):
                     form.get("quantity", ["1"])[0],
                 )
         except (ValueError, TypeError) as exc:
-            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-        return self.redirect(f"/groups/{group_id}")
+            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error", active_section="group-cards"), HTTPStatus.BAD_REQUEST)
+        return self.redirect(f"/groups/{group_id}#group-cards")
     if len(parts) == 5 and parts[2] == "items" and parts[4] == "delete" and method == "POST":
         try:
             group_item_id = int(parts[3])
         except ValueError:
             return self.not_found(user)
         remove_group_item(user["id"], group_id, group_item_id)
-        return self.redirect(f"/groups/{group_id}")
+        return self.redirect(f"/groups/{group_id}#group-cards")
     if len(parts) == 4 and parts[2] == "items" and parts[3] == "bulk-delete" and method == "POST":
         form = self.read_form()
         redirect_to = safe_local_redirect_path(
@@ -130,7 +130,7 @@ def group_deck_import(self, user, group):
         try:
             result = commit_deck_import_preview(user["id"], group["id"], fields.get("batch_id", ["0"])[0])
         except ValueError as exc:
-            page = render_group_detail(user, group["id"], notice=str(exc), status="error")
+            page = render_group_detail(user, group["id"], notice=str(exc), status="error", active_section="group-import")
             return self.html(page, HTTPStatus.BAD_REQUEST)
         if result.get("queued"):
             start_scryfall_enrichment_worker()
@@ -138,7 +138,7 @@ def group_deck_import(self, user, group):
             f"Imported {result['grouped']} owned deck card{'s' if result['grouped'] != 1 else ''}. "
             f"{result['missing']} card{'s' if result['missing'] != 1 else ''} missing from your collection."
         )
-        return self.html(render_group_detail(user, group["id"], notice=notice, import_result=result))
+        return self.html(render_group_detail(user, group["id"], notice=notice, import_result=result, active_section="group-import"))
     if intent == "confirm_import":
         try:
             payload = decode_deck_import_payload(fields.get("payload", [""])[0])
@@ -158,9 +158,9 @@ def group_deck_import(self, user, group):
                 warnings=payload["warnings"],
             )
         except ValueError as exc:
-            page = render_group_detail(user, group["id"], notice=str(exc), status="error")
+            page = render_group_detail(user, group["id"], notice=str(exc), status="error", active_section="group-import")
             return self.html(page, HTTPStatus.BAD_REQUEST)
-        return self.html(render_group_detail(user, group["id"], notice="Deck import preview ready. Review the matches before importing.", import_review=preview))
+        return self.html(render_group_detail(user, group["id"], notice="Deck import preview ready. Review the matches before importing.", import_review=preview, active_section="group-import"))
 
     source = fields.get("source", ["decklist"])[0]
     if source not in dict(DECK_IMPORT_SOURCE_OPTIONS):
@@ -216,7 +216,7 @@ def group_deck_import(self, user, group):
                 source_url=source_url,
             )
             notice = "Extra deck sections detected. Choose which ones to include before importing."
-            return self.html(render_group_detail(user, group["id"], notice=notice, import_review=review))
+            return self.html(render_group_detail(user, group["id"], notice=notice, import_review=review, active_section="group-import"))
 
         preview = preview_deck_group_import(
             user["id"],
@@ -228,9 +228,9 @@ def group_deck_import(self, user, group):
             warnings=warnings,
         )
     except ValueError as exc:
-        page = render_group_detail(user, group["id"], notice=str(exc), status="error")
+        page = render_group_detail(user, group["id"], notice=str(exc), status="error", active_section="group-import")
         return self.html(page, HTTPStatus.BAD_REQUEST)
-    return self.html(render_group_detail(user, group["id"], notice="Deck import preview ready. Review the matches before importing.", import_review=preview))
+    return self.html(render_group_detail(user, group["id"], notice="Deck import preview ready. Review the matches before importing.", import_review=preview, active_section="group-import"))
 
 def group_deck_missing_wants(self, user, group):
     if group["group_type"] != "deck":
@@ -248,14 +248,14 @@ def group_deck_missing_wants(self, user, group):
             form.get("wishlist_is_public", [""])[0] == "1",
         )
     except ValueError as exc:
-        return self.html(render_group_detail(user, group["id"], notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+        return self.html(render_group_detail(user, group["id"], notice=str(exc), status="error", active_section="group-import"), HTTPStatus.BAD_REQUEST)
     notice = (
         f"Added {result['added']} missing wanted card{'s' if result['added'] != 1 else ''}"
         f" to {result['wishlist_group_name']}."
     )
     if result["updated"]:
         notice += f" Updated {result['updated']} existing want{'s' if result['updated'] != 1 else ''}."
-    return self.html(render_group_detail(user, result["wishlist_group_id"], notice=notice))
+    return self.html(render_group_detail(user, result["wishlist_group_id"], notice=notice, active_section="group-cards"))
 
 def member_detail(self, user, path, query=None):
     parts = path.strip("/").split("/")

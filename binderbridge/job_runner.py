@@ -12,7 +12,7 @@ from binderbridge.api import (
     WEBHOOK_DELIVERY_WORKER_ENABLED,
 )
 from binderbridge.config import config_bool, config_float, config_int, config_str
-from binderbridge.maintenance import AUTOMATIC_BACKUP_WORKER_CHECK_SECONDS
+from binderbridge.maintenance import AUTOMATIC_BACKUP_WORKER_CHECK_SECONDS, DATA_RETENTION_WORKER_CHECK_SECONDS
 from binderbridge.notifications import NOTIFICATION_WORKER_INTERVAL_SECONDS
 from binderbridge.pricing import (
     SCRYFALL_BULK_ERROR_KEY,
@@ -58,6 +58,7 @@ BACKGROUND_JOB_EMBEDDED_ENABLED = config_bool(
 
 JOB_TYPE_LABELS = {
     "automatic_backup": "Automatic backup",
+    "data_retention": "Data retention cleanup",
     "notification_delivery": "Notification delivery",
     "webhook_delivery": "Webhook delivery",
     "scryfall_enrichment": "Scryfall enrichment",
@@ -534,6 +535,14 @@ def job_handler_automatic_backup(job, payload, worker_id):
     return result
 
 
+def job_handler_data_retention(job, payload, worker_id):
+    update_background_job_progress(job["id"], worker_id, message="Cleaning up records eligible under data retention settings")
+    prune = globals().get("prune_data_retention_records")
+    result = prune() if prune else {"skipped": True, "reason": "retention helper unavailable"}
+    result["repeat_seconds"] = DATA_RETENTION_WORKER_CHECK_SECONDS
+    return result
+
+
 def job_handler_notification_delivery(job, payload, worker_id):
     update_background_job_progress(job["id"], worker_id, message="Processing reminders and notification email")
     result = notification_worker_pass()
@@ -559,6 +568,7 @@ def job_handler_legacy_price_refresh(job, payload, worker_id):
 
 BACKGROUND_JOB_HANDLERS = {
     "automatic_backup": job_handler_automatic_backup,
+    "data_retention": job_handler_data_retention,
     "notification_delivery": job_handler_notification_delivery,
     "webhook_delivery": job_handler_webhook_delivery,
     "scryfall_enrichment": job_handler_scryfall_enrichment,
@@ -596,6 +606,7 @@ def ensure_background_job_schedules():
         enqueue_background_job("scryfall_enrichment", unique_key="system:scryfall-enrichment", max_attempts=100000, delay_seconds=1)
     enqueue_background_job("scryfall_price_refresh", unique_key="system:scryfall-price-refresh", max_attempts=10, delay_seconds=2)
     enqueue_background_job("automatic_backup", unique_key="system:automatic-backup", max_attempts=10, delay_seconds=3)
+    enqueue_background_job("data_retention", unique_key="system:data-retention", max_attempts=10, delay_seconds=4)
     enqueue_background_job("notification_delivery", unique_key="system:notification-delivery", max_attempts=10, delay_seconds=1)
     if WEBHOOK_DELIVERY_WORKER_ENABLED:
         enqueue_background_job("webhook_delivery", unique_key="system:webhook-delivery", max_attempts=10, delay_seconds=1)

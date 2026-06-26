@@ -20,6 +20,7 @@ def render_trade_database_busy(self, user, trade_id):
             trade_id,
             notice="The database is busy finishing another update. Wait a moment, then try attaching the evidence again.",
             status="error",
+            active_section="trade-issues",
         ),
         HTTPStatus.SERVICE_UNAVAILABLE,
     )
@@ -76,6 +77,7 @@ def trade_new(self, method, user, query):
             proposer_note=proposer_note,
             notice=basis_notice or "Make your changes, then review the trade again.",
             status=basis_status,
+            active_section="trade-selected",
         ))
     offered = parse_trade_quantities(form, "offer", user["id"], price_basis, viewer_id=user["id"])
     requested = parse_trade_quantities(form, "request", recipient_id, price_basis, viewer_id=user["id"])
@@ -90,6 +92,7 @@ def trade_new(self, method, user, query):
             proposer_note=proposer_note,
             notice=str(exc),
             status="error",
+            active_section="trade-selected",
         ), HTTPStatus.BAD_REQUEST)
     if intent != "send":
         page = render_trade_review(user, recipient_id, form, offered, requested)
@@ -114,6 +117,7 @@ def trade_new(self, method, user, query):
             proposer_note=proposer_note,
             notice=str(exc),
             status="error",
+            active_section="trade-selected",
         ), HTTPStatus.BAD_REQUEST)
     self.redirect(f"/trades/{trade_id}")
 
@@ -130,7 +134,8 @@ def notification_action(self, user, path):
         delete_notification(user["id"], notification_id)
     else:
         return self.not_found(user)
-    return self.redirect("/notifications")
+    form = self.read_form()
+    return self.redirect(workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox"))
 
 def trade_action(self, method, user, path):
     parts = path.strip("/").split("/")
@@ -169,8 +174,8 @@ def trade_action(self, method, user, path):
         try:
             add_trade_comment(trade_id, user["id"], form.get("body", [""])[0])
         except ValueError as exc:
-            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-        return self.redirect(f"/trades/{trade_id}")
+            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error", active_section="trade-comments"), HTTPStatus.BAD_REQUEST)
+        return self.redirect(f"/trades/{trade_id}#trade-comments")
     if len(parts) == 3 and parts[2] == "disputes" and method == "POST":
         form, files = self.read_multipart_form()
         try:
@@ -181,14 +186,14 @@ def trade_action(self, method, user, path):
                 form.get("body", [""])[0],
                 files.get("evidence_file"),
                 form.get("evidence_note", [""])[0],
-            )
+        )
         except ValueError as exc:
-            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error", active_section="trade-issues"), HTTPStatus.BAD_REQUEST)
         except sqlite3.OperationalError as exc:
             if database_locked(exc):
                 return render_trade_database_busy(self, user, trade_id)
             raise
-        return self.html(render_trade_detail(user, trade_id, notice="Issue report sent to the admins."))
+        return self.html(render_trade_detail(user, trade_id, notice="Issue report sent to the admins.", active_section="trade-issues"))
     if len(parts) == 5 and parts[2] == "disputes" and parts[4] == "evidence" and method == "POST":
         try:
             dispute_id = int(parts[3])
@@ -202,14 +207,14 @@ def trade_action(self, method, user, path):
                 files.get("evidence_file"),
                 form.get("evidence_note", [""])[0],
                 trade_id=trade_id,
-            )
+        )
         except ValueError as exc:
-            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error", active_section="trade-issues"), HTTPStatus.BAD_REQUEST)
         except sqlite3.OperationalError as exc:
             if database_locked(exc):
                 return render_trade_database_busy(self, user, trade_id)
             raise
-        return self.redirect(f"/trades/{trade_id}")
+        return self.redirect(f"/trades/{trade_id}#trade-issues")
     if len(parts) == 3 and parts[2] == "feedback" and method == "POST":
         form = self.read_form()
         try:
@@ -218,10 +223,10 @@ def trade_action(self, method, user, path):
                 user["id"],
                 form.get("rating", [""])[0],
                 form.get("body", [""])[0],
-            )
+        )
         except ValueError as exc:
-            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-        return self.redirect(f"/trades/{trade_id}")
+            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error", active_section="trade-feedback"), HTTPStatus.BAD_REQUEST)
+        return self.redirect(f"/trades/{trade_id}#trade-feedback")
     if len(parts) == 3 and parts[2] == "respond" and method == "POST":
         if trade["recipient_id"] != user["id"] or trade["status"] != "pending":
             return self.not_found(user)
@@ -236,10 +241,10 @@ def trade_action(self, method, user, path):
                 decision,
                 form.get("response_note", [""])[0],
                 form.get("fairness_ack", [""])[0] == "1",
-            )
+        )
         except ValueError as exc:
-            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-        return self.redirect(f"/trades/{trade_id}")
+            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error", active_section="trade-response"), HTTPStatus.BAD_REQUEST)
+        return self.redirect(f"/trades/{trade_id}#trade-response")
     if len(parts) == 3 and parts[2] == "cancel" and method == "POST":
         if trade["proposer_id"] != user["id"] or trade["status"] != "pending":
             return self.not_found(user)
@@ -247,15 +252,15 @@ def trade_action(self, method, user, path):
             cancel_trade_offer(trade_id, user["id"])
         except ValueError:
             return self.not_found(user)
-        return self.redirect(f"/trades/{trade_id}")
+        return self.redirect(f"/trades/{trade_id}#trade-response")
     if len(parts) == 3 and parts[2] == "complete" and method == "POST":
         if trade["status"] != "accepted":
             return self.not_found(user)
         try:
             complete_trade(trade_id, completed_by_user_id=user["id"])
         except ValueError as exc:
-            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-        return self.redirect(f"/trades/{trade_id}")
+            return self.html(render_trade_detail(user, trade_id, notice=str(exc), status="error", active_section="trade-response"), HTTPStatus.BAD_REQUEST)
+        return self.redirect(f"/trades/{trade_id}#trade-response")
     return self.not_found(user)
 
 def trade_dispute_evidence_download(self, user, trade_id, dispute_id, evidence_id):

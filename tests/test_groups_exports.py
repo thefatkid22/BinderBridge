@@ -54,6 +54,8 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertIn("Sharing defaults", deck_html)
         self.assertIn("Private share links", deck_html)
         self.assertIn(f'/groups/{deck_id}/export', deck_html)
+        self.assertIn('data-workspace-tabs', deck_html)
+        self.assertIn('workspace-side-nav', deck_html)
         self.assertIn('id="group-cards"', deck_html)
         self.assertIn('id="group-sharing"', deck_html)
         self.assertIn('id="group-import"', deck_html)

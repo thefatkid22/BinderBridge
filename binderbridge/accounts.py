@@ -805,6 +805,30 @@ def revoke_registration_invite(admin_user_id, invite_id):
     return True
 
 
+def delete_registration_invite(admin_user_id, invite_id):
+    try:
+        invite_id = int(invite_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invite not found.") from exc
+    with db() as conn:
+        invite = conn.execute("SELECT * FROM registration_invites WHERE id = ?", (invite_id,)).fetchone()
+        if not invite:
+            raise ValueError("Invite not found.")
+        if invite["status"] == "pending":
+            raise ValueError("Pending invites can be revoked, but not deleted.")
+        conn.execute("DELETE FROM registration_invites WHERE id = ?", (invite_id,))
+        log_admin_action(
+            admin_user_id,
+            "invite_deleted",
+            None,
+            "invite",
+            invite["email"],
+            f"Invite #{invite_id} ({invite['status']}) deleted.",
+            conn=conn,
+        )
+    return True
+
+
 def accept_registration_invite(token, user_id):
     token_hash = registration_invite_token_hash(token)
     if not token_hash:
@@ -867,5 +891,6 @@ __all__ = [
     "create_registration_invite",
     "registration_invite_rows",
     "revoke_registration_invite",
+    "delete_registration_invite",
     "accept_registration_invite",
 ]

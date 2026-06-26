@@ -472,6 +472,8 @@ class App(BaseHTTPRequestHandler):
                 return self.account_api_token_create(user)
             if path.startswith("/account/api-tokens/") and path.endswith("/revoke") and method == "POST":
                 return self.account_api_token_revoke(user, path)
+            if path.startswith("/account/api-tokens/") and path.endswith("/delete") and method == "POST":
+                return self.account_api_token_delete(user, path)
             if path == "/account/webhooks" and method == "POST":
                 return self.account_webhook_create(user)
             if path.startswith("/account/webhooks/") and path.endswith("/delete") and method == "POST":
@@ -572,6 +574,8 @@ class App(BaseHTTPRequestHandler):
                 return self.admin_invite_create(user)
             if path.startswith("/admin/invites/") and path.endswith("/revoke") and method == "POST":
                 return self.admin_invite_revoke(user, path)
+            if path.startswith("/admin/invites/") and path.endswith("/delete") and method == "POST":
+                return self.admin_invite_delete(user, path)
             if path == "/admin/backups/create" and method == "POST":
                 return self.admin_backup_create(user)
             if path == "/admin/backups/settings" and method == "POST":
@@ -639,14 +643,17 @@ class App(BaseHTTPRequestHandler):
             if path == "/notifications":
                 return self.html(render_notifications(user, query=query))
             if path == "/notifications/read-all" and method == "POST":
+                form = self.read_form()
                 mark_all_notifications_read(user["id"])
-                return self.redirect("/notifications")
+                return self.redirect(workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox"))
             if path == "/notifications/delete-read" and method == "POST":
+                form = self.read_form()
                 delete_read_notifications(user["id"])
-                return self.redirect("/notifications")
+                return self.redirect(workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox"))
             if path == "/notifications/delete-all" and method == "POST":
+                form = self.read_form()
                 delete_all_notifications(user["id"])
-                return self.redirect("/notifications")
+                return self.redirect(workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-cleanup"))
             if path.startswith("/notifications/") and path.endswith("/read") and method == "POST":
                 return self.notification_action(user, path)
             if path.startswith("/notifications/") and path.endswith("/delete") and method == "POST":

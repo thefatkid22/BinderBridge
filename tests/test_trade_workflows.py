@@ -140,6 +140,8 @@ class TradeWorkflowTests(BinderBridgeTestCase):
         self.assertIn('form="trade-submit-form"', html)
         self.assertIn("Review trade", html)
         self.assertIn("trade-builder-steps", html)
+        self.assertIn('data-workspace-tabs', html)
+        self.assertIn('workspace-side-nav', html)
         self.assertIn('href="#trade-selected"', html)
         self.assertIn('id="trade-offer"', html)
         self.assertIn('id="trade-request"', html)
@@ -411,6 +413,8 @@ class TradeWorkflowTests(BinderBridgeTestCase):
         detail_html = app.render_trade_detail(bob, trade_id)
 
         self.assertIn("Trade fairness warning", detail_html)
+        self.assertIn('data-workspace-tabs', detail_html)
+        self.assertIn('workspace-side-nav', detail_html)
         self.assertIn('id="trade-response"', detail_html)
         self.assertIn('href="#trade-cards"', detail_html)
         self.assertLess(detail_html.index('id="trade-response"'), detail_html.index('id="trade-cards"'))
@@ -871,16 +875,34 @@ class TradeWorkflowTests(BinderBridgeTestCase):
             (open_dispute, user_id, b"open", old_at),
         )
 
-        settings = app.set_data_retention_settings("30", "30", "30", "30")
+        revoked_token = app.create_api_token(user_id, "Old revoked token", ["read"])
+        active_token = app.create_api_token(user_id, "Old active token", ["read"])
+        app.revoke_api_token(user_id, revoked_token["id"])
+        app.execute("UPDATE api_tokens SET created_at = ?, revoked_at = ? WHERE id = ?", (old_at, old_at, revoked_token["id"]))
+        app.execute("UPDATE api_tokens SET created_at = ? WHERE id = ?", (old_at, active_token["id"]))
+
+        old_invite = app.create_registration_invite(admin_id, "oldinvite@example.com", "http://binder.test")
+        pending_invite = app.create_registration_invite(admin_id, "pendinginvite@example.com", "http://binder.test")
+        app.revoke_registration_invite(admin_id, old_invite["id"])
+        app.execute("UPDATE registration_invites SET created_at = ?, updated_at = ? WHERE id = ?", (old_at, old_at, old_invite["id"]))
+        future_invite_expiry = (datetime.now(timezone.utc) + timedelta(days=60)).replace(microsecond=0).isoformat()
+        app.execute(
+            "UPDATE registration_invites SET created_at = ?, updated_at = ?, expires_at = ? WHERE id = ?",
+            (old_at, old_at, future_invite_expiry, pending_invite["id"]),
+        )
+
+        settings = app.set_data_retention_settings("30", "30", "30", "30", "30", "30")
         status = app.data_retention_status()
         result = app.prune_data_retention_records(settings)
         html = app.render_admin_health(app.row("SELECT * FROM users WHERE id = ?", (admin_id,)))
 
-        self.assertEqual(status["eligible"]["total"], 4)
+        self.assertEqual(status["eligible"]["total"], 6)
         self.assertEqual(result["notifications"], 1)
         self.assertEqual(result["admin_logs"], 1)
         self.assertEqual(result["webhook_deliveries"], 1)
         self.assertEqual(result["dispute_evidence"], 1)
+        self.assertEqual(result["api_tokens"], 1)
+        self.assertEqual(result["registration_invites"], 1)
         self.assertIsNone(app.row("SELECT id FROM user_notifications WHERE id = ?", (old_read_notification,)))
         self.assertIsNotNone(app.row("SELECT id FROM user_notifications WHERE id = ?", (old_unread_notification,)))
         self.assertIsNotNone(app.row("SELECT id FROM user_notifications WHERE id = ?", (recent_read_notification,)))
@@ -891,6 +913,10 @@ class TradeWorkflowTests(BinderBridgeTestCase):
         self.assertIsNotNone(app.row("SELECT id FROM webhook_deliveries WHERE id = ?", (recent_failed_delivery,)))
         self.assertIsNone(app.row("SELECT id FROM trade_dispute_evidence WHERE id = ?", (resolved_evidence,)))
         self.assertIsNotNone(app.row("SELECT id FROM trade_dispute_evidence WHERE id = ?", (open_evidence,)))
+        self.assertIsNone(app.row("SELECT id FROM api_tokens WHERE id = ?", (revoked_token["id"],)))
+        self.assertIsNotNone(app.row("SELECT id FROM api_tokens WHERE id = ?", (active_token["id"],)))
+        self.assertIsNone(app.row("SELECT id FROM registration_invites WHERE id = ?", (old_invite["id"],)))
+        self.assertIsNotNone(app.row("SELECT id FROM registration_invites WHERE id = ?", (pending_invite["id"],)))
         self.assertIn("Last cleanup:", html)
         self.assertIn("0 eligible", html)
 

@@ -85,10 +85,17 @@ def render_staff_admin(user, notice=None, status="info", invite_result=None, rec
     return render_layout(user, "Staff", content, active="admin", notice=notice, status=status)
 
 
-def render_admin(user, notice=None, status="info", invite_result=None, recovery_result=None):
+def render_admin(user, notice=None, status="info", invite_result=None, recovery_result=None, active_section=""):
     if user_role(user) not in (ROLE_OWNER, ROLE_ADMIN):
         return render_staff_admin(user, notice=notice, status=status, invite_result=invite_result, recovery_result=recovery_result)
     users = admin_user_list()
+    active_user_count = sum(
+        1
+        for managed_user in users
+        if not managed_user["is_banned"] and row_value(managed_user, "registration_status", "active") == "active"
+    )
+    elevated_user_count = sum(1 for managed_user in users if user_role(managed_user) in (ROLE_OWNER, ROLE_ADMIN))
+    elevated_user_label = f"{elevated_user_count} admin/owner account{'s' if elevated_user_count != 1 else ''}"
     user_rows = "".join(render_admin_user_row(user, managed_user) for managed_user in users)
     trade_policy = trade_policy_settings()
     threshold = trade_policy["trusted_threshold"]
@@ -160,21 +167,47 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
     recent_dispute_rows = "".join(render_trade_dispute_summary_item(item) for item in recent_disputes) or '<li class="muted">No trade issues reported yet.</li>'
     onboarding_panel = render_admin_onboarding_checklist()
     setup_completion_banner = render_admin_setup_completion_banner()
+    workspace_items = [
+        ("#admin-overview", "Overview", "Setup and health"),
+        ("#admin-policies", "Policies", "Trade and integrations"),
+        ("#admin-access", "Access", "Registration and invites"),
+        ("#admin-operations", "Operations", "Backups and logs"),
+        ("#admin-users", "Users", "Roles, trust, and recovery"),
+    ]
+    active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])
     content = f"""
     <section class="section-heading">
         <div>
             <p class="eyebrow">Admin</p>
-            <h1>User control panel</h1>
+            <h1>Admin control panel</h1>
             <p class="muted compact">Review site health first, then move into policy, access, operations, or user management.</p>
         </div>
     </section>
-    {render_workspace_nav([
-        ("#admin-overview", "Overview", "Setup and site health"),
-        ("#admin-policies", "Policies", "Trade and integration rules"),
-        ("#admin-access", "Access", "Registration and invites"),
-        ("#admin-operations", "Operations", "Backups, logs, and issues"),
-        ("#admin-users", "Users", "Roles, trust, and recovery"),
-    ], label="Admin control panel")}
+    <section class="settings-summary admin-summary" aria-label="Admin status summary">
+        <article class="settings-summary-card">
+            <span>Accounts</span>
+            <strong>{e(active_user_count)} active</strong>
+            <small>{e(len(users))} total, {e(elevated_user_label)}</small>
+        </article>
+        <article class="settings-summary-card">
+            <span>Reviews</span>
+            <strong>{e(review_count)} pending</strong>
+            <small>{e(invite_mode_label)}</small>
+        </article>
+        <article class="settings-summary-card">
+            <span>Trade issues</span>
+            <strong>{e(open_dispute_count)} open</strong>
+            <small>Queue and recent reports below</small>
+        </article>
+        <article class="settings-summary-card">
+            <span>Backups</span>
+            <strong>{e(auto_backup_mode)}</strong>
+            <small>Last success: {e(auto_success_label)}</small>
+        </article>
+    </section>
+    <section class="workspace-layout tabbed-workspace" data-workspace-tabs{active_attr}>
+        {render_workspace_nav(workspace_items, label="Admin control panel", compact=True, vertical=True)}
+        <div class="workspace-pane-stack">
     {recovery_result_panel}
     {setup_completion_banner}
     <section class="workspace-section" id="admin-overview">
@@ -244,7 +277,7 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
             <div><p class="eyebrow">Access</p><h2>Registration and invitations</h2><p class="muted compact">Choose how new members join and manage outstanding invitations.</p></div>
         </div>
         <div class="admin-settings-grid">
-        <form class="panel form-grid compact-form registration-settings" method="post" action="/admin/registration-settings">
+        <form class="panel form-grid compact-form registration-settings" method="post" action="/admin/registration-settings#admin-access">
             <div class="span-2 panel-heading">
                 <h2>Registration</h2>
                 <span class="pill">{e(invite_mode_label)}</span>
@@ -276,7 +309,7 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
             <ul class="stack-list compact-stack">{pending_rows}</ul>
         </article>
         <article class="panel invite-settings" id="admin-invites">
-            <form class="form-grid compact-form" method="post" action="/admin/invites">
+            <form class="form-grid compact-form" method="post" action="/admin/invites#admin-access">
                 <div class="span-2 panel-heading">
                     <h2>{e(invite_panel_title)}</h2>
                     <span class="pill">{e(smtp_status)}</span>
@@ -390,6 +423,9 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
                 </thead>
                 <tbody>{user_rows}</tbody>
             </table>
+        </div>
+        </div>
+    </section>
         </div>
     </section>
     """
@@ -1361,7 +1397,7 @@ def render_admin_health(user, notice=None, status="info"):
             <div class="span-2 panel-heading">
                 <div>
                     <h2>Data retention</h2>
-                    <p class="muted compact">Set a value to 0 to keep that data forever. Cleanup only removes read notifications, terminal webhook deliveries, old audit logs, and evidence from resolved or dismissed disputes.</p>
+                    <p class="muted compact">Set a value to 0 to keep that data forever. Cleanup only removes inactive records: read notifications, terminal webhook deliveries, old audit logs, resolved dispute evidence, revoked API tokens, and finished invites.</p>
                 </div>
                 <span class="pill">{e(retention_eligible["total"])} eligible</span>
             </div>
@@ -1380,6 +1416,14 @@ def render_admin_health(user, notice=None, status="info"):
             <label>Resolved dispute evidence
                 <input name="evidence_days" type="number" min="0" max="36500" step="1" value="{e(retention["evidence_days"])}">
                 <span class="subtle">{e(retention_eligible["dispute_evidence"])} eligible; open dispute evidence is protected.</span>
+            </label>
+            <label>Revoked API tokens
+                <input name="api_token_days" type="number" min="0" max="36500" step="1" value="{e(retention["api_token_days"])}">
+                <span class="subtle">{e(retention_eligible["api_tokens"])} eligible; active tokens are protected.</span>
+            </label>
+            <label>Inactive invites
+                <input name="invite_days" type="number" min="0" max="36500" step="1" value="{e(retention["invite_days"])}">
+                <span class="subtle">{e(retention_eligible["registration_invites"])} eligible; pending invites are protected.</span>
             </label>
             <p class="muted compact span-2">Retention age is measured from creation time, webhook completion time, or dispute resolution time as appropriate. Last cleanup: {e(retention_last_run)}.</p>
             <div class="form-actions span-2">
@@ -2188,11 +2232,20 @@ def render_registration_invite_row(invite):
     accepted_line = f'<span class="subtle">Accepted by {e(accepted)} on {e(row_value(invite, "accepted_at", "")[:10])}</span>' if accepted else ""
     revoke_button = (
         f"""
-        <form method="post" action="/admin/invites/{invite["id"]}/revoke">
+        <form method="post" action="/admin/invites/{invite["id"]}/revoke#admin-access">
             <button class="button ghost small" type="submit">Revoke</button>
         </form>
         """
         if row_value(invite, "status", "") == "pending"
+        else ""
+    )
+    delete_button = (
+        f"""
+        <form method="post" action="/admin/invites/{invite["id"]}/delete#admin-access">
+            <button class="button danger small" type="submit" data-confirm="Delete this invite record?">Delete</button>
+        </form>
+        """
+        if row_value(invite, "status", "") != "pending"
         else ""
     )
     return f"""
@@ -2205,6 +2258,7 @@ def render_registration_invite_row(invite):
         <div class="inline-actions">
             <span class="status {status_class}">{e(row_value(invite, "status", "pending").title())}</span>
             {revoke_button}
+            {delete_button}
         </div>
     </li>
     """
@@ -2236,11 +2290,11 @@ def render_registration_review_row(item):
         </div>
         <div class="invite-actions">
             <span class="status pending">Risk {e(row_value(item, "risk_score", 0))}</span>
-            <form method="post" action="/admin/registration-review/{item["id"]}/approve">
+            <form method="post" action="/admin/registration-review/{item["id"]}/approve#admin-access">
                 <input name="note" placeholder="Review note">
                 <button class="button primary small" type="submit">Approve</button>
             </form>
-            <form method="post" action="/admin/registration-review/{item["id"]}/deny" data-confirm="Deny this account registration?">
+            <form method="post" action="/admin/registration-review/{item["id"]}/deny#admin-access" data-confirm="Deny this account registration?">
                 <input name="note" placeholder="Denial note">
                 <button class="button danger small" type="submit">Deny</button>
             </form>
@@ -2300,38 +2354,53 @@ def render_admin_user_row(admin_user, managed_user):
             for role, label in role_options
         )
         role_form = f"""
-        <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/role">
-            <label>Role<select name="role">{options}</select></label>
-            <button class="button secondary small" type="submit">Change role</button>
-        </form>
+        <div class="admin-control-group">
+            <span class="admin-control-title">Role</span>
+            <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/role">
+                <label>Role<select name="role">{options}</select></label>
+                <button class="button secondary small" type="submit">Change role</button>
+            </form>
+        </div>
         """
     moderation_controls = ""
     if can_moderate:
         moderation_controls = f"""
-        <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/ban">
-            <input type="hidden" name="action" value="{ban_action}">
-            <input name="reason" placeholder="Ban reason" value="{e(ban_reason)}" {'disabled' if managed_user["is_banned"] else ""}>
-            <button class="button {'secondary' if managed_user["is_banned"] else 'danger'} small" type="submit">{ban_label}</button>
-        </form>
-        <form class="inline-admin-form trust-form" method="post" action="/admin/user/{managed_user["id"]}/trust">
-            <button class="button secondary small" name="action" value="{primary_trust_action}" type="submit">{primary_trust_label}</button>
-            <button class="button ghost small" name="action" value="{secondary_trust_action}" type="submit">{secondary_trust_label}</button>
-        </form>
-        <form class="inline-admin-form notes-form" method="post" action="/admin/user/{managed_user["id"]}/notes">
-            <textarea name="admin_notes" rows="2" placeholder="Staff notes">{e(managed_user["admin_notes"])}</textarea>
-            <button class="button secondary small" type="submit">Save notes</button>
-        </form>
+        <div class="admin-control-group">
+            <span class="admin-control-title">Moderation</span>
+            <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/ban">
+                <input type="hidden" name="action" value="{ban_action}">
+                <input name="reason" placeholder="Ban reason" value="{e(ban_reason)}" {'disabled' if managed_user["is_banned"] else ""}>
+                <button class="button {'secondary' if managed_user["is_banned"] else 'danger'} small" type="submit">{ban_label}</button>
+            </form>
+        </div>
+        <div class="admin-control-group">
+            <span class="admin-control-title">Trust</span>
+            <form class="inline-admin-form trust-form" method="post" action="/admin/user/{managed_user["id"]}/trust">
+                <button class="button secondary small" name="action" value="{primary_trust_action}" type="submit">{primary_trust_label}</button>
+                <button class="button ghost small" name="action" value="{secondary_trust_action}" type="submit">{secondary_trust_label}</button>
+            </form>
+        </div>
+        <div class="admin-control-group">
+            <span class="admin-control-title">Notes</span>
+            <form class="inline-admin-form notes-form" method="post" action="/admin/user/{managed_user["id"]}/notes">
+                <textarea name="admin_notes" rows="2" placeholder="Staff notes">{e(managed_user["admin_notes"])}</textarea>
+                <button class="button secondary small" type="submit">Save notes</button>
+            </form>
+        </div>
         """
     security_controls = ""
     if can_manage_user:
         security_controls = f"""
-        <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/password">
-            <input required name="current_password" type="password" autocomplete="current-password" placeholder="Your admin password">
-            <button class="button secondary small" type="submit" data-confirm="Issue a one-time password recovery link and sign this user out?">Issue reset link</button>
-        </form>
-        <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/2fa">
-            <button class="button secondary small" type="submit" data-confirm="Reset two-factor authentication for this user? They will need to set it up again.">Reset 2FA</button>
-        </form>
+        <div class="admin-control-group">
+            <span class="admin-control-title">Security</span>
+            <form class="inline-admin-form" method="post" action="/admin/user/{managed_user["id"]}/password">
+                <input required name="current_password" type="password" autocomplete="current-password" placeholder="Your admin password">
+                <button class="button secondary small" type="submit" data-confirm="Issue a one-time password recovery link and sign this user out?">Issue reset link</button>
+            </form>
+            <form class="inline-admin-form role-form" method="post" action="/admin/user/{managed_user["id"]}/2fa">
+                <button class="button secondary small" type="submit" data-confirm="Reset two-factor authentication for this user? They will need to set it up again.">Reset 2FA</button>
+            </form>
+        </div>
         """
     controls = moderation_controls + security_controls + role_form
     if not controls:

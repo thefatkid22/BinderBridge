@@ -27,6 +27,22 @@ class NotificationsReputationTests(BinderBridgeTestCase):
         self.assertNotIn("Trade update 11", price_html)
         self.assertIn('id="notification-inbox"', price_html)
         self.assertIn('id="notification-values"', price_html)
+        self.assertIn('id="notification-cleanup"', price_html)
+        self.assertIn('data-workspace-tabs', price_html)
+        self.assertIn('workspace-side-nav', price_html)
+        self.assertIn(
+            'data-active-section="notification-cleanup"',
+            app.render_notifications(user, active_section="notification-cleanup"),
+        )
+        self.assertEqual(
+            app.workspace_redirect_path(
+                "/notifications",
+                {"_workspace_section": ["notification-cleanup"]},
+                ("notification-inbox", "notification-cleanup"),
+                default="notification-inbox",
+            ),
+            "/notifications#notification-cleanup",
+        )
 
     def test_trade_events_create_notifications(self):
         alice_id = app.create_user("alice", "password123", "Alice")

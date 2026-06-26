@@ -134,7 +134,7 @@ def notification_filter_chip_specs():
     )
 
 
-def render_notifications(user, query=None, notice=None, status="info"):
+def render_notifications(user, query=None, notice=None, status="info", active_section=""):
     query = query or {}
     filters = notification_filter_values(query)
     total_count = notification_count(user["id"], filters)
@@ -230,6 +230,12 @@ def render_notifications(user, query=None, notice=None, status="info"):
     )
     active_filters = render_active_filter_chips("/notifications", query, filters, notification_filter_chip_specs())
     pagination = render_pagination("/notifications", query, total_count, page, per_page, page_count)
+    workspace_items = [
+        ("#notification-inbox", "Inbox", "Search and review activity"),
+        ("#notification-values", "Value changes", "Recent Scryfall price movement"),
+        ("#notification-cleanup", "Cleanup", "Delete notification history"),
+    ]
+    active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])
     content = f"""
     {category_nav}
     <section class="section-heading">
@@ -241,50 +247,53 @@ def render_notifications(user, query=None, notice=None, status="info"):
         <div class="actions">
             {mark_all}
             {delete_read}
+            <a class="button secondary" href="/account#account-notifications">Preferences</a>
         </div>
     </section>
-    {render_workspace_nav([
-        ("#notification-inbox", "Inbox", "Search and review activity"),
-        ("#notification-values", "Value changes", "Recent Scryfall price movement"),
-        ("/account#account-notifications", "Preferences", "Choose which alerts reach you"),
-    ], label="Notification workspace")}
-    <form class="filter-bar notification-filter-bar" method="get" action="/notifications">
-        <input type="hidden" name="category" value="{e(filters["category"])}">
-        <div class="filter-primary-row">
-            <label class="search-field">Search
-                <input name="q" value="{e(filters["q"])}" placeholder="Title or message">
-            </label>
-            <label>State
-                <select name="state"><option value="">Read and unread</option>{state_options}</select>
-            </label>
-            <div class="actions filter-actions">
-                <button class="button secondary" type="submit">Filter</button>
-                <a class="button ghost" href="{e('/notifications?category=' + filters['category'] if filters['category'] else '/notifications')}">Reset</a>
-            </div>
-        </div>
-    </form>
-    {active_filters}
-    <section class="content-grid notifications-grid">
-        <article class="panel" id="notification-inbox">
-            <div class="panel-heading">
-                <h2>Inbox</h2>
-                <span class="pill">{e(total_count)} matching - {e(unread_count)} unread</span>
-            </div>
-            <ol class="notification-list">{notification_items}</ol>
-            {pagination}
-        </article>
-        <div class="notification-support-column">
-        <article class="panel" id="notification-values">
-            <div class="panel-heading">
-                <h2>Recent value changes</h2>
-            </div>
-            <ul class="stack-list">{change_items}</ul>
-        </article>
-        <article class="panel notification-danger-zone">
-            <div class="panel-heading"><h2>Inbox cleanup</h2></div>
-            <p class="muted compact">Deletion permanently removes notification history from your account.</p>
-            <div class="form-actions">{delete_all}</div>
-        </article>
+    <section class="workspace-layout tabbed-workspace notification-workspace" data-workspace-tabs{active_attr}>
+        {render_workspace_nav(workspace_items, label="Notification workspace", compact=True, vertical=True)}
+        <div class="workspace-pane-stack">
+            <section class="workspace-section" id="notification-inbox">
+                <form class="filter-bar notification-filter-bar" method="get" action="/notifications">
+                    <input type="hidden" name="category" value="{e(filters["category"])}">
+                    <div class="filter-primary-row">
+                        <label class="search-field">Search
+                            <input name="q" value="{e(filters["q"])}" placeholder="Title or message">
+                        </label>
+                        <label>State
+                            <select name="state"><option value="">Read and unread</option>{state_options}</select>
+                        </label>
+                        <div class="actions filter-actions">
+                            <button class="button secondary" type="submit">Filter</button>
+                            <a class="button ghost" href="{e('/notifications?category=' + filters['category'] if filters['category'] else '/notifications')}">Reset</a>
+                        </div>
+                    </div>
+                </form>
+                {active_filters}
+                <article class="panel">
+                    <div class="panel-heading">
+                        <h2>Inbox</h2>
+                        <span class="pill">{e(total_count)} matching - {e(unread_count)} unread</span>
+                    </div>
+                    <ol class="notification-list">{notification_items}</ol>
+                    {pagination}
+                </article>
+            </section>
+            <section class="workspace-section" id="notification-values">
+                <article class="panel">
+                    <div class="panel-heading">
+                        <h2>Recent value changes</h2>
+                    </div>
+                    <ul class="stack-list">{change_items}</ul>
+                </article>
+            </section>
+            <section class="workspace-section" id="notification-cleanup">
+                <article class="panel notification-danger-zone">
+                    <div class="panel-heading"><h2>Inbox cleanup</h2></div>
+                    <p class="muted compact">Deletion permanently removes notification history from your account.</p>
+                    <div class="form-actions">{delete_all}</div>
+                </article>
+            </section>
         </div>
     </section>
     """

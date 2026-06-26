@@ -463,15 +463,19 @@ class CoreAdminTests(BinderBridgeTestCase):
         app.email_delivery_configured = lambda: False
         try:
             html = app.render_admin(admin)
+            active_html = app.render_admin(admin, active_section="admin-access")
         finally:
             app.smtp_invites_configured = original_invites_configured
             app.email_delivery_configured = original_email_configured
 
-        self.assertIn("User control panel", html)
+        self.assertIn("Admin control panel", html)
+        self.assertIn('data-workspace-tabs', html)
+        self.assertIn('workspace-side-nav', html)
         self.assertIn('aria-label="Admin control panel"', html)
         self.assertIn('id="admin-overview"', html)
         self.assertIn('id="admin-policies"', html)
         self.assertIn('id="admin-access"', html)
+        self.assertIn('data-active-section="admin-access"', active_html)
         self.assertIn('id="admin-operations"', html)
         self.assertIn('id="admin-users"', html)
         self.assertIn('<table class="admin-table responsive-card-table">', html)
@@ -599,6 +603,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn('name="admin_log_days"', html)
         self.assertIn('name="webhook_days"', html)
         self.assertIn('name="evidence_days"', html)
+        self.assertIn('name="api_token_days"', html)
+        self.assertIn('name="invite_days"', html)
         self.assertIn("Setup warnings", html)
         self.assertIn("health-severity-card severity-error", html)
         self.assertIn("job-row severity-error", html)
@@ -873,10 +879,16 @@ class CoreAdminTests(BinderBridgeTestCase):
         admin_id = app.create_user("admin", "password123", "Admin")
         invite = app.create_registration_invite(admin_id, "revoke@example.com", "http://binder.test")
 
+        with self.assertRaisesRegex(ValueError, "Pending invites"):
+            app.delete_registration_invite(admin_id, invite["id"])
         app.revoke_registration_invite(admin_id, invite["id"])
         revoked = app.row("SELECT * FROM registration_invites WHERE id = ?", (invite["id"],))
+        html = app.render_admin(app.row("SELECT * FROM users WHERE id = ?", (admin_id,)))
+        app.delete_registration_invite(admin_id, invite["id"])
 
         self.assertEqual(revoked["status"], "revoked")
+        self.assertIn(f'action="/admin/invites/{invite["id"]}/delete#admin-access"', html)
+        self.assertIsNone(app.row("SELECT * FROM registration_invites WHERE id = ?", (invite["id"],)))
         self.assertIsNone(app.registration_invite_from_token(invite["token"]))
 
     def test_admin_invite_revoke_form_is_not_nested_in_create_form(self):
@@ -885,8 +897,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         admin = app.row("SELECT * FROM users WHERE id = ?", (admin_id,))
 
         html = app.render_admin(admin)
-        create_form = 'action="/admin/invites"'
-        revoke_form = f'action="/admin/invites/{invite["id"]}/revoke"'
+        create_form = 'action="/admin/invites#admin-access"'
+        revoke_form = f'action="/admin/invites/{invite["id"]}/revoke#admin-access"'
         create_start = html.index(create_form)
         create_end = html.index("</form>", create_start)
         revoke_start = html.index(revoke_form)

@@ -242,8 +242,29 @@ def render_duplicate_cleanup_panel(title, groups, action, empty_text, quantity_k
     """
 
 
-def render_cleanup(user, notice=None, status="info"):
+def render_cleanup(user, notice=None, status="info", active_section=""):
     summary = duplicate_cleanup_summary(user["id"])
+    collection_cleanup_panel = render_duplicate_cleanup_panel(
+        "Collection duplicates",
+        summary["collection_groups"],
+        "/cleanup/collection",
+        "No exact collection duplicates found.",
+        "quantity",
+        "owned",
+    )
+    want_cleanup_panel = render_duplicate_cleanup_panel(
+        "Wanted-card duplicates",
+        summary["want_groups"],
+        "/cleanup/wants",
+        "No exact wanted-card duplicates found.",
+        "desired_quantity",
+        "wanted",
+    )
+    workspace_items = [
+        ("#cleanup-collection", "Collection duplicates", "Merge duplicate owned cards"),
+        ("#cleanup-wants", "Wishlist duplicates", "Merge duplicate wanted cards"),
+    ]
+    active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])
     content = f"""
     <section class="section-heading">
         <div>
@@ -263,9 +284,12 @@ def render_cleanup(user, notice=None, status="info"):
         <article class="metric"><span>{e(len(summary["want_groups"]))}</span><p>wishlist duplicate groups</p></article>
         <article class="metric"><span>{e(summary["want_duplicate_rows"])}</span><p>extra wanted rows</p></article>
     </section>
-    <section class="content-grid cleanup-grid">
-        {render_duplicate_cleanup_panel("Collection duplicates", summary["collection_groups"], "/cleanup/collection", "No exact collection duplicates found.", "quantity", "owned")}
-        {render_duplicate_cleanup_panel("Wanted-card duplicates", summary["want_groups"], "/cleanup/wants", "No exact wanted-card duplicates found.", "desired_quantity", "wanted")}
+    <section class="workspace-layout tabbed-workspace cleanup-workspace" data-workspace-tabs{active_attr}>
+        {render_workspace_nav(workspace_items, label="Cleanup workspace", compact=True, vertical=True)}
+        <div class="workspace-pane-stack">
+            <section class="workspace-section" id="cleanup-collection">{collection_cleanup_panel}</section>
+            <section class="workspace-section" id="cleanup-wants">{want_cleanup_panel}</section>
+        </div>
     </section>
     """
     return render_layout(user, "Duplicate cleanup", content, active="account", notice=notice, status=status)
@@ -321,7 +345,7 @@ def render_condition_finish_audit_row(item):
     """
 
 
-def render_condition_finish_audit(user, query, notice=None, status="info"):
+def render_condition_finish_audit(user, query, notice=None, status="info", active_section=""):
     filters = condition_finish_audit_filter_values(query)
     audited_rows = collection_condition_finish_audit_rows(user["id"], filters)
     total_count = len(audited_rows)
@@ -399,6 +423,20 @@ def render_condition_finish_audit(user, query, notice=None, status="info"):
     </form>
     """ if page_items else '<div class="empty-state">No collection cards need condition or finish cleanup for this view.</div>'
     advanced_active = bool(filters["set_name"] or filters["condition"] or filters["finish"])
+    audit_summary = f"""
+    <section class="metric-grid compact-metrics">
+        <article class="metric"><span>{e(summary["total"])}</span><p>cards need audit</p></article>
+        <article class="metric"><span>{e(summary["missing_condition"])}</span><p>missing condition</p></article>
+        <article class="metric"><span>{e(summary["missing_finish"])}</span><p>missing finish</p></article>
+        <article class="metric"><span>{e(summary["scryfall_finish_mismatch"])}</span><p>finish mismatch</p></article>
+        <article class="metric"><span>{e(summary["trade_needs_review"])}</span><p>trade cards to review</p></article>
+    </section>
+    """
+    workspace_items = [
+        ("#audit-results", "Audit results", "Filter and update cards"),
+        ("#audit-summary", "Summary", "Counts by issue type"),
+    ]
+    active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])
     content = f"""
     {render_cards_subnav("collection")}
     <section class="section-heading">
@@ -412,63 +450,64 @@ def render_condition_finish_audit(user, query, notice=None, status="info"):
             <a class="button secondary" href="/collection">Collection</a>
         </div>
     </section>
-    <section class="metric-grid compact-metrics">
-        <article class="metric"><span>{e(summary["total"])}</span><p>cards need audit</p></article>
-        <article class="metric"><span>{e(summary["missing_condition"])}</span><p>missing condition</p></article>
-        <article class="metric"><span>{e(summary["missing_finish"])}</span><p>missing finish</p></article>
-        <article class="metric"><span>{e(summary["scryfall_finish_mismatch"])}</span><p>finish mismatch</p></article>
-        <article class="metric"><span>{e(summary["trade_needs_review"])}</span><p>trade cards to review</p></article>
-    </section>
-    <form class="filter-bar collection-filter-bar audit-filter-bar" method="get" action="/cleanup/audit">
-        <div class="filter-primary-row">
-            <label class="search-field">Search
-                <input name="q" value="{e(filters["q"])}" placeholder="Card name or type" list="audit-search-suggestions">
-            </label>
-            <label>Issue
-                <select name="issue">{issue_options}</select>
-            </label>
-            <label>Game
-                <select name="game">
-                    <option value="">All games</option>
-                    {option_tags(CARD_GAMES, filters["game"])}
-                </select>
-            </label>
-            <label class="checkbox-line">
-                <input type="checkbox" name="trade_only" value="1"{checked(filters["trade_only"])}>
-                For trade only
-            </label>
-            <div class="actions filter-actions">
-                <button class="button secondary" type="submit">Filter</button>
-                <a class="button ghost" href="/cleanup/audit">Reset</a>
-            </div>
+    <section class="workspace-layout tabbed-workspace audit-workspace" data-workspace-tabs{active_attr}>
+        {render_workspace_nav(workspace_items, label="Condition and finish audit", compact=True, vertical=True)}
+        <div class="workspace-pane-stack">
+            <section class="workspace-section" id="audit-results">
+                <form class="filter-bar collection-filter-bar audit-filter-bar" method="get" action="/cleanup/audit">
+                    <div class="filter-primary-row">
+                        <label class="search-field">Search
+                            <input name="q" value="{e(filters["q"])}" placeholder="Card name or type" list="audit-search-suggestions">
+                        </label>
+                        <label>Issue
+                            <select name="issue">{issue_options}</select>
+                        </label>
+                        <label>Game
+                            <select name="game">
+                                <option value="">All games</option>
+                                {option_tags(CARD_GAMES, filters["game"])}
+                            </select>
+                        </label>
+                        <label class="checkbox-line">
+                            <input type="checkbox" name="trade_only" value="1"{checked(filters["trade_only"])}>
+                            For trade only
+                        </label>
+                        <div class="actions filter-actions">
+                            <button class="button secondary" type="submit">Filter</button>
+                            <a class="button ghost" href="/cleanup/audit">Reset</a>
+                        </div>
+                    </div>
+                    <details class="advanced-filter"{" open" if advanced_active else ""}>
+                        <summary>
+                            <span>More filters</span>
+                            <span class="advanced-filter-count">Set, condition, finish</span>
+                        </summary>
+                        <div class="advanced-filter-grid">
+                            <label>Set name
+                                <input name="set_name" value="{e(filters["set_name"])}" placeholder="Modern Horizons 3" list="audit-set-name-suggestions">
+                            </label>
+                            <label>Current condition
+                                <select name="condition">
+                                    <option value="">Any condition</option>
+                                    {condition_options}
+                                </select>
+                            </label>
+                            <label>Current finish
+                                <select name="finish">
+                                    <option value="">Any finish</option>
+                                    {finish_options}
+                                </select>
+                            </label>
+                        </div>
+                    </details>
+                    {collection_datalists}
+                </form>
+                <section class="panel flush">{table}</section>
+                {pagination}
+            </section>
+            <section class="workspace-section" id="audit-summary">{audit_summary}</section>
         </div>
-        <details class="advanced-filter"{" open" if advanced_active else ""}>
-            <summary>
-                <span>More filters</span>
-                <span class="advanced-filter-count">Set, condition, finish</span>
-            </summary>
-            <div class="advanced-filter-grid">
-                <label>Set name
-                    <input name="set_name" value="{e(filters["set_name"])}" placeholder="Modern Horizons 3" list="audit-set-name-suggestions">
-                </label>
-                <label>Current condition
-                    <select name="condition">
-                        <option value="">Any condition</option>
-                        {condition_options}
-                    </select>
-                </label>
-                <label>Current finish
-                    <select name="finish">
-                        <option value="">Any finish</option>
-                        {finish_options}
-                    </select>
-                </label>
-            </div>
-        </details>
-        {collection_datalists}
-    </form>
-    <section class="panel flush">{table}</section>
-    {pagination}
+    </section>
     """
     return render_layout(user, "Condition & finish audit", content, active="cards", notice=notice, status=status)
 

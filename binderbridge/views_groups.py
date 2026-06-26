@@ -778,7 +778,7 @@ def render_group_privacy_panel(group, share_result=None):
     """
 
 
-def render_group_detail(user, group_id, notice=None, status="info", import_result=None, import_review=None, query=None, share_result=None):
+def render_group_detail(user, group_id, notice=None, status="info", import_result=None, import_review=None, query=None, share_result=None, active_section=""):
     group = user_group(user["id"], group_id)
     if not group:
         return None
@@ -834,6 +834,7 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
     if group["group_type"] == "deck":
         workspace_items.append(("#group-import", "Import", "Add a deck list and review recent imports"))
     workspace_items.append(("#group-danger", "Group settings", "Export or remove this group"))
+    active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])
     content = f"""
     {subnav}
     <section class="section-heading">
@@ -854,7 +855,9 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         <article class="metric"><span>{e("Shown" if row_value(group, "show_values", 1) else "Hidden")}</span><p>card values</p></article>
         <article class="metric"><span>{e("Shown" if row_value(group, "show_photos", 1) else "Hidden")}</span><p>condition photos</p></article>
     </section>
-    {render_workspace_nav(workspace_items, label="Group workspace")}
+    <section class="workspace-layout tabbed-workspace group-detail-workspace" data-workspace-tabs{active_attr}>
+        {render_workspace_nav(workspace_items, label="Group workspace", compact=True, vertical=True)}
+        <div class="workspace-pane-stack">
     <section class="workspace-section group-workspace-section" id="group-cards">
         <div class="workspace-section-heading">
             <div><p class="eyebrow">Contents</p><h2>Manage cards</h2><p class="muted compact">Sort the group, add cards, or remove cards without changing the source collection or wishlist.</p></div>
@@ -884,6 +887,8 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
                 </form>
             </div>
         </article>
+    </section>
+        </div>
     </section>
     """
     return render_layout(user, group["name"], content, active=layout_active, notice=notice, status=status)
