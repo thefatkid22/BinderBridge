@@ -488,11 +488,11 @@ def propose_trade_from_browse(page, base_url: str) -> int:
     expect(page.locator("#trade-selected")).to_contain_text("Lightning Bolt")
     expect(page.locator(".trade-builder-status")).to_contain_text("You request 1")
 
-    page.locator('a[href="#trade-offer"]').click()
+    open_workspace_tab(page, "#trade-offer", "#trade-offer")
     page.locator('input[data-side="offer"][data-card-name="Sol Ring"]').fill("1")
     expect(page.locator("#trade-selected")).to_contain_text("Sol Ring")
     expect(page.locator(".trade-builder-status")).to_contain_text("You offer 1")
-    page.locator('a[href="#trade-message"]').click()
+    open_workspace_tab(page, "#trade-message", "#trade-message")
     page.get_by_label("Message").fill("Browser smoke trade request.")
     page.get_by_role("button", name="Review trade").click()
     expect(page.get_by_role("heading", name=re.compile("Confirm with Bob Trader", re.I))).to_be_visible()
