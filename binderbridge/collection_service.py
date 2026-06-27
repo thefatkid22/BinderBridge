@@ -7,6 +7,8 @@ so the legacy app.py public API remains compatible during the split.
 import hashlib
 from pathlib import Path
 
+from binderbridge.want_queries import want_list_where
+
 CARD_PHOTO_MAX_BYTES = 5 * 1024 * 1024
 CARD_PHOTO_MAX_COUNT = 6
 CARD_PHOTO_ALLOWED_TYPES = {
@@ -124,13 +126,18 @@ def update_collection_item(user_id, item_id, data):
         notify_watchlist_matches_for_collection_item(item_id, previous_trade_quantity=previous_public_trade_quantity, conn=conn)
 
 
-def bulk_delete_collection_items(user_id, item_ids):
+def clean_int_ids(values):
     clean_ids = []
-    for value in item_ids:
+    for value in values:
         try:
             clean_ids.append(int(value))
         except (TypeError, ValueError):
             continue
+    return clean_ids
+
+
+def bulk_delete_collection_items(user_id, item_ids):
+    clean_ids = clean_int_ids(item_ids)
     if not clean_ids:
         return 0
     placeholders = ",".join("?" for _ in clean_ids)
@@ -339,12 +346,7 @@ def parse_bulk_collection_update(form):
 
 
 def update_collection_items_by_ids(user_id, item_ids, quantity=None, quantity_for_trade=None, is_public=None):
-    clean_ids = []
-    for value in item_ids:
-        try:
-            clean_ids.append(int(value))
-        except (TypeError, ValueError):
-            continue
+    clean_ids = clean_int_ids(item_ids)
     if not clean_ids:
         return 0
     placeholders = ",".join("?" for _ in clean_ids)
@@ -389,6 +391,172 @@ def update_collection_items_where(where_sql, params, quantity=None, quantity_for
             notify_watchlist_matches_for_collection_item(item["id"], previous_trade_quantity=previous_public_trade_quantity, conn=conn)
             updated += 1
         return updated
+
+
+def parse_optional_bulk_group_id(value):
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("Choose a group before adding cards.")
+    try:
+        group_id = int(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Choose a valid group.") from exc
+    if group_id <= 0:
+        raise ValueError("Choose a valid group.")
+    return group_id
+
+
+def parse_bulk_collection_group_quantity(value):
+    text = str(value or "").strip()
+    if not text:
+        return 1
+    return parse_optional_bulk_quantity(text, "Group quantity") or 1
+
+
+def bulk_add_collection_items_to_group_by_ids(user_id, group_id, item_ids, quantity=1):
+    clean_ids = clean_int_ids(item_ids)
+    if not clean_ids:
+        return 0
+    group = user_group(user_id, group_id)
+    if not group or group["group_type"] == "wishlist":
+        raise ValueError("Choose a deck or binder group.")
+    placeholders = ",".join("?" for _ in clean_ids)
+    items = rows(
+        f"SELECT id, quantity FROM collection_items WHERE user_id = ? AND id IN ({placeholders})",
+        [user_id, *clean_ids],
+    )
+    count = 0
+    for item in items:
+        add_collection_item_to_group(user_id, group_id, item["id"], min(max(1, int(quantity or 1)), max(1, int(item["quantity"] or 1))))
+        count += 1
+    return count
+
+
+def bulk_add_collection_items_to_group_matching(user_id, group_id, filters, quantity=1):
+    group = user_group(user_id, group_id)
+    if not group or group["group_type"] == "wishlist":
+        raise ValueError("Choose a deck or binder group.")
+    where, params = collection_where(user_id, filters)
+    items = rows(
+        f"SELECT id, quantity FROM collection_items WHERE {' AND '.join(where)}",
+        params,
+    )
+    count = 0
+    for item in items:
+        add_collection_item_to_group(user_id, group_id, item["id"], min(max(1, int(quantity or 1)), max(1, int(item["quantity"] or 1))))
+        count += 1
+    return count
+
+
+def parse_bulk_want_update(form):
+    desired_quantity = parse_optional_bulk_quantity(form.get("desired_quantity", [""])[0], "Desired quantity")
+    priority_value = str(form.get("priority", [""])[0] or "").strip().lower()
+    visibility_value = str(form.get("visibility", [""])[0] or "").strip().lower()
+    priority = None
+    visibility = None
+    if priority_value:
+        priority = normalize_want_priority(priority_value)
+    if visibility_value:
+        if visibility_value not in VISIBILITY_LABELS:
+            raise ValueError("Choose a valid visibility level or no visibility change.")
+        visibility = normalize_visibility(visibility_value)
+    if desired_quantity is None and priority is None and visibility is None:
+        raise ValueError("Enter a desired quantity, priority, or visibility value to update.")
+    return desired_quantity, priority, visibility
+
+
+def update_want_items_by_ids(user_id, want_ids, desired_quantity=None, priority=None, visibility=None):
+    clean_ids = clean_int_ids(want_ids)
+    if not clean_ids:
+        return 0
+    placeholders = ",".join("?" for _ in clean_ids)
+    where = f"user_id = ? AND id IN ({placeholders})"
+    return update_want_items_where(where, [user_id, *clean_ids], desired_quantity, priority, visibility)
+
+
+def update_want_items_matching(user_id, filters, desired_quantity=None, priority=None, visibility=None):
+    where, params = want_list_where(user_id, filters)
+    return update_want_items_where(" AND ".join(where), params, desired_quantity, priority, visibility)
+
+
+def update_want_items_where(where_sql, params, desired_quantity=None, priority=None, visibility=None):
+    updates = []
+    values = []
+    if desired_quantity is not None:
+        updates.append("desired_quantity = ?")
+        values.append(clamp_quantity(desired_quantity, 1))
+    if priority is not None:
+        updates.append("priority = ?")
+        values.append(normalize_want_priority(priority))
+    if visibility is not None:
+        visibility = normalize_visibility(visibility)
+        updates.extend(["is_public = ?", "visibility = ?"])
+        values.extend([visibility_to_public_flag(visibility), visibility])
+    if not updates:
+        return 0
+    updates.append("updated_at = ?")
+    values.append(now_iso())
+    with db() as conn:
+        cursor = conn.execute(
+            f"UPDATE want_items SET {', '.join(updates)} WHERE {where_sql}",
+            [*values, *params],
+        )
+        return cursor.rowcount
+
+
+def bulk_delete_want_items(user_id, want_ids):
+    clean_ids = clean_int_ids(want_ids)
+    if not clean_ids:
+        return 0
+    placeholders = ",".join("?" for _ in clean_ids)
+    with db() as conn:
+        cursor = conn.execute(
+            f"DELETE FROM want_items WHERE user_id = ? AND id IN ({placeholders})",
+            [user_id, *clean_ids],
+        )
+        return cursor.rowcount
+
+
+def delete_want_items_matching(user_id, filters):
+    where, params = want_list_where(user_id, filters)
+    with db() as conn:
+        cursor = conn.execute(f"DELETE FROM want_items WHERE {' AND '.join(where)}", params)
+        return cursor.rowcount
+
+
+def bulk_add_want_items_to_group_by_ids(user_id, group_id, want_ids):
+    clean_ids = clean_int_ids(want_ids)
+    if not clean_ids:
+        return 0
+    group = user_group(user_id, group_id)
+    if not group or group["group_type"] != "wishlist":
+        raise ValueError("Choose a wishlist group.")
+    placeholders = ",".join("?" for _ in clean_ids)
+    wants = rows(
+        f"SELECT id FROM want_items WHERE user_id = ? AND id IN ({placeholders})",
+        [user_id, *clean_ids],
+    )
+    count = 0
+    for want in wants:
+        add_want_item_to_group(user_id, group_id, want["id"])
+        count += 1
+    return count
+
+
+def bulk_add_want_items_to_group_matching(user_id, group_id, filters):
+    group = user_group(user_id, group_id)
+    if not group or group["group_type"] != "wishlist":
+        raise ValueError("Choose a wishlist group.")
+    where, params = want_list_where(user_id, filters)
+    wants = rows(
+        f"SELECT id FROM want_items WHERE {' AND '.join(where)}",
+        params,
+    )
+    count = 0
+    for want in wants:
+        add_want_item_to_group(user_id, group_id, want["id"])
+        count += 1
+    return count
 
 
 def watchlist_browse_url(item):
@@ -616,6 +784,7 @@ def upsert_collection_item(user_id, data, merge=True, return_id=False):
 __all__ = [
     "collection_item_values",
     "update_collection_item",
+    "clean_int_ids",
     "bulk_delete_collection_items",
     "delete_collection_items_matching",
     "CARD_PHOTO_MAX_BYTES",
@@ -635,6 +804,18 @@ __all__ = [
     "update_collection_items_by_ids",
     "update_collection_items_matching",
     "update_collection_items_where",
+    "parse_optional_bulk_group_id",
+    "parse_bulk_collection_group_quantity",
+    "bulk_add_collection_items_to_group_by_ids",
+    "bulk_add_collection_items_to_group_matching",
+    "parse_bulk_want_update",
+    "update_want_items_by_ids",
+    "update_want_items_matching",
+    "update_want_items_where",
+    "bulk_delete_want_items",
+    "delete_want_items_matching",
+    "bulk_add_want_items_to_group_by_ids",
+    "bulk_add_want_items_to_group_matching",
     "watchlist_browse_url",
     "notify_watchlist_matches_for_collection_item",
     "upsert_collection_item",

@@ -208,8 +208,9 @@ class WantsWatchlistTests(BinderBridgeTestCase):
 
         self.assertIn(f'action="/wants/{want_id}/edit"', html)
         self.assertIn('class="want-card editing"', html)
-        self.assertIn('action="/wants/new"', html)
+        self.assertNotIn('action="/wants/new"', html)
         self.assertIn("Edit wanted card", html)
+        self.assertIn('href="/wants#add-want"', html)
         self.assertIn("Add wanted card", html)
         self.assertIn("Cancel edit", html)
         self.assertIn('data-preference-select-all', html)

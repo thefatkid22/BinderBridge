@@ -260,6 +260,29 @@ def collection_delete_all(self, user):
     delete_collection_items_matching(user["id"], filters)
     self.redirect(redirect_to)
 
+def collection_bulk_group(self, user):
+    form = self.read_form()
+    redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/collection"])[0], default="/collection", allowed_prefix="/collection")
+    try:
+        group_id = parse_optional_bulk_group_id(form.get("group_id", [""])[0])
+        quantity = parse_bulk_collection_group_quantity(form.get("group_quantity", [""])[0])
+    except ValueError as exc:
+        return self.html(render_collection(user, form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    bulk_add_collection_items_to_group_by_ids(user["id"], group_id, form.get("item_id", []), quantity)
+    self.redirect(redirect_to)
+
+def collection_group_all(self, user):
+    form = self.read_form()
+    redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/collection"])[0], default="/collection", allowed_prefix="/collection")
+    filters = collection_filter_values(form)
+    try:
+        group_id = parse_optional_bulk_group_id(form.get("group_id", [""])[0])
+        quantity = parse_bulk_collection_group_quantity(form.get("group_quantity", [""])[0])
+    except ValueError as exc:
+        return self.html(render_collection(user, form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    bulk_add_collection_items_to_group_matching(user["id"], group_id, filters, quantity)
+    self.redirect(redirect_to)
+
 def collection_new(self, method, user):
     if method == "GET":
         return self.html(render_collection_form(user))
@@ -814,7 +837,62 @@ def want_delete(self, user, path):
     execute("DELETE FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
     self.redirect("/wants")
 
-COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_share_link', 'want_delete')
+def want_bulk_update(self, user):
+    form = self.read_form()
+    redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/wants"])[0], default="/wants", allowed_prefix="/wants")
+    try:
+        desired_quantity, priority, visibility = parse_bulk_want_update(form)
+    except ValueError as exc:
+        return self.html(render_wants(user, query=form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    update_want_items_by_ids(user["id"], form.get("want_id", []), desired_quantity, priority, visibility)
+    self.redirect(redirect_to)
+
+def want_update_all(self, user):
+    form = self.read_form()
+    redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/wants"])[0], default="/wants", allowed_prefix="/wants")
+    filters = want_list_filter_values(form)
+    try:
+        desired_quantity, priority, visibility = parse_bulk_want_update(form)
+    except ValueError as exc:
+        return self.html(render_wants(user, query=form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    update_want_items_matching(user["id"], filters, desired_quantity, priority, visibility)
+    self.redirect(redirect_to)
+
+def want_bulk_delete(self, user):
+    form = self.read_form()
+    redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/wants"])[0], default="/wants", allowed_prefix="/wants")
+    bulk_delete_want_items(user["id"], form.get("want_id", []))
+    self.redirect(redirect_to)
+
+def want_delete_all(self, user):
+    form = self.read_form()
+    redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/wants"])[0], default="/wants", allowed_prefix="/wants")
+    filters = want_list_filter_values(form)
+    delete_want_items_matching(user["id"], filters)
+    self.redirect(redirect_to)
+
+def want_bulk_group(self, user):
+    form = self.read_form()
+    redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/wants"])[0], default="/wants", allowed_prefix="/wants")
+    try:
+        group_id = parse_optional_bulk_group_id(form.get("group_id", [""])[0])
+    except ValueError as exc:
+        return self.html(render_wants(user, query=form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    bulk_add_want_items_to_group_by_ids(user["id"], group_id, form.get("want_id", []))
+    self.redirect(redirect_to)
+
+def want_group_all(self, user):
+    form = self.read_form()
+    redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/wants"])[0], default="/wants", allowed_prefix="/wants")
+    filters = want_list_filter_values(form)
+    try:
+        group_id = parse_optional_bulk_group_id(form.get("group_id", [""])[0])
+    except ValueError as exc:
+        return self.html(render_wants(user, query=form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
+    bulk_add_want_items_to_group_matching(user["id"], group_id, filters)
+    self.redirect(redirect_to)
+
+COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_bulk_group', 'collection_group_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_share_link', 'want_delete', 'want_bulk_update', 'want_update_all', 'want_bulk_delete', 'want_delete_all', 'want_bulk_group', 'want_group_all')
 
 __all__ = [
     "COLLECTION_ROUTE_METHODS",

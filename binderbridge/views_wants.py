@@ -796,6 +796,8 @@ def render_want_card(
     scryfall_picker_title="Scryfall matches",
     scryfall_picker_multiple=False,
     share_result=None,
+    bulk_select=False,
+    bulk_form_id="",
 ):
     if edit_draft is not None:
         draft = prepare_want_draft(edit_draft)
@@ -827,6 +829,16 @@ def render_want_card(
 
     availability = want_trade_matches(user["id"], want)
     image = f'<img class="want-image" src="{e(want["image_url"])}" alt="">' if want["image_url"] else '<span class="want-image placeholder"></span>'
+    bulk_control = (
+        f"""
+        <label class="bulk-card-select">
+            <input type="checkbox" name="want_id" value="{e(want["id"])}" form="{e(bulk_form_id)}" aria-label="Select {e(want["card_name"])}">
+            <span>Select</span>
+        </label>
+        """
+        if bulk_select and bulk_form_id
+        else ""
+    )
     metadata = []
     metadata.append(game_label(want["game"]))
     if want["set_name"]:
@@ -887,7 +899,10 @@ def render_want_card(
     )
     return f"""
     <article class="want-card">
-        {image}
+        <div class="want-media">
+            {bulk_control}
+            {image}
+        </div>
         <div class="want-main">
             <div class="want-title-row">
                 <div>
@@ -954,6 +969,7 @@ def render_wants(
     else:
         wants = want_page_rows(user["id"], filters, order_clause, per_page, offset)
         pagination = render_pagination("/wants", query, total_count, page, per_page, page_count)
+    bulk_form_id = "wants-bulk-form"
     want_cards = "".join(
         render_want_card(
             user,
@@ -965,12 +981,88 @@ def render_wants(
             scryfall_picker_title=scryfall_picker_title,
             scryfall_picker_multiple=scryfall_picker_multiple,
             share_result=share_result if edit_want_id and want["id"] == int(edit_want_id) else None,
+            bulk_select=not edit_want_id,
+            bulk_form_id=bulk_form_id,
         )
         for want in wants
     )
     want_filters_active = any(value not in ("", None, False) for value in filters.values())
     if wants:
-        want_list = f'<div class="want-list">{want_cards}</div>'
+        redirect_to = page_url("/wants", query, page, per_page)
+        hidden_filters = collection_hidden_filter_inputs(filters)
+        wishlist_groups = [group for group in group_summary_rows(user["id"]) if group["group_type"] == "wishlist"]
+        wishlist_group_options = "".join(
+            f'<option value="{e(group["id"])}">Wishlist: {e(group["name"])}</option>'
+            for group in wishlist_groups
+        )
+        wishlist_group_disabled = "" if wishlist_group_options else " disabled"
+        wishlist_group_empty = "Choose group" if wishlist_group_options else "Create a wishlist group first"
+        priority_bulk_options = "".join(
+            f'<option value="{e(value)}">{e(label)}</option>'
+            for value, label in WANT_PRIORITY_OPTIONS
+        )
+        visibility_bulk_options = "".join(
+            f'<option value="{e(value)}">{e(label)}</option>'
+            for value, label in VISIBILITY_OPTIONS
+        )
+        bulk_controls = f"""
+        <form id="{bulk_form_id}" class="bulk-action-bar want-bulk-form" method="post" action="/wants/bulk-update">
+            <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
+            {hidden_filters}
+            <div class="bulk-action-intro">
+                <strong>Bulk edit wishlist</strong>
+                <span class="muted compact">Select wanted cards below, then update shared fields or move cards into a wishlist group.</span>
+                <label class="select-all-control inline-select-all">
+                    <input type="checkbox" onclick="document.querySelectorAll('input[form={bulk_form_id}][name=want_id]').forEach((box) => box.checked = this.checked)">
+                    <span>Select page</span>
+                </label>
+            </div>
+            <div class="bulk-update-workflow">
+                <div class="bulk-update-controls">
+                    <label>Desired qty
+                        <input type="number" min="1" name="desired_quantity" placeholder="No change">
+                    </label>
+                    <label>Priority
+                        <select name="priority">
+                            <option value="">No change</option>
+                            {priority_bulk_options}
+                        </select>
+                    </label>
+                    <label>Visibility
+                        <select name="visibility">
+                            <option value="">No change</option>
+                            {visibility_bulk_options}
+                        </select>
+                    </label>
+                </div>
+                <div class="actions bulk-update-actions">
+                    <button class="button secondary small" type="submit" formaction="/wants/bulk-update">Update selected</button>
+                    <button class="button secondary small" type="submit" formaction="/wants/update-all" data-confirm="Update all {total_count} wanted cards matching the current filters?">Update all matching</button>
+                </div>
+                <div class="bulk-group-workflow">
+                    <label>Add to group
+                        <select name="group_id"{wishlist_group_disabled}>
+                            <option value="">{e(wishlist_group_empty)}</option>
+                            {wishlist_group_options}
+                        </select>
+                    </label>
+                    <div class="actions bulk-update-actions">
+                        <button class="button secondary small" type="submit" formaction="/wants/bulk-group"{wishlist_group_disabled}>Add selected</button>
+                        <button class="button secondary small" type="submit" formaction="/wants/group-all" data-confirm="Add all {total_count} wanted cards matching the current filters to this wishlist group?"{wishlist_group_disabled}>Add all matching</button>
+                    </div>
+                </div>
+            </div>
+            <details class="bulk-danger-zone">
+                <summary>Remove wants</summary>
+                <p class="muted compact">Deletion permanently removes wanted-card records and their group links.</p>
+                <div class="actions">
+                    <button class="button danger small" type="submit" formaction="/wants/bulk-delete" data-confirm="Delete selected wanted cards?">Delete selected</button>
+                    <button class="button danger small" type="submit" formaction="/wants/delete-all" data-confirm="Delete all {total_count} wanted cards matching the current filters? This cannot be undone.">Delete all matching</button>
+                </div>
+            </details>
+        </form>
+        """
+        want_list = f'{bulk_controls}<div class="want-list">{want_cards}</div>'
     elif want_filters_active:
         want_list = render_empty_action_state(
             "No wanted cards match these filters.",
@@ -980,20 +1072,44 @@ def render_wants(
     else:
         want_list = render_empty_action_state(
             "No wanted cards yet.",
-            "Add a wanted card above to start powering trade matches and alerts.",
+            "Add a wanted card below to start powering trade matches and alerts.",
             actions=(("#add-want", "Add a want", "secondary"),),
         )
-    add_form = render_want_form(
-        default_want_item() if edit_want_id else draft,
-        "/wants/new",
-        "Add wanted card",
-        "Add want",
-        scryfall_results=None if edit_want_id else scryfall_results,
-        scryfall_picker_intent=scryfall_picker_intent,
-        scryfall_picker_label=scryfall_picker_label,
-        scryfall_picker_title=scryfall_picker_title,
-        scryfall_picker_multiple=scryfall_picker_multiple if not edit_want_id else False,
-    )
+    add_panel = ""
+    if not edit_want_id:
+        active_add_draft = any(
+            draft.get(key)
+            for key in (
+                "card_name",
+                "set_name",
+                "set_code",
+                "collector_number",
+                "scryfall_id",
+                "selected_scryfall_id",
+            )
+        )
+        add_panel_open = " open" if (scryfall_results or active_add_draft or (not wants and not want_filters_active)) else ""
+        add_form = render_want_form(
+            draft,
+            "/wants/new",
+            "Add wanted card",
+            "Add want",
+            scryfall_results=scryfall_results,
+            scryfall_picker_intent=scryfall_picker_intent,
+            scryfall_picker_label=scryfall_picker_label,
+            scryfall_picker_title=scryfall_picker_title,
+            scryfall_picker_multiple=scryfall_picker_multiple,
+            form_classes="form-grid compact-form embedded-form want-add-form",
+        )
+        add_panel = f"""
+        <details class="panel want-add-panel" id="add-want"{add_panel_open}>
+            <summary>
+                <span>Add wanted card</span>
+                <small class="muted">Search Scryfall or enter card details</small>
+            </summary>
+            <div class="want-add-panel-body">{add_form}</div>
+        </details>
+        """
     priority_options = "".join(
         f'<option value="{e(value)}"{selected(filters["priority"], value)}>{e(label)}</option>'
         for value, label in WANT_PRIORITY_OPTIONS
@@ -1004,6 +1120,7 @@ def render_wants(
     )
     active_filters = render_active_filter_chips("/wants", query, filters, want_list_filter_chip_specs())
     want_datalist = render_datalist("want-search-suggestions", want_search_suggestions(user["id"]))
+    add_href = "/wants#add-want" if edit_want_id else "#add-want"
     content = f"""
     {render_wishlist_subnav("wants")}
     <section class="section-heading">
@@ -1015,12 +1132,9 @@ def render_wants(
         <div class="actions">
             <a class="button secondary" href="/cleanup">Cleanup duplicates</a>
             <a class="button secondary" href="/wants/export">Export CSV</a>
+            <a class="button primary" href="{e(add_href)}">Add wanted card</a>
         </div>
     </section>
-    {render_workspace_nav([
-        ("#add-want", "Add a wanted card", "Search Scryfall or enter details"),
-        ("#tracked-wants", "Tracked wants", "Filter, sort, edit, and find matches"),
-    ], label="Wishlist workspace")}
     <form class="filter-bar wants-filter-bar" method="get" action="/wants">
         <div class="filter-primary-row">
             <label class="search-field">Search
@@ -1053,17 +1167,15 @@ def render_wants(
     </form>
     {render_saved_search_controls(user["id"], "wants", query)}
     {active_filters}
-    <section class="content-grid wants-grid">
-        <div id="add-want">{add_form}</div>
-        <article class="panel wants-panel" id="tracked-wants">
-            <div class="panel-heading">
+    <section class="panel flush wants-panel" id="tracked-wants">
+            <div class="panel-heading padded">
                 <h2>Tracked wants</h2>
                 <span class="muted">{e(total_count)} matching card{"s" if total_count != 1 else ""}</span>
             </div>
             {want_list}
-            {pagination}
-        </article>
     </section>
+    {pagination}
+    {add_panel}
     {want_datalist}
     {render_preference_select_all_script()}
     """

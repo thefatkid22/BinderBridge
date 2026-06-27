@@ -580,6 +580,13 @@ def render_collection(user, query, notice=None, status="info"):
             render_datalist("collection-type-line-suggestions", collection_field_suggestions(user["id"], "type_line")),
         ]
     )
+    collection_groups = [group for group in group_summary_rows(user["id"]) if group["group_type"] != "wishlist"]
+    collection_group_options = "".join(
+        f'<option value="{e(group["id"])}">{e(group_type_label(group["group_type"]))}: {e(group["name"])}</option>'
+        for group in collection_groups
+    )
+    collection_group_disabled = "" if collection_group_options else " disabled"
+    collection_group_empty = "Choose group" if collection_group_options else "Create a deck or binder first"
     if items:
         table = f"""
         <form method="post" action="/collection/bulk-update">
@@ -607,6 +614,21 @@ def render_collection(user, query, notice=None, status="info"):
                     <div class="actions bulk-update-actions">
                         <button class="button secondary small" type="submit" formaction="/collection/bulk-update">Update selected</button>
                         <button class="button secondary small" type="submit" formaction="/collection/update-all" data-confirm="Update all {total_count} cards matching the current filters?">Update all matching</button>
+                    </div>
+                    <div class="bulk-group-workflow">
+                        <label>Add to group
+                            <select name="group_id"{collection_group_disabled}>
+                                <option value="">{e(collection_group_empty)}</option>
+                                {collection_group_options}
+                            </select>
+                        </label>
+                        <label>Group qty
+                            <input type="number" min="1" name="group_quantity" placeholder="1"{collection_group_disabled}>
+                        </label>
+                        <div class="actions bulk-update-actions">
+                            <button class="button secondary small" type="submit" formaction="/collection/bulk-group"{collection_group_disabled}>Add selected</button>
+                            <button class="button secondary small" type="submit" formaction="/collection/group-all" data-confirm="Add all {total_count} cards matching the current filters to this group?"{collection_group_disabled}>Add all matching</button>
+                        </div>
                     </div>
                 </div>
                 <details class="bulk-danger-zone">

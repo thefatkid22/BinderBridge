@@ -61,6 +61,7 @@ class CollectionBrowseTests(BinderBridgeTestCase):
     def test_collection_page_paginates_and_renders_bulk_controls(self):
         user_id = app.create_user("pager", "password123", "Pager")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        app.create_card_group(user_id, "binder", "Bulk Binder")
         for index in range(12):
             app.execute(
                 """
@@ -84,6 +85,10 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn("bulk-danger-zone", html)
         self.assertIn("<summary>Remove cards</summary>", html)
         self.assertLess(html.index("Update selected"), html.index("<summary>Remove cards</summary>"))
+        self.assertIn('formaction="/collection/bulk-group"', html)
+        self.assertIn('formaction="/collection/group-all"', html)
+        self.assertIn("Group qty", html)
+        self.assertIn("Binder: Bulk Binder", html)
         self.assertIn('name="quantity_for_trade"', html)
         self.assertIn("Visibility", html)
         self.assertIn('<option value="">No change</option>', html)
@@ -99,6 +104,38 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn("page=2", html)
         self.assertIn('name="sort"', html)
         self.assertIn('name="dir"', html)
+
+    def test_wishlist_page_paginates_and_renders_bulk_controls(self):
+        user_id = app.create_user("wantpager", "password123", "Want Pager")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        app.create_card_group(user_id, "wishlist", "Bulk Wants")
+        for index in range(12):
+            factory.create_want_item(user_id, f"Want {index:02d}", priority="normal")
+
+        html = app.render_wants(user, query={"per_page": ["10"], "page": ["1"]})
+
+        self.assertIn("Showing 1-10 of 12", html)
+        self.assertIn('id="wants-bulk-form"', html)
+        self.assertIn('form="wants-bulk-form"', html)
+        self.assertIn('name="want_id"', html)
+        self.assertIn("Select page", html)
+        self.assertIn('formaction="/wants/bulk-update"', html)
+        self.assertIn('formaction="/wants/update-all"', html)
+        self.assertIn('formaction="/wants/bulk-group"', html)
+        self.assertIn('formaction="/wants/group-all"', html)
+        self.assertIn('formaction="/wants/bulk-delete"', html)
+        self.assertIn('formaction="/wants/delete-all"', html)
+        self.assertIn("Bulk edit wishlist", html)
+        self.assertIn("Desired qty", html)
+        self.assertIn("Wishlist: Bulk Wants", html)
+        self.assertIn("<summary>Remove wants</summary>", html)
+        self.assertIn('class="panel flush wants-panel" id="tracked-wants"', html)
+        self.assertIn('class="panel want-add-panel" id="add-want"', html)
+        self.assertNotIn("Wishlist workspace", html)
+        self.assertNotIn("content-grid wants-grid", html)
+        self.assertLess(html.index('id="tracked-wants"'), html.index('id="add-want"'))
+        self.assertLess(html.index("Tracked wants"), html.index("Add wanted card</span>"))
+        self.assertIn("page=2", html)
 
     def test_empty_navigation_pages_offer_recovery_actions(self):
         user_id = app.create_user("emptyviews", "password123", "Empty Views")
@@ -120,6 +157,7 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn("Find matches", trades_html)
         self.assertIn("No wanted cards yet.", wants_html)
         self.assertIn("Add a want", wants_html)
+        self.assertIn('class="panel want-add-panel" id="add-want" open', wants_html)
         self.assertIn("No other members are available yet.", members_html)
 
     def test_trade_list_filters_and_paginates_offers(self):
@@ -666,6 +704,36 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertEqual(alice_card["is_public"], 0)
         self.assertEqual(bob_card["quantity"], 4)
 
+    def test_bulk_add_collection_to_group_selected_and_matching_respects_user(self):
+        alice_id = factory.create_user("alice", display_name="Alice")
+        bob_id = factory.create_user("bob", display_name="Bob")
+        binder_id = app.create_card_group(alice_id, "binder", "Bulk Binder")
+        sol_id = factory.create_collection_item(alice_id, "Sol Ring", quantity=4)
+        solitude_id = factory.create_collection_item(alice_id, "Solitude", quantity=2)
+        pikachu_id = factory.create_collection_item(alice_id, "Pikachu", game="pokemon", quantity=1)
+        bob_card_id = factory.create_collection_item(bob_id, "Sol Ring", quantity=4)
+
+        selected = app.bulk_add_collection_items_to_group_by_ids(alice_id, binder_id, [sol_id, bob_card_id, "bad"], quantity=3)
+        matching = app.bulk_add_collection_items_to_group_matching(
+            alice_id,
+            binder_id,
+            {"q": "sol", "game": "mtg", "trade_only": False},
+            quantity=1,
+        )
+        group_rows = app.rows(
+            "SELECT collection_item_id, quantity FROM group_collection_items WHERE group_id = ? ORDER BY collection_item_id",
+            (binder_id,),
+        )
+
+        self.assertEqual(selected, 1)
+        self.assertEqual(matching, 2)
+        self.assertEqual(
+            [(item["collection_item_id"], item["quantity"]) for item in group_rows],
+            [(sol_id, 1), (solitude_id, 1)],
+        )
+        self.assertNotIn(pikachu_id, [item["collection_item_id"] for item in group_rows])
+        self.assertNotIn(bob_card_id, [item["collection_item_id"] for item in group_rows])
+
     def test_update_all_matching_changes_only_filtered_collection_items(self):
         alice_id = app.create_user("alice", "password123", "Alice")
         bob_id = app.create_user("bob", "password123", "Bob")
@@ -758,3 +826,55 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertEqual(deleted, 1)
         self.assertEqual([card["card_name"] for card in remaining_alice], ["Pikachu", "Solitude"])
         self.assertEqual(remaining_bob[0]["card_name"], "Sol Ring")
+
+    def test_bulk_want_update_group_and_delete_respect_user_and_filters(self):
+        alice_id = factory.create_user("alice", display_name="Alice")
+        bob_id = factory.create_user("bob", display_name="Bob")
+        group_id = app.create_card_group(alice_id, "wishlist", "Bulk Wants")
+        sol_id = factory.create_want_item(alice_id, "Sol Ring", priority="normal", desired_quantity=1)
+        solitude_id = factory.create_want_item(alice_id, "Solitude", priority="normal", desired_quantity=1)
+        pikachu_id = factory.create_want_item(alice_id, "Pikachu", game="pokemon", priority="low", desired_quantity=1)
+        bob_want_id = factory.create_want_item(bob_id, "Sol Ring", priority="normal", desired_quantity=1)
+
+        matching_updated = app.update_want_items_matching(
+            alice_id,
+            {"q": "sol", "priority": "", "game": "", "visibility": "", "matched_only": False},
+            desired_quantity=2,
+        )
+        desired_quantity, priority, visibility = app.parse_bulk_want_update({
+            "desired_quantity": ["3"],
+            "priority": ["urgent"],
+            "visibility": ["private"],
+        })
+        selected_updated = app.update_want_items_by_ids(
+            alice_id,
+            [sol_id, bob_want_id, "bad"],
+            desired_quantity=desired_quantity,
+            priority=priority,
+            visibility=visibility,
+        )
+        matching_added = app.bulk_add_want_items_to_group_matching(
+            alice_id,
+            group_id,
+            {"q": "sol", "priority": "", "game": "", "visibility": "", "matched_only": False},
+        )
+        deleted = app.delete_want_items_matching(
+            alice_id,
+            {"q": "", "priority": "low", "game": "pokemon", "visibility": "", "matched_only": False},
+        )
+        sol = app.row("SELECT * FROM want_items WHERE id = ?", (sol_id,))
+        solitude = app.row("SELECT * FROM want_items WHERE id = ?", (solitude_id,))
+        bob_want = app.row("SELECT * FROM want_items WHERE id = ?", (bob_want_id,))
+        group_rows = app.rows("SELECT want_item_id FROM group_want_items WHERE group_id = ? ORDER BY want_item_id", (group_id,))
+
+        self.assertEqual(matching_updated, 2)
+        self.assertEqual(selected_updated, 1)
+        self.assertEqual(matching_added, 2)
+        self.assertEqual(deleted, 1)
+        self.assertEqual(sol["desired_quantity"], 3)
+        self.assertEqual(sol["priority"], "urgent")
+        self.assertEqual(sol["visibility"], "private")
+        self.assertEqual(solitude["desired_quantity"], 2)
+        self.assertIsNone(app.row("SELECT * FROM want_items WHERE id = ?", (pikachu_id,)))
+        self.assertEqual(bob_want["desired_quantity"], 1)
+        self.assertEqual([item["want_item_id"] for item in group_rows], [sol_id, solitude_id])
