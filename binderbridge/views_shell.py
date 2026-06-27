@@ -836,7 +836,11 @@ def render_passkey_account_panel(user):
         </li>
         """
         for credential in credentials
-    ) or '<li class="muted">No passkeys registered yet.</li>'
+    ) or render_empty_action_state(
+        "No passkeys registered yet.",
+        "Add a passkey from this panel for faster sign-in on trusted devices.",
+        tag="li",
+    )
     setup_status = f"{len(credentials)} registered" if credentials else "Not set up"
     setup_class = "accepted" if credentials else "declined"
     script = """

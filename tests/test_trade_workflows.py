@@ -128,6 +128,9 @@ class TradeWorkflowTests(BinderBridgeTestCase):
 
         self.assertIn('id="trade-submit-form"', html)
         self.assertIn("Selected for trade", html)
+        self.assertIn("Current selection", html)
+        self.assertIn('data-trade-status-total', html)
+        self.assertIn('href="#trade-message"', html)
         self.assertIn('data-trade-summary="offer"', html)
         self.assertIn('data-trade-summary="request"', html)
         self.assertIn('name="offer_q"', html)

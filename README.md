@@ -243,13 +243,18 @@ python -m unittest discover -s tests
 Browser smoke coverage is available through Playwright. It starts BinderBridge
 with a temporary database, registers the first owner, checks the setup and
 health pages, previews and applies a CSV import, verifies collection/wishlist
-matching, proposes a trade from Browse, and confirms the recipient notification.
+matching, proposes a trade from Browse, confirms the recipient notification,
+and captures desktop/mobile screenshots while checking tabbed workspaces for
+horizontal overflow or overlapping panels.
 
 ```powershell
 python -m pip install playwright
 python -m playwright install chromium
 python scripts/browser_smoke.py
 ```
+
+Set `BINDERBRIDGE_BROWSER_SCREENSHOT_DIR=browser-smoke-artifacts` to keep the
+generated visual smoke screenshots outside the temporary run directory.
 
 ## Project Layout
 

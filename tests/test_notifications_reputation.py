@@ -510,6 +510,25 @@ class NotificationsReputationTests(BinderBridgeTestCase):
         with self.assertRaisesRegex(ValueError, "1 to 5"):
             app.submit_trade_feedback(completed_trade_id, alice_id, "6", "Nope")
 
+    def test_pending_trade_feedback_tab_renders_empty_state(self):
+        alice_id = app.create_user("alice", "password123", "Alice")
+        bob_id = app.create_user("bob", "password123", "Bob")
+        trade_id = app.execute(
+            """
+            INSERT INTO trades (proposer_id, recipient_id, status, created_at, updated_at)
+            VALUES (?, ?, 'pending', ?, ?)
+            """,
+            (alice_id, bob_id, app.now_iso(), app.now_iso()),
+        )
+        alice = app.row("SELECT * FROM users WHERE id = ?", (alice_id,))
+
+        html = app.render_trade_detail(alice, trade_id, active_section="trade-feedback")
+
+        self.assertIn('id="trade-feedback"', html)
+        self.assertIn("Feedback opens after completion.", html)
+        self.assertIn("Complete this trade before either member leaves feedback.", html)
+        self.assertNotIn(f'action="/trades/{trade_id}/feedback"', html)
+
     def test_trade_detail_renders_feedback_form_after_completion(self):
         alice_id = app.create_user("alice", "password123", "Alice")
         bob_id = app.create_user("bob", "password123", "Bob")

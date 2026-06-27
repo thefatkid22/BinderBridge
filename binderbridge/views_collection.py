@@ -203,9 +203,9 @@ def render_cleanup_group_items(group, quantity_label):
     )
 
 
-def render_duplicate_cleanup_panel(title, groups, action, empty_text, quantity_key, total_label):
+def render_duplicate_cleanup_panel(title, groups, action, empty_text, quantity_key, total_label, empty_actions=()):
     if not groups:
-        body = f'<div class="empty-state compact-empty">{e(empty_text)}</div>'
+        body = render_empty_action_state(empty_text, actions=empty_actions)
     else:
         group_cards = "".join(
             f"""
@@ -251,6 +251,10 @@ def render_cleanup(user, notice=None, status="info", active_section=""):
         "No exact collection duplicates found.",
         "quantity",
         "owned",
+        (
+            ("/collection", "Review collection", "secondary"),
+            ("/import", "Import cards", "ghost"),
+        ),
     )
     want_cleanup_panel = render_duplicate_cleanup_panel(
         "Wanted-card duplicates",
@@ -259,6 +263,10 @@ def render_cleanup(user, notice=None, status="info", active_section=""):
         "No exact wanted-card duplicates found.",
         "desired_quantity",
         "wanted",
+        (
+            ("/wants", "Review wishlist", "secondary"),
+            ("/groups?type=wishlist", "Wishlist groups", "ghost"),
+        ),
     )
     workspace_items = [
         ("#cleanup-collection", "Collection duplicates", "Merge duplicate owned cards"),
@@ -361,67 +369,81 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
     finish_options = simple_option_tags(FINISH_OPTIONS, filters["finish"])
     new_condition_options = simple_option_tags(CONDITION_OPTIONS, "")
     new_finish_options = simple_option_tags(FINISH_OPTIONS, "")
+    audit_filters_active = any(value not in ("", None, False) for value in filters.values())
     collection_datalists = "".join(
         [
             render_datalist("audit-search-suggestions", collection_search_suggestions(user["id"])),
             render_datalist("audit-set-name-suggestions", collection_field_suggestions(user["id"], "set_name")),
         ]
     )
-    table = f"""
-    <form method="post" action="/cleanup/audit/update">
-        <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
-        {hidden_filters}
-        <div class="bulk-action-bar audit-action-bar">
-            <div>
-                <span class="muted compact">Select rows that need condition or finish cleanup.</span>
-                <span class="subtle">Normalize only changes recognized imported labels; manual updates apply the selected values.</span>
+    if page_items:
+        table = f"""
+        <form method="post" action="/cleanup/audit/update">
+            <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
+            {hidden_filters}
+            <div class="bulk-action-bar audit-action-bar">
+                <div>
+                    <span class="muted compact">Select rows that need condition or finish cleanup.</span>
+                    <span class="subtle">Normalize only changes recognized imported labels; manual updates apply the selected values.</span>
+                </div>
+                <div class="bulk-update-controls">
+                    <label>Set condition
+                        <select name="new_condition">
+                            <option value="">No change</option>
+                            {new_condition_options}
+                        </select>
+                    </label>
+                    <label>Set finish
+                        <select name="new_finish">
+                            <option value="">No change</option>
+                            {new_finish_options}
+                        </select>
+                    </label>
+                    <button class="button secondary small" type="submit">Apply selected</button>
+                    <button class="button secondary small" type="submit" formaction="/cleanup/audit/update-all" data-confirm="Update all {total_count} cards matching this audit view?">Apply all matching</button>
+                </div>
+                <div class="actions">
+                    <button class="button secondary small" type="submit" formaction="/cleanup/audit/normalize">Normalize selected</button>
+                    <button class="button secondary small" type="submit" formaction="/cleanup/audit/normalize-all" data-confirm="Normalize all recognized labels matching this audit view?">Normalize all matching</button>
+                </div>
             </div>
-            <div class="bulk-update-controls">
-                <label>Set condition
-                    <select name="new_condition">
-                        <option value="">No change</option>
-                        {new_condition_options}
-                    </select>
-                </label>
-                <label>Set finish
-                    <select name="new_finish">
-                        <option value="">No change</option>
-                        {new_finish_options}
-                    </select>
-                </label>
-                <button class="button secondary small" type="submit">Apply selected</button>
-                <button class="button secondary small" type="submit" formaction="/cleanup/audit/update-all" data-confirm="Update all {total_count} cards matching this audit view?">Apply all matching</button>
+            <div class="table-wrap">
+                <table class="responsive-card-table audit-table">
+                    <thead>
+                        <tr>
+                            <th class="select-col">
+                                <label class="select-all-control">
+                                    <input type="checkbox" onclick="this.form.querySelectorAll('input[name=item_id]').forEach((box) => box.checked = this.checked)">
+                                    <span>All</span>
+                                </label>
+                            </th>
+                            <th>Card</th>
+                            <th>Set</th>
+                            <th>Condition</th>
+                            <th>Finish</th>
+                            <th>Qty</th>
+                            <th>Trade</th>
+                            <th>Issue</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>{row_html}</tbody>
+                </table>
             </div>
-            <div class="actions">
-                <button class="button secondary small" type="submit" formaction="/cleanup/audit/normalize">Normalize selected</button>
-                <button class="button secondary small" type="submit" formaction="/cleanup/audit/normalize-all" data-confirm="Normalize all recognized labels matching this audit view?">Normalize all matching</button>
-            </div>
-        </div>
-        <div class="table-wrap">
-            <table class="responsive-card-table audit-table">
-                <thead>
-                    <tr>
-                        <th class="select-col">
-                            <label class="select-all-control">
-                                <input type="checkbox" onclick="this.form.querySelectorAll('input[name=item_id]').forEach((box) => box.checked = this.checked)">
-                                <span>All</span>
-                            </label>
-                        </th>
-                        <th>Card</th>
-                        <th>Set</th>
-                        <th>Condition</th>
-                        <th>Finish</th>
-                        <th>Qty</th>
-                        <th>Trade</th>
-                        <th>Issue</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>{row_html}</tbody>
-            </table>
-        </div>
-    </form>
-    """ if page_items else '<div class="empty-state">No collection cards need condition or finish cleanup for this view.</div>'
+        </form>
+        """
+    elif audit_filters_active:
+        table = render_empty_action_state(
+            "No audit rows match these filters.",
+            "Clear the audit filters to see every card that still needs condition or finish cleanup.",
+            actions=(("/cleanup/audit", "Reset audit filters", "secondary"),),
+        )
+    else:
+        table = render_empty_action_state(
+            "No collection cards need condition or finish cleanup.",
+            "Your visible collection rows already have recognized condition and finish values.",
+            actions=(("/collection", "Review collection", "secondary"), ("/import", "Import cards", "ghost")),
+        )
     advanced_active = bool(filters["set_name"] or filters["condition"] or filters["finish"])
     audit_summary = f"""
     <section class="metric-grid compact-metrics">
@@ -538,6 +560,7 @@ def render_collection(user, query, notice=None, status="info"):
     pagination = render_pagination("/collection", query, total_count, page, per_page, page_count)
     redirect_to = current_collection_url("/collection", query, page, per_page)
     hidden_filters = collection_hidden_filter_inputs(filters)
+    collection_filters_active = any(value not in ("", None, False) for value in filters.values())
     condition_options = simple_option_tags(CONDITION_OPTIONS, filters["condition"])
     finish_options = simple_option_tags(FINISH_OPTIONS, filters["finish"])
     language_options = simple_option_tags(LANGUAGE_OPTIONS, filters["language"])
@@ -557,69 +580,82 @@ def render_collection(user, query, notice=None, status="info"):
             render_datalist("collection-type-line-suggestions", collection_field_suggestions(user["id"], "type_line")),
         ]
     )
-    table = f"""
-    <form method="post" action="/collection/bulk-update">
-        <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
-        <div class="bulk-action-bar">
-            <div class="bulk-action-intro">
-                <strong>Bulk edit collection</strong>
-                <span class="muted compact">Select rows below, then update quantities or sharing. Blank fields keep their current value.</span>
+    if items:
+        table = f"""
+        <form method="post" action="/collection/bulk-update">
+            <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
+            <div class="bulk-action-bar">
+                <div class="bulk-action-intro">
+                    <strong>Bulk edit collection</strong>
+                    <span class="muted compact">Select rows below, then update quantities or sharing. Blank fields keep their current value.</span>
+                </div>
+                <div class="bulk-update-workflow">
+                    <div class="bulk-update-controls">
+                        <label>Qty owned
+                            <input type="number" min="0" name="quantity" placeholder="No change">
+                        </label>
+                        <label>Trade qty
+                            <input type="number" min="0" name="quantity_for_trade" placeholder="No change">
+                        </label>
+                        <label>Visibility
+                            <select name="visibility">
+                                <option value="">No change</option>
+                                {''.join(f'<option value="{e(value)}">{e(label)}</option>' for value, label in VISIBILITY_OPTIONS)}
+                            </select>
+                        </label>
+                    </div>
+                    <div class="actions bulk-update-actions">
+                        <button class="button secondary small" type="submit" formaction="/collection/bulk-update">Update selected</button>
+                        <button class="button secondary small" type="submit" formaction="/collection/update-all" data-confirm="Update all {total_count} cards matching the current filters?">Update all matching</button>
+                    </div>
+                </div>
+                <details class="bulk-danger-zone">
+                    <summary>Remove cards</summary>
+                    <p class="muted compact">Deletion permanently removes collection records. Groups using these cards may also be affected.</p>
+                    <div class="actions">
+                        <button class="button danger small" type="submit" formaction="/collection/bulk-delete" data-confirm="Delete selected cards from your collection?">Delete selected</button>
+                        <button class="button danger small" type="submit" formaction="/collection/delete-all" data-confirm="Delete all {total_count} cards matching the current filters? This cannot be undone.">Delete all matching</button>
+                    </div>
+                </details>
             </div>
-            <div class="bulk-update-workflow">
-                <div class="bulk-update-controls">
-                    <label>Qty owned
-                        <input type="number" min="0" name="quantity" placeholder="No change">
-                    </label>
-                    <label>Trade qty
-                        <input type="number" min="0" name="quantity_for_trade" placeholder="No change">
-                    </label>
-                    <label>Visibility
-                        <select name="visibility">
-                            <option value="">No change</option>
-                            {''.join(f'<option value="{e(value)}">{e(label)}</option>' for value, label in VISIBILITY_OPTIONS)}
-                        </select>
-                    </label>
-                </div>
-                <div class="actions bulk-update-actions">
-                    <button class="button secondary small" type="submit" formaction="/collection/bulk-update">Update selected</button>
-                    <button class="button secondary small" type="submit" formaction="/collection/update-all" data-confirm="Update all {total_count} cards matching the current filters?">Update all matching</button>
-                </div>
+            {hidden_filters}
+            <div class="table-wrap">
+                <table class="responsive-card-table collection-table">
+                    <thead>
+                        <tr>
+                            <th class="select-col">
+                                <label class="select-all-control">
+                                    <input type="checkbox" onclick="this.form.querySelectorAll('input[name=item_id]').forEach((box) => box.checked = this.checked)">
+                                    <span>All</span>
+                                </label>
+                            </th>
+                            <th>Card</th>
+                            <th>Game</th>
+                            <th>Set</th>
+                            <th>Code</th>
+                            <th>Qty</th>
+                            <th>Trade</th>
+                            <th>Details</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>{item_rows}</tbody>
+                </table>
             </div>
-            <details class="bulk-danger-zone">
-                <summary>Remove cards</summary>
-                <p class="muted compact">Deletion permanently removes collection records. Groups using these cards may also be affected.</p>
-                <div class="actions">
-                    <button class="button danger small" type="submit" formaction="/collection/bulk-delete" data-confirm="Delete selected cards from your collection?">Delete selected</button>
-                    <button class="button danger small" type="submit" formaction="/collection/delete-all" data-confirm="Delete all {total_count} cards matching the current filters? This cannot be undone.">Delete all matching</button>
-                </div>
-            </details>
-        </div>
-        {hidden_filters}
-        <div class="table-wrap">
-            <table class="responsive-card-table collection-table">
-                <thead>
-                    <tr>
-                        <th class="select-col">
-                            <label class="select-all-control">
-                                <input type="checkbox" onclick="this.form.querySelectorAll('input[name=item_id]').forEach((box) => box.checked = this.checked)">
-                                <span>All</span>
-                            </label>
-                        </th>
-                        <th>Card</th>
-                        <th>Game</th>
-                        <th>Set</th>
-                        <th>Code</th>
-                        <th>Qty</th>
-                        <th>Trade</th>
-                        <th>Details</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>{item_rows}</tbody>
-            </table>
-        </div>
-    </form>
-    """ if items else '<div class="empty-state">No cards match this view.</div>'
+        </form>
+        """
+    elif collection_filters_active:
+        table = render_empty_action_state(
+            "No cards match this view.",
+            "Reset filters to return to your full collection.",
+            actions=(("/collection", "Reset filters", "secondary"),),
+        )
+    else:
+        table = render_empty_action_state(
+            "No cards in your collection yet.",
+            "Add a single card or import a list to start building your BinderBridge collection.",
+            actions=(("/collection/new", "Add card", "secondary"), ("/import", "Import cards", "ghost")),
+        )
     export_url = page_url("/collection/export", query, 1)
     active_filter_chips = render_active_filter_chips(
         "/collection",
@@ -1068,6 +1104,7 @@ def render_browse(user, query, notice=None, status="info"):
         for owner in filter_users
     )
     rows_html = "".join(render_browse_row(user, item) for item in items)
+    browse_filters_active = any(value not in ("", None, False) for value in filters.values())
     language_options = simple_option_tags(LANGUAGE_OPTIONS, filters["language"])
     rarity_options = "".join(
         f'<option value="{rarity}"{selected(filters["rarity"], rarity)}>{e(rarity.title())}</option>'
@@ -1085,25 +1122,38 @@ def render_browse(user, query, notice=None, status="info"):
             render_datalist("browse-type-line-suggestions", browse_field_suggestions(user["id"], "type_line")),
         ]
     )
-    table = f"""
-    <div class="table-wrap">
-        <table class="responsive-card-table browse-table">
-            <thead>
-                <tr>
-                    <th>Card</th>
-                    <th>User</th>
-                    <th>Game</th>
-                    <th>Set</th>
-                    <th>Code</th>
-                    <th>Available</th>
-                    <th>Quality</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>{rows_html}</tbody>
-        </table>
-    </div>
-    """ if items else '<div class="empty-state">No trade cards match those filters.</div>'
+    if items:
+        table = f"""
+        <div class="table-wrap">
+            <table class="responsive-card-table browse-table">
+                <thead>
+                    <tr>
+                        <th>Card</th>
+                        <th>User</th>
+                        <th>Game</th>
+                        <th>Set</th>
+                        <th>Code</th>
+                        <th>Available</th>
+                        <th>Quality</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html}</tbody>
+            </table>
+        </div>
+        """
+    elif browse_filters_active:
+        table = render_empty_action_state(
+            "No trade cards match those filters.",
+            "Reset the browse filters to see every public card available for trade.",
+            actions=(("/browse", "Reset filters", "secondary"),),
+        )
+    else:
+        table = render_empty_action_state(
+            "No public trade cards are available yet.",
+            "When members mark cards available for trade, they will appear here.",
+            actions=(("/trades/matches", "Find matches", "secondary"), ("/collection", "Review collection", "ghost")),
+        )
     pagination = render_pagination("/browse", query, total_count, page, per_page, page_count)
     active_filter_chips = render_active_filter_chips(
         "/browse",

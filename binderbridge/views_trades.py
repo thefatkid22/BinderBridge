@@ -27,7 +27,21 @@ def render_trades(user, query=None, notice=None, status="info"):
     trades = trade_page_rows(user["id"], filters, per_page, offset)
     needs_action_count = trade_count_for_user(user["id"], {"direction": "needs_action"})
     unread_trade_count = unread_trade_notification_count(user["id"])
-    table = render_trade_table(user, trades) if trades else '<div class="empty-state">No trades match these filters.</div>'
+    trade_filters_active = any(value not in ("", None, False) for value in filters.values())
+    if trades:
+        table = render_trade_table(user, trades)
+    elif trade_filters_active:
+        table = render_empty_action_state(
+            "No trades match these filters.",
+            "Reset filters to return to your full trade history.",
+            actions=(("/trades", "Reset filters", "secondary"),),
+        )
+    else:
+        table = render_empty_action_state(
+            "No trades yet.",
+            "Find a match or browse public trade cards to start a proposal.",
+            actions=(("/trades/matches", "Find matches", "secondary"), ("/browse", "Browse cards", "ghost")),
+        )
     status_options = "".join(
         f'<option value="{e(value)}"{selected(filters["status"], value)}>{e(label)}</option>'
         for value, label in TRADE_STATUS_LABELS.items()
@@ -425,6 +439,29 @@ def render_trade_live_summary(selected_offer, selected_request):
     """
 
 
+def render_trade_builder_status(selected_offer, selected_request):
+    offer_count = sum(quantity for _, quantity in selected_offer)
+    request_count = sum(quantity for _, quantity in selected_request)
+    total_count = offer_count + request_count
+    return f"""
+    <section class="trade-builder-status" aria-live="polite">
+        <div>
+            <span class="eyebrow">Current selection</span>
+            <strong><span data-trade-status-total>{e(total_count)}</span> card<span data-trade-status-plural>{"s" if total_count != 1 else ""}</span> selected</strong>
+        </div>
+        <div class="trade-builder-status-counts">
+            <span>You offer <strong data-trade-status-count="offer">{e(offer_count)}</strong></span>
+            <span>You request <strong data-trade-status-count="request">{e(request_count)}</strong></span>
+        </div>
+        <div class="actions">
+            <a class="button ghost small" href="#trade-selected">Review selected</a>
+            <a class="button ghost small" href="#trade-offer">Your cards</a>
+            <a class="button ghost small" href="#trade-request">Their cards</a>
+        </div>
+    </section>
+    """
+
+
 def render_counter_context_panel(source_trade):
     if not source_trade:
         return ""
@@ -511,6 +548,7 @@ def render_trade_picker_section(title, owner_id, recipient_id, query, prefix, in
     selected_quantities = selected_quantities or {}
     viewer_id = owner_id if viewer_id is None else viewer_id
     filters = trade_picker_filter_values(query, prefix)
+    picker_filters_active = any(value not in ("", None, False) for value in filters.values())
     advanced_active = trade_picker_has_advanced_filters(filters)
     advanced_count = sum(
         1
@@ -542,7 +580,6 @@ def render_trade_picker_section(title, owner_id, recipient_id, query, prefix, in
         for item in items
     )
     hidden_selected = render_trade_selected_hidden_inputs(owner_id, selected_quantities, input_name, visible_ids, price_basis, viewer_id=viewer_id)
-    table = trade_picker_table(item_rows) if items else f'<div class="empty-state">{e(empty_message)}</div>'
     pagination = render_trade_picker_pagination(recipient_id, query, prefix, total_count, page, per_page, page_count)
     condition_options = simple_option_tags(CONDITION_OPTIONS, filters["condition"])
     finish_options = simple_option_tags(FINISH_OPTIONS, filters["finish"])
@@ -556,6 +593,25 @@ def render_trade_picker_section(title, owner_id, recipient_id, query, prefix, in
     advanced_summary = f"{advanced_count} active" if advanced_count else "More options"
     datalist_prefix = f"trade-{prefix}"
     reset_url = trade_picker_url(recipient_id, query, reset_prefix=prefix)
+    if items:
+        table = trade_picker_table(item_rows)
+    elif picker_filters_active:
+        table = render_empty_action_state(
+            "No cards match these filters.",
+            empty_message,
+            actions=((reset_url, "Reset this side", "secondary"),),
+        )
+    else:
+        empty_actions = (
+            (("/collection", "Review collection", "ghost"),)
+            if int(owner_id) == int(viewer_id)
+            else (("/browse", "Browse public cards", "ghost"),)
+        )
+        table = render_empty_action_state(
+            empty_message,
+            "Try the other side of the trade, adjust availability in collection, or keep building with recommendations.",
+            actions=empty_actions,
+        )
     subtitle_html = f'<p class="muted compact">{e(subtitle)}</p>' if subtitle else ""
     active_filter_chips = render_active_filter_chips(
         "/trades/new",
@@ -842,9 +898,13 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
     )
     recommendation_panel = render_trade_recommendations_panel(recommendations)
     if not recommendation_panel:
-        recommendation_panel = """
+        recommendation_panel = f"""
         <section class="panel">
-            <div class="empty-state compact-empty">No recommendations yet. Pick cards on either side to unlock wishlist and value suggestions.</div>
+            {render_empty_action_state(
+                "No recommendations yet.",
+                "Pick cards on either side to unlock wishlist and value suggestions.",
+                actions=(("#trade-offer", "Pick your cards", "secondary"), ("#trade-request", "Pick their cards", "ghost")),
+            )}
         </section>
         """
     one_way_policy = one_way_trade_policy()
@@ -888,6 +948,7 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
     <div class="trade-builder">
         {render_counter_context_panel(counter_source)}
         <div class="trade-trust-note {trust_class}">{e(trust_message)}</div>
+        {render_trade_builder_status(selected_offer, selected_request)}
         <section class="workspace-layout tabbed-workspace trade-picker-workspace" data-workspace-tabs{workspace_active_attr(active_section, ["trade-selected", "trade-recommendations", "trade-offer", "trade-request", "trade-message"])}>
             {render_workspace_nav([
                 ("#trade-selected", "Selected cards", "Live offer and request"),
@@ -990,6 +1051,14 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
                 var total = offerCount + requestCount;
                 var totalNode = root.querySelector("[data-trade-total]");
                 if (totalNode) totalNode.textContent = total;
+                var statusTotalNode = root.querySelector("[data-trade-status-total]");
+                var statusPluralNode = root.querySelector("[data-trade-status-plural]");
+                var statusOfferNode = root.querySelector('[data-trade-status-count="offer"]');
+                var statusRequestNode = root.querySelector('[data-trade-status-count="request"]');
+                if (statusTotalNode) statusTotalNode.textContent = total;
+                if (statusPluralNode) statusPluralNode.textContent = total === 1 ? "" : "s";
+                if (statusOfferNode) statusOfferNode.textContent = offerCount;
+                if (statusRequestNode) statusRequestNode.textContent = requestCount;
                 var offerValue = sideValue("offer");
                 var requestValue = sideValue("request");
                 var offerValueNode = root.querySelector('[data-trade-value="offer"]');
@@ -1196,7 +1265,12 @@ def render_trade_comments(trade, comments):
 
 def render_trade_feedback(user, trade, feedback_rows):
     if trade["status"] != "completed":
-        return ""
+        return render_empty_action_state(
+            "Feedback opens after completion.",
+            "Complete this trade before either member leaves feedback.",
+            class_name="panel trade-feedback-empty",
+            compact=False,
+        )
     existing = None
     for feedback in feedback_rows:
         if feedback["reviewer_id"] == user["id"]:
@@ -1492,7 +1566,10 @@ def render_trade_item_photo_gallery(trade_id, trade_item_id):
 
 def render_trade_items(items):
     if not items:
-        return '<div class="empty-state compact-empty">No cards selected.</div>'
+        return render_empty_action_state(
+            "No cards selected.",
+            "This side of the trade is empty.",
+        )
     rendered = []
     for item in items:
         unit_price = trade_item_price_usd(item)
@@ -1515,4 +1592,4 @@ def render_trade_items(items):
     return "<ul class=\"trade-item-list\">" + "".join(rendered) + "</ul>"
 
 
-__all__ = ['render_trades', 'render_trade_table', 'trade_picker_query_inputs', 'trade_quantity_map', 'trade_selected_quantities_from_form', 'trade_price_basis_for', 'price_for_item_basis', 'apply_trade_price_basis', 'trade_selected_items', 'trade_item_price_usd', 'trade_item_price_source', 'trade_entry_value_cents', 'trade_entries_value_cents', 'trade_entries_unpriced_count', 'trade_value_gap_percent', 'trade_balance_details', 'trade_fairness_assessment', 'render_trade_fairness_notice', 'validate_trade_fairness_for_send', 'validate_trade_fairness_for_creation', 'render_trade_value_panel', 'render_trade_selected_hidden_inputs', 'render_trade_selection_list', 'render_trade_live_summary', 'render_counter_context_panel', 'render_trade_review', 'render_trade_picker_section', 'render_new_trade', 'trade_picker_table', 'render_trade_links', 'render_trade_comments', 'render_trade_feedback', 'render_trade_disputes', 'render_trade_detail', 'render_trade_item_photo_gallery', 'render_trade_items']
+__all__ = ['render_trades', 'render_trade_table', 'trade_picker_query_inputs', 'trade_quantity_map', 'trade_selected_quantities_from_form', 'trade_price_basis_for', 'price_for_item_basis', 'apply_trade_price_basis', 'trade_selected_items', 'trade_item_price_usd', 'trade_item_price_source', 'trade_entry_value_cents', 'trade_entries_value_cents', 'trade_entries_unpriced_count', 'trade_value_gap_percent', 'trade_balance_details', 'trade_fairness_assessment', 'render_trade_fairness_notice', 'validate_trade_fairness_for_send', 'validate_trade_fairness_for_creation', 'render_trade_value_panel', 'render_trade_selected_hidden_inputs', 'render_trade_selection_list', 'render_trade_live_summary', 'render_trade_builder_status', 'render_counter_context_panel', 'render_trade_review', 'render_trade_picker_section', 'render_new_trade', 'trade_picker_table', 'render_trade_links', 'render_trade_comments', 'render_trade_feedback', 'render_trade_disputes', 'render_trade_detail', 'render_trade_item_photo_gallery', 'render_trade_items']
