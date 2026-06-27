@@ -1265,7 +1265,12 @@ def render_trade_comments(trade, comments):
 
 def render_trade_feedback(user, trade, feedback_rows):
     if trade["status"] != "completed":
-        return ""
+        return render_empty_action_state(
+            "Feedback opens after completion.",
+            "Complete this trade before either member leaves feedback.",
+            class_name="panel trade-feedback-empty",
+            compact=False,
+        )
     existing = None
     for feedback in feedback_rows:
         if feedback["reviewer_id"] == user["id"]:
