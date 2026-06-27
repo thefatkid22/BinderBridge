@@ -92,7 +92,11 @@ def render_groups(user, notice=None, status="info", view="cards"):
     group_sections = []
     for group_type, label in group_options:
         type_groups = [group for group in groups if group["group_type"] == group_type]
-        cards = "".join(render_group_card(group) for group in type_groups) or f'<div class="empty-state compact-empty">No {e(label.lower())} groups yet.</div>'
+        cards = "".join(render_group_card(group) for group in type_groups) or render_empty_action_state(
+            f"No {label.lower()} groups yet.",
+            "Create one with the form on this page when you are ready to organize cards.",
+            actions=(("#create-group", "Create group", "secondary"),),
+        )
         group_sections.append(
             f"""
             <section class="panel group-section">
@@ -113,7 +117,7 @@ def render_groups(user, notice=None, status="info", view="cards"):
         </div>
     </section>
     <section class="content-grid group-layout">
-        <form class="panel form-grid compact-form" method="post" action="/groups">
+        <form class="panel form-grid compact-form" id="create-group" method="post" action="/groups">
             <input type="hidden" name="group_view" value="{e(view)}">
             <div class="span-2 panel-heading">
                 <h2>Create group</h2>
@@ -257,7 +261,11 @@ def render_group_collection_items(group, items, controls="", pagination="", tota
             for item in items
         )
     else:
-        rendered = '<li class="empty-state compact-empty">No cards added yet.</li>'
+        rendered = render_empty_action_state(
+            "No cards added yet.",
+            "Use the add form below to place collection cards in this group.",
+            tag="li",
+        )
     options = collection_item_option_tags(group["user_id"])
     add_form = (
         f"""
@@ -272,7 +280,10 @@ def render_group_collection_items(group, items, controls="", pagination="", tota
         </form>
         """
         if options
-        else '<div class="empty-state compact-empty">Add cards to your collection before filling this group.</div>'
+        else render_empty_action_state(
+            "Add cards to your collection before filling this group.",
+            actions=(("/collection/new", "Add card", "secondary"), ("/import", "Import cards", "ghost")),
+        )
     )
     return f"""
     <section class="panel">
@@ -326,7 +337,11 @@ def render_group_want_items(group, wants, controls="", pagination="", total_coun
             """)
         rendered = "".join(rows)
     else:
-        rendered = '<li class="empty-state compact-empty">No wanted cards added yet.</li>'
+        rendered = render_empty_action_state(
+            "No wanted cards added yet.",
+            "Use the add form below to place wishlist cards in this group.",
+            tag="li",
+        )
     options = want_item_option_tags(group["user_id"])
     add_form = (
         f"""
@@ -338,7 +353,10 @@ def render_group_want_items(group, wants, controls="", pagination="", total_coun
         </form>
         """
         if options
-        else '<div class="empty-state compact-empty">Add cards to your want list before filling this wishlist.</div>'
+        else render_empty_action_state(
+            "Add cards to your want list before filling this wishlist.",
+            actions=(("/wants#add-want", "Add wanted card", "secondary"),),
+        )
     )
     return f"""
     <section class="panel">

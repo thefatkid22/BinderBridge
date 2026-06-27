@@ -23,7 +23,7 @@ python scripts/browser_smoke.py
 - Confirm backup restore, SQLite quick check, and foreign-key check pass.
 - Confirm the complete trade smoke workflow reaches `completed`.
 - Confirm the 5,000-row import completes.
-- Confirm the Playwright browser smoke covers first-run setup, import preview/apply, collection search, wishlist matching, browse-to-trade proposal, and recipient notifications.
+- Confirm the Playwright browser smoke covers first-run setup, import preview/apply, collection search, wishlist matching, browse-to-trade proposal, recipient notifications, and desktop/mobile layout screenshots for tabbed workspaces.
 
 ## Manual Smoke
 

@@ -968,7 +968,21 @@ def render_wants(
         )
         for want in wants
     )
-    want_list = f'<div class="want-list">{want_cards}</div>' if wants else '<div class="empty-state">No wanted cards yet.</div>'
+    want_filters_active = any(value not in ("", None, False) for value in filters.values())
+    if wants:
+        want_list = f'<div class="want-list">{want_cards}</div>'
+    elif want_filters_active:
+        want_list = render_empty_action_state(
+            "No wanted cards match these filters.",
+            "Reset filters to return to your full wishlist.",
+            actions=(("/wants", "Reset filters", "secondary"),),
+        )
+    else:
+        want_list = render_empty_action_state(
+            "No wanted cards yet.",
+            "Add a wanted card above to start powering trade matches and alerts.",
+            actions=(("#add-want", "Add a want", "secondary"),),
+        )
     add_form = render_want_form(
         default_want_item() if edit_want_id else draft,
         "/wants/new",

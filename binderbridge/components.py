@@ -106,6 +106,29 @@ def render_sort_bar(path, query, options, current_sort, current_dir):
     """
 
 
+def render_empty_action_state(title, body="", actions=(), tag="div", compact=True, class_name=""):
+    tag = tag if tag in ("div", "li", "td") else "div"
+    compact_class = " compact-empty" if compact else ""
+    extra_class = f" {e(class_name)}" if class_name else ""
+    body_html = f'<p>{e(body)}</p>' if body else ""
+    action_links = []
+    for action in actions or ():
+        href, label, *rest = action
+        variant = rest[0] if rest else "secondary"
+        action_links.append(f'<a class="button {e(variant or "secondary")} small" href="{e(href)}">{e(label)}</a>')
+    action_html = "".join(action_links)
+    action_block = f'<div class="actions">{action_html}</div>' if action_html else ""
+    return f"""
+    <{tag} class="empty-state empty-action-state{compact_class}{extra_class}">
+        <div class="empty-action-copy">
+            <h3>{e(title)}</h3>
+            {body_html}
+        </div>
+        {action_block}
+    </{tag}>
+    """
+
+
 def filter_value_is_active(value):
     return value not in ("", None, False)
 
@@ -435,6 +458,7 @@ __all__ = [
     "render_sort_controls",
     "sort_form_hidden_inputs",
     "render_sort_bar",
+    "render_empty_action_state",
     "filter_value_is_active",
     "option_value_label",
     "title_value_label",

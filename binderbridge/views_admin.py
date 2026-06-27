@@ -34,7 +34,11 @@ def render_staff_admin(user, notice=None, status="info", invite_result=None, rec
     invite_panel = ""
     if can_invites:
         invite_rows = "".join(render_registration_invite_row(invite) for invite in registration_invite_rows())
-        invite_rows = invite_rows or '<li class="muted">No invites yet.</li>'
+        invite_rows = invite_rows or render_empty_action_state(
+            "No invites yet.",
+            "Create an invite above when you are ready to bring in another member.",
+            tag="li",
+        )
         result_panel = ""
         if invite_result:
             result_panel = f"""
@@ -120,9 +124,17 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
         else "SMTP is not configured, so BinderBridge will create a copyable invite link for manual email."
     )
     invite_rows = "".join(render_registration_invite_row(invite) for invite in registration_invite_rows())
-    invite_rows = invite_rows or '<li class="muted">No invites yet.</li>'
+    invite_rows = invite_rows or render_empty_action_state(
+        "No invites yet.",
+        "Create an invite above when you are ready to bring in another member. Revoked links can be deleted from this list later.",
+        tag="li",
+    )
     pending_rows = "".join(render_registration_review_row(item) for item in pending_registration_rows())
-    pending_rows = pending_rows or '<li class="muted">No pending account reviews.</li>'
+    pending_rows = pending_rows or render_empty_action_state(
+        "No pending account reviews.",
+        "New signups that need approval will appear here with their risk signals.",
+        tag="li",
+    )
     invite_result_panel = ""
     if invite_result:
         invite_result_panel = f"""
@@ -159,12 +171,24 @@ def render_admin(user, notice=None, status="info", invite_result=None, recovery_
         </li>
         """
         for archive in backups["archives"]
-    ) or '<li class="muted">No backups created yet.</li>'
+    ) or render_empty_action_state(
+        "No backups created yet.",
+        "Create a backup from this tab before making major site changes.",
+        tag="li",
+    )
     recent_admin_logs = admin_audit_log_rows(limit=6)
-    recent_admin_log_rows = "".join(render_admin_audit_log_item(item) for item in recent_admin_logs) or '<li class="muted">No admin actions logged yet.</li>'
+    recent_admin_log_rows = "".join(render_admin_audit_log_item(item) for item in recent_admin_logs) or render_empty_action_state(
+        "No admin actions logged yet.",
+        "Policy, invite, account, and maintenance changes will be listed here.",
+        tag="li",
+    )
     open_dispute_count = open_trade_dispute_count()
     recent_disputes = trade_dispute_admin_rows({"status": ""}, limit=5)
-    recent_dispute_rows = "".join(render_trade_dispute_summary_item(item) for item in recent_disputes) or '<li class="muted">No trade issues reported yet.</li>'
+    recent_dispute_rows = "".join(render_trade_dispute_summary_item(item) for item in recent_disputes) or render_empty_action_state(
+        "No trade issues reported yet.",
+        "Disputes and escalated trade problems will appear here when members report them.",
+        tag="li",
+    )
     onboarding_panel = render_admin_onboarding_checklist()
     setup_completion_banner = render_admin_setup_completion_banner()
     workspace_items = [
@@ -567,7 +591,11 @@ def render_admin_setup_wizard(user, notice=None, status="info", invite_result=No
     backup_rows = "".join(
         f'<li><strong>{e(archive["name"])}</strong><span>{e(archive["size_label"])} - {e(archive["created_at"])}</span></li>'
         for archive in summary["backups"].get("archives", [])
-    ) or '<li class="muted">No backup archives yet.</li>'
+    ) or render_empty_action_state(
+        "No backup archives yet.",
+        "Create a backup before opening the site to regular use.",
+        tag="li",
+    )
     scryfall = summary.get("scryfall_bulk", {})
     scryfall_count = int(scryfall.get("card_count", 0) or 0)
     scryfall_error = scryfall.get("error", "")
@@ -1041,7 +1069,10 @@ def render_admin_collection_health(user, notice=None, status="info"):
 def render_database_storage_chart(history):
     points = list(history or ())
     if not points:
-        return '<div class="empty-state compact-empty">No database storage snapshots yet.</div>'
+        return render_empty_action_state(
+            "No database storage snapshots yet.",
+            "Storage snapshots will appear after maintenance health records database size.",
+        )
     maximum = max(int(item["total_bytes"] or 0) for item in points) or 1
     bars = "".join(
         f"""
@@ -1129,7 +1160,11 @@ def render_admin_database(user, notice=None, status="info"):
     index_summary = index_data["summary"]
     migration_data = dashboard["migrations"]
     run_rows = "".join(render_database_maintenance_run(item) for item in dashboard["runs"])
-    run_rows = run_rows or '<li class="muted">No manual database maintenance actions have been recorded yet.</li>'
+    run_rows = run_rows or render_empty_action_state(
+        "No manual database maintenance actions have been recorded yet.",
+        "Analyze, vacuum, and checkpoint runs will appear here after they complete.",
+        tag="li",
+    )
     index_rows = "".join(render_database_index_row(item) for item in index_data["indexes"])
     index_rows = index_rows or '<tr><td class="empty-state" colspan="6">No application indexes found.</td></tr>'
     migration_rows = "".join(render_database_migration_row(item) for item in migration_data["migrations"])
@@ -1285,7 +1320,12 @@ def render_admin_health(user, notice=None, status="info"):
         </li>
         """
         for archive in backups["archives"]
-    ) or '<li class="muted">No backups created yet.</li>'
+    ) or render_empty_action_state(
+        "No backups created yet.",
+        "Use the backup tools to create a recovery point before major maintenance.",
+        actions=(("/admin#admin-operations", "Open backup tools", "secondary"),),
+        tag="li",
+    )
     job_rows = "".join(
         f"""
         <article class="health-job-row {health_severity_class(health_severity_for_counts(job["counts"]))}">
@@ -1296,9 +1336,17 @@ def render_admin_health(user, notice=None, status="info"):
         for job in health["jobs"]
     )
     failed_rows = "".join(render_failed_notification_row(item) for item in notifications["recent_failed"])
-    failed_rows = failed_rows or '<li class="muted">No failed email notifications.</li>'
+    failed_rows = failed_rows or render_empty_action_state(
+        "No failed email notifications.",
+        "Recent email delivery failures will appear here with replay controls.",
+        tag="li",
+    )
     setup_warning_rows = "".join(render_setup_warning_item(item) for item in setup_warnings)
-    setup_warning_rows = setup_warning_rows or '<li class="muted">No setup warnings right now.</li>'
+    setup_warning_rows = setup_warning_rows or render_empty_action_state(
+        "No setup warnings right now.",
+        "Configuration warnings from setup, email, backups, and Scryfall will appear here.",
+        tag="li",
+    )
     email_status = "Configured" if email["configured"] else "Not configured"
     email_status_class = "accepted" if email["configured"] else "pending"
     email_replay_disabled = "" if email["configured"] else " disabled"
@@ -1723,15 +1771,35 @@ def render_admin_jobs(user, notice=None, status="info"):
     metrics = dashboard["metrics"]
     price_refresh = dashboard["scryfall_price_refresh"]
     import_rows = "".join(admin_job_import_row(batch) for batch in dashboard["imports"])
-    import_rows = import_rows or '<li class="empty-state compact-empty">No import batches have been recorded yet.</li>'
+    import_rows = import_rows or render_empty_action_state(
+        "No import batches have been recorded yet.",
+        "CSV and deck imports will appear here after members preview or apply them.",
+        tag="li",
+    )
     scryfall_rows = "".join(admin_job_scryfall_row(job) for job in dashboard["scryfall_jobs"])
-    scryfall_rows = scryfall_rows or '<li class="empty-state compact-empty">No Scryfall enrichment jobs need attention.</li>'
+    scryfall_rows = scryfall_rows or render_empty_action_state(
+        "No Scryfall enrichment jobs need attention.",
+        "Failed or queued card enrichment jobs will appear here when they need admin review.",
+        tag="li",
+    )
     price_rows = "".join(admin_job_price_row(job) for job in dashboard["price_jobs"])
-    price_rows = price_rows or '<li class="empty-state compact-empty">No queued price refresh jobs need attention.</li>'
+    price_rows = price_rows or render_empty_action_state(
+        "No queued price refresh jobs need attention.",
+        "Provider price refresh jobs will appear here if they queue, fail, or need a retry.",
+        tag="li",
+    )
     notification_rows = "".join(admin_job_notification_row(item) for item in dashboard["failed_notifications"])
-    notification_rows = notification_rows or '<li class="empty-state compact-empty">No failed notification emails.</li>'
+    notification_rows = notification_rows or render_empty_action_state(
+        "No failed notification emails.",
+        "Failed email deliveries will appear here with retry controls.",
+        tag="li",
+    )
     background_rows = "".join(admin_job_background_row(item) for item in dashboard["background_jobs"])
-    background_rows = background_rows or '<li class="empty-state compact-empty">No durable background jobs have been recorded.</li>'
+    background_rows = background_rows or render_empty_action_state(
+        "No durable background jobs have been recorded.",
+        "Scheduled backups, webhook delivery, notifications, and Scryfall work will be listed here.",
+        tag="li",
+    )
     runner = dashboard["job_runner"]
     price_error = f'<p class="notice error compact">{e(price_refresh.get("error", ""))}</p>' if price_refresh.get("error") else ""
     price_retry_disabled = " disabled" if price_refresh.get("status") in ("running", "queued") else ""

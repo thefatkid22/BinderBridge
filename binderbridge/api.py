@@ -575,7 +575,11 @@ def render_api_access_panel(user):
     api_section = ""
     if api_allowed:
         token_rows = api_token_rows(user["id"])
-        token_items = "".join(render_api_token_row(token) for token in token_rows) or '<li class="muted">No API tokens yet.</li>'
+        token_items = "".join(render_api_token_row(token) for token in token_rows) or render_empty_action_state(
+            "No API tokens yet.",
+            "Create a scoped bearer token above when you are ready to connect scripts or external tools.",
+            tag="li",
+        )
         api_section = f"""
             <div class="panel-heading">
                 <h2>API access</h2>
@@ -611,8 +615,17 @@ def render_api_access_panel(user):
     if webhook_allowed:
         webhook_rows = webhook_endpoint_rows(user["id"])
         delivery_rows = webhook_delivery_rows(user["id"])
-        webhook_items = "".join(render_webhook_endpoint_row(webhook) for webhook in webhook_rows) or '<li class="muted">No webhooks configured yet.</li>'
-        delivery_items = "".join(render_webhook_delivery_row(delivery) for delivery in delivery_rows) or '<li class="muted">No webhook deliveries yet.</li>'
+        webhook_items = "".join(render_webhook_endpoint_row(webhook) for webhook in webhook_rows) or render_empty_action_state(
+            "No webhooks configured yet.",
+            "Add an endpoint above to receive signed BinderBridge events in another app.",
+            tag="li",
+        )
+        delivery_items = "".join(render_webhook_delivery_row(delivery) for delivery in delivery_rows) or render_empty_action_state(
+            "No webhook deliveries yet.",
+            "Deliveries will appear here after a subscribed notification event is queued.",
+            actions=(("/notifications#notification-inbox", "Open notifications", "ghost"),),
+            tag="li",
+        )
         event_checks = "".join(
             f"""
             <label class="checkbox-line preference-option">

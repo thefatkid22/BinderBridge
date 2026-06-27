@@ -73,4 +73,13 @@ jobs:
           python -m pip install playwright
           python -m playwright install --with-deps chromium
       - name: Run browser smoke
+        env:
+          BINDERBRIDGE_BROWSER_SCREENSHOT_DIR: browser-smoke-artifacts
         run: python scripts/browser_smoke.py
+      - name: Upload browser smoke screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-screenshots
+          path: browser-smoke-artifacts
+          if-no-files-found: ignore

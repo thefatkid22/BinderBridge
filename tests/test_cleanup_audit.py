@@ -203,6 +203,21 @@ class CleanupAuditTests(BinderBridgeTestCase):
         self.assertIn("Duplicate cleanup", html)
         self.assertIn("/cleanup/wants", html)
 
+    def test_cleanup_and_audit_empty_states_offer_next_actions(self):
+        user_id = app.create_user("clearempty", "password123", "Clear Empty")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+
+        cleanup_html = app.render_cleanup(user)
+        audit_html = app.render_condition_finish_audit(user, {})
+
+        self.assertIn("empty-action-state", cleanup_html)
+        self.assertIn("No exact collection duplicates found.", cleanup_html)
+        self.assertIn("Review collection", cleanup_html)
+        self.assertIn("No exact wanted-card duplicates found.", cleanup_html)
+        self.assertIn("Review wishlist", cleanup_html)
+        self.assertIn("No collection cards need condition or finish cleanup.", audit_html)
+        self.assertIn("Import cards", audit_html)
+
     def test_condition_finish_audit_flags_and_normalizes_import_labels(self):
         alice_id = app.create_user("alice", "password123", "Alice")
         bob_id = app.create_user("bob", "password123", "Bob")

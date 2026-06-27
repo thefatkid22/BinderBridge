@@ -100,6 +100,28 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn('name="sort"', html)
         self.assertIn('name="dir"', html)
 
+    def test_empty_navigation_pages_offer_recovery_actions(self):
+        user_id = app.create_user("emptyviews", "password123", "Empty Views")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+
+        collection_html = app.render_collection(user, {})
+        filtered_collection_html = app.render_collection(user, {"q": ["missing"]})
+        browse_html = app.render_browse(user, {})
+        trades_html = app.render_trades(user)
+        wants_html = app.render_wants(user)
+        members_html = app.render_members(user, {})
+
+        self.assertIn("No cards in your collection yet.", collection_html)
+        self.assertIn("Add card", collection_html)
+        self.assertIn("No cards match this view.", filtered_collection_html)
+        self.assertIn("Reset filters", filtered_collection_html)
+        self.assertIn("No public trade cards are available yet.", browse_html)
+        self.assertIn("No trades yet.", trades_html)
+        self.assertIn("Find matches", trades_html)
+        self.assertIn("No wanted cards yet.", wants_html)
+        self.assertIn("Add a want", wants_html)
+        self.assertIn("No other members are available yet.", members_html)
+
     def test_trade_list_filters_and_paginates_offers(self):
         alice_id = factory.create_user("trade-list-alice", display_name="Trade List Alice")
         bob_id = factory.create_user("trade-list-bob", display_name="Trade List Bob")

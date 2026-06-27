@@ -35,7 +35,15 @@ def render_dashboard(user, notice=None, status="info"):
         """,
         (user["id"],),
     )
-    pending_html = render_trade_table(user, pending, compact=True) if pending else '<div class="empty-state">No pending trades yet.</div>'
+    pending_html = (
+        render_trade_table(user, pending, compact=True)
+        if pending
+        else render_empty_action_state(
+            "No pending trades yet.",
+            "Browse available cards or find wishlist matches when you are ready to start a trade.",
+            actions=(("/trades/matches", "Find matches", "secondary"), ("/browse", "Browse cards", "ghost")),
+        )
+    )
     recent_html = "".join(
         f"""
         <li>
@@ -168,7 +176,36 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
             for item in notifications
         )
     else:
-        notification_items = '<li class="empty-state compact-empty">No notifications match these filters.</li>'
+        notification_filters_active = bool(filters["q"] or filters["state"])
+        if notification_filters_active:
+            reset_href = f'/notifications?category={e(filters["category"])}' if filters["category"] else "/notifications"
+            notification_items = render_empty_action_state(
+                "No notifications match these filters.",
+                "Reset the inbox filters to return to the full notification list.",
+                actions=((reset_href, "Reset filters", "secondary"),),
+                tag="li",
+            )
+        elif filters["category"]:
+            category_name = {
+                "trade": "trade",
+                "price": "price",
+                "watchlist": "watchlist",
+                "import": "import",
+                "admin": "admin",
+            }.get(filters["category"], filters["category"])
+            notification_items = render_empty_action_state(
+                f"No {category_name} notifications yet.",
+                "Open all activity to see every notification category together.",
+                actions=(("/notifications", "All activity", "secondary"),),
+                tag="li",
+            )
+        else:
+            notification_items = render_empty_action_state(
+                "No notifications yet.",
+                "Trade updates, price alerts, imports, and admin notices will appear here.",
+                actions=(("/account#account-notifications", "Notification preferences", "secondary"),),
+                tag="li",
+            )
 
     recent_changes = price_history_summary(user["id"])
     if recent_changes:
@@ -182,7 +219,12 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
             for change in recent_changes
         )
     else:
-        change_items = '<li class="muted">Price changes will appear after a Scryfall refresh finds a new value.</li>'
+        change_items = render_empty_action_state(
+            "No value changes yet.",
+            "Price changes will appear after a Scryfall refresh finds a new value.",
+            actions=(("/collection/stats", "Collection stats", "ghost"),),
+            tag="li",
+        )
 
     mark_all = (
         """
@@ -210,6 +252,15 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
         """
         if all_count
         else ""
+    )
+    cleanup_tools = (
+        f'<div class="form-actions">{delete_all}</div>'
+        if delete_all
+        else render_empty_action_state(
+            "No notifications to delete.",
+            "When history builds up, cleanup actions will appear here.",
+            actions=(("/account#account-notifications", "Review preferences", "ghost"),),
+        )
     )
     category_key = filters["category"] or "all"
     category_nav = render_subnav(
@@ -291,7 +342,7 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
                 <article class="panel notification-danger-zone">
                     <div class="panel-heading"><h2>Inbox cleanup</h2></div>
                     <p class="muted compact">Deletion permanently removes notification history from your account.</p>
-                    <div class="form-actions">{delete_all}</div>
+                    {cleanup_tools}
                 </article>
             </section>
         </div>

@@ -45,7 +45,18 @@ def render_members(user, query, notice=None, status="info"):
         </article>
         """
         for member in members
-    ) or '<div class="empty-state">No members match that search.</div>'
+    ) or (
+        render_empty_action_state(
+            "No members match that search.",
+            "Clear the search to return to the full member directory.",
+            actions=(("/members", "Reset search", "secondary"),),
+        )
+        if q
+        else render_empty_action_state(
+            "No other members are available yet.",
+            "Members will appear here after their accounts are active.",
+        )
+    )
     member_datalists = render_datalist("member-search-suggestions", member_search_suggestions(user["id"]))
     content = f"""
     <section class="section-heading">
