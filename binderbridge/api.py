@@ -11,9 +11,26 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from binderbridge.collection_queries import browse_filter_users, trade_picker_count, trade_picker_rows, trade_picker_where
 from binderbridge.collection_service import collection_item_photo_count
 from binderbridge.config import config_bool, config_float, config_int
-from binderbridge.trade_queries import trade_comment_rows, trade_detail_for_user, trade_item_photo_rows
+from binderbridge.formatting import TRADE_STATUS_LABELS
+from binderbridge.privacy import can_view_collection_values
+from binderbridge.trade_queries import (
+    trade_comment_rows,
+    trade_count_for_user,
+    trade_detail_for_user,
+    trade_item_photo_rows,
+    trade_list_filter_values,
+    trade_page_rows,
+)
+from binderbridge.trade_service import (
+    cancel_trade_offer,
+    complete_trade,
+    create_trade_offer,
+    parse_trade_quantities,
+    update_trade_response,
+)
 
 
 API_TOKEN_PREFIX = "bbapi_"
@@ -1285,16 +1302,38 @@ def api_card_search(self, user, query):
     return self.api_json({"data": matches})
 
 
-def api_trade_dict(trade, include_comments=False):
+def api_trade_dict(trade, include_comments=False, viewer_id=None):
     trade_items = rows("SELECT * FROM trade_items WHERE trade_id = ? ORDER BY side, card_name", (trade["id"],))
+    viewer_id = int(viewer_id or 0)
+    proposer_id = int(trade["proposer_id"])
+    recipient_id = int(trade["recipient_id"])
+    viewer_role = ""
+    if viewer_id == proposer_id:
+        viewer_role = "proposer"
+    elif viewer_id == recipient_id:
+        viewer_role = "recipient"
+    status_value = trade["status"]
+    is_pending = status_value == "pending"
     data = {
         "id": int(trade["id"]),
-        "status": trade["status"],
-        "proposer": {"id": int(trade["proposer_id"]), "display_name": row_value(trade, "proposer_name", "")},
-        "recipient": {"id": int(trade["recipient_id"]), "display_name": row_value(trade, "recipient_name", "")},
+        "status": status_value,
+        "status_label": TRADE_STATUS_LABELS.get(status_value, status_value.title()),
+        "proposer": {"id": proposer_id, "display_name": row_value(trade, "proposer_name", "")},
+        "recipient": {"id": recipient_id, "display_name": row_value(trade, "recipient_name", "")},
+        "viewer": {
+            "id": viewer_id,
+            "role": viewer_role,
+            "direction": "outgoing" if viewer_role == "proposer" else ("incoming" if viewer_role == "recipient" else ""),
+            "needs_action": bool(is_pending and viewer_role == "recipient"),
+            "can_accept": bool(is_pending and viewer_role == "recipient"),
+            "can_decline": bool(is_pending and viewer_role == "recipient"),
+            "can_cancel": bool(is_pending and viewer_role == "proposer"),
+            "can_complete": bool(status_value == "accepted" and viewer_role in ("proposer", "recipient")),
+        },
         "proposer_note": row_value(trade, "proposer_note", ""),
         "response_note": row_value(trade, "response_note", ""),
         "price_source_preference": row_value(trade, "price_source_preference", "scryfall"),
+        "unread_trade_notifications": int(row_value(trade, "unread_trade_notifications", 0) or 0),
         "created_at": trade["created_at"],
         "updated_at": trade["updated_at"],
         "items": [
@@ -1329,26 +1368,146 @@ def api_trade_dict(trade, include_comments=False):
     return data
 
 
-def api_trades_list(self, user, query):
+def api_trade_partner_dict(user, partner):
+    where, params = trade_picker_where(partner["id"], {}, viewer_id=user["id"])
+    return {
+        "id": int(partner["id"]),
+        "username": row_value(partner, "username", ""),
+        "display_name": row_value(partner, "display_name", ""),
+        "available_entries": int(trade_picker_count(where, params)),
+    }
+
+
+def api_trade_partners_list(self, user, query):
+    q = sanitize_text_input(str(query.get("q", [""])[0] or ""), max_length=120).strip().lower()
     page, per_page, offset = api_pagination(query)
-    total = row(
-        "SELECT COUNT(*) AS count FROM trades WHERE proposer_id = ? OR recipient_id = ?",
-        (user["id"], user["id"]),
-    )["count"]
-    trade_rows = rows(
-        """
-        SELECT trades.*, proposer.display_name AS proposer_name, recipient.display_name AS recipient_name
-        FROM trades
-        JOIN users proposer ON proposer.id = trades.proposer_id
-        JOIN users recipient ON recipient.id = trades.recipient_id
-        WHERE trades.proposer_id = ? OR trades.recipient_id = ?
-        ORDER BY trades.updated_at DESC, trades.id DESC
-        LIMIT ? OFFSET ?
-        """,
-        (user["id"], user["id"], per_page, offset),
+    partners = browse_filter_users(user["id"])
+    if q:
+        partners = [
+            partner
+            for partner in partners
+            if q in row_value(partner, "display_name", "").lower()
+            or q in row_value(partner, "username", "").lower()
+        ]
+    total = len(partners)
+    page_items = partners[offset:offset + per_page]
+    return self.api_json({
+        "data": [api_trade_partner_dict(user, partner) for partner in page_items],
+        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+    })
+
+
+def api_trade_card_dict(user, owner, item):
+    data = api_collection_item_dict(item)
+    data["owner"] = {
+        "id": int(owner["id"]),
+        "username": row_value(owner, "username", ""),
+        "display_name": row_value(owner, "display_name", ""),
+    }
+    if not can_view_collection_values(user, owner):
+        data["price_usd"] = ""
+        data["price_source"] = ""
+    return data
+
+
+def api_trade_cards_list(self, user, query):
+    owner_id = query_int(query, "owner_id", 0)
+    if owner_id <= 0:
+        owner_id = int(user["id"])
+    owner = row("SELECT * FROM users WHERE id = ?", (owner_id,))
+    if not owner or int(row_value(owner, "is_banned", 0) or 0):
+        return self.api_error("Trade partner not found.", HTTPStatus.NOT_FOUND)
+    q = sanitize_text_input(str(query.get("q", [""])[0] or ""), max_length=160).strip()
+    filters = {"q": q}
+    where, params = trade_picker_where(owner_id, filters, viewer_id=user["id"])
+    page, per_page, offset = api_pagination(query)
+    total = trade_picker_count(where, params)
+    items = trade_picker_rows(
+        where,
+        params,
+        "card_name COLLATE NOCASE, set_name COLLATE NOCASE, collector_number COLLATE NOCASE",
+        per_page,
+        offset,
     )
     return self.api_json({
-        "data": [api_trade_dict(trade) for trade in trade_rows],
+        "data": [api_trade_card_dict(user, owner, item) for item in items],
+        "owner": {"id": int(owner["id"]), "username": owner["username"], "display_name": owner["display_name"]},
+        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+    })
+
+
+def api_trade_selection_form(payload):
+    form = {}
+    for payload_key, form_prefix in (("offered", "offer"), ("requested", "request")):
+        selections = payload.get(payload_key, [])
+        if not isinstance(selections, list):
+            raise ValueError(f"{payload_key} must be a list.")
+        quantities = {}
+        for selection in selections:
+            if not isinstance(selection, dict):
+                raise ValueError(f"{payload_key} entries must be objects.")
+            try:
+                item_id = int(selection.get("collection_item_id", selection.get("id", 0)) or 0)
+                quantity = int(selection.get("quantity", 0) or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Trade selections must include numeric collection item ids and quantities.") from exc
+            if item_id <= 0 or quantity <= 0:
+                continue
+            quantities[item_id] = quantities.get(item_id, 0) + quantity
+        for item_id, quantity in quantities.items():
+            form[f"{form_prefix}_{item_id}"] = [str(quantity)]
+    return form
+
+
+def api_trade_create(self, user):
+    payload = self.api_read_json()
+    try:
+        recipient_id = int(payload.get("recipient_id", 0) or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("recipient_id must be a number.") from exc
+    if recipient_id <= 0:
+        raise ValueError("Choose a trade partner.")
+    if recipient_id == int(user["id"]):
+        raise ValueError("Choose another member to trade with.")
+    recipient = row("SELECT * FROM users WHERE id = ?", (recipient_id,))
+    if (
+        not recipient
+        or int(row_value(recipient, "is_banned", 0) or 0)
+        or row_value(recipient, "registration_status", "active") != "active"
+    ):
+        return self.api_error("Trade partner not found.", HTTPStatus.NOT_FOUND)
+    try:
+        counter_trade_id = int(payload.get("counter_trade_id", 0) or 0)
+    except (TypeError, ValueError):
+        counter_trade_id = 0
+    proposer_note = sanitize_text_input(str(payload.get("proposer_note", "")), max_length=1200).strip()
+    form = api_trade_selection_form(payload)
+    offered = parse_trade_quantities(form, "offer", user["id"], "scryfall", viewer_id=user["id"])
+    requested = parse_trade_quantities(form, "request", recipient_id, "scryfall", viewer_id=user["id"])
+    trade_id = create_trade_offer(
+        user["id"],
+        recipient_id,
+        proposer_note,
+        offered,
+        requested,
+        counter_trade_id,
+        "scryfall",
+    )
+    trade = trade_detail_for_user(trade_id, user["id"])
+    return self.api_json({"data": api_trade_dict(trade, include_comments=True, viewer_id=user["id"])}, HTTPStatus.CREATED)
+
+
+def api_trades_list(self, user, query):
+    filters = trade_list_filter_values(query)
+    page, per_page, offset = api_pagination(query)
+    total = trade_count_for_user(user["id"], filters)
+    trade_rows = trade_page_rows(user["id"], filters, per_page, offset)
+    return self.api_json({
+        "data": [api_trade_dict(trade, viewer_id=user["id"]) for trade in trade_rows],
+        "filters": filters,
+        "metrics": {
+            "needs_action": int(trade_count_for_user(user["id"], {"direction": "needs_action"})),
+        },
         "pagination": {"page": page, "per_page": per_page, "total": int(total)},
     })
 
@@ -1357,7 +1516,27 @@ def api_trade_detail(self, user, trade_id):
     trade = trade_detail_for_user(trade_id, user["id"])
     if not trade:
         return self.api_error("Trade not found.", HTTPStatus.NOT_FOUND)
-    return self.api_json({"data": api_trade_dict(trade, include_comments=True)})
+    return self.api_json({"data": api_trade_dict(trade, include_comments=True, viewer_id=user["id"])})
+
+
+def api_trade_action(self, user, trade_id, action):
+    payload = self.api_read_json()
+    response_note = sanitize_text_input(str(payload.get("response_note", "")), max_length=1200).strip()
+    fairness_acknowledged = bool(payload.get("fairness_acknowledged", False) or payload.get("fairness_ack", False))
+    if action == "accept":
+        update_trade_response(trade_id, user["id"], "accepted", response_note, fairness_acknowledged)
+    elif action == "decline":
+        update_trade_response(trade_id, user["id"], "declined", response_note, False)
+    elif action == "cancel":
+        cancel_trade_offer(trade_id, user["id"])
+    elif action == "complete":
+        complete_trade(trade_id, completed_by_user_id=user["id"])
+    else:
+        return self.api_error("Trade action not found.", HTTPStatus.NOT_FOUND)
+    trade = trade_detail_for_user(trade_id, user["id"])
+    if not trade:
+        return self.api_error("Trade not found.", HTTPStatus.NOT_FOUND)
+    return self.api_json({"data": api_trade_dict(trade, include_comments=True, viewer_id=user["id"]), "action": action})
 
 
 def api_notification_dict(item):
@@ -1487,14 +1666,28 @@ def api_dispatch(self, method, path, query):
                 return self.api_want_delete(user, want_id)
         if path == "/api/v1/cards/search" and method == "GET":
             return self.api_card_search(user, query)
-        if path == "/api/v1/trades" and method == "GET":
-            return self.api_trades_list(user, query)
-        if path.startswith("/api/v1/trades/") and method == "GET":
+        if path == "/api/v1/trade-partners" and method == "GET":
+            return self.api_trade_partners_list(user, query)
+        if path == "/api/v1/trade-cards" and method == "GET":
+            return self.api_trade_cards_list(user, query)
+        if path == "/api/v1/trades":
+            if method == "GET":
+                return self.api_trades_list(user, query)
+            if method == "POST":
+                return self.api_trade_create(user)
+        if path.startswith("/api/v1/trades/"):
+            parts = path.strip("/").split("/")
             try:
-                trade_id = int(path.rsplit("/", 1)[1])
-            except ValueError:
+                trade_id = int(parts[3])
+            except (ValueError, IndexError):
                 return self.api_error("Trade id must be a number.", HTTPStatus.NOT_FOUND)
-            return self.api_trade_detail(user, trade_id)
+            action = parts[4] if len(parts) > 4 else ""
+            if len(parts) > 5:
+                return self.api_error("API endpoint not found.", HTTPStatus.NOT_FOUND)
+            if not action and method == "GET":
+                return self.api_trade_detail(user, trade_id)
+            if action in ("accept", "decline", "cancel", "complete") and method in ("POST", "PUT", "PATCH"):
+                return self.api_trade_action(user, trade_id, action)
         if path == "/api/v1/notifications" and method == "GET":
             return self.api_notifications_list(user, query)
         if path == "/api/v1/notifications/read-all" and method == "POST":
@@ -1534,8 +1727,15 @@ API_ROUTE_METHODS = (
     "api_want_delete",
     "api_card_search",
     "api_trade_dict",
+    "api_trade_partner_dict",
+    "api_trade_partners_list",
+    "api_trade_card_dict",
+    "api_trade_cards_list",
+    "api_trade_selection_form",
+    "api_trade_create",
     "api_trades_list",
     "api_trade_detail",
+    "api_trade_action",
     "api_notification_dict",
     "api_notifications_list",
     "api_notification_detail",

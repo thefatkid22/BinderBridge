@@ -222,8 +222,15 @@ Initial API endpoints:
 - `PATCH /api/v1/wants/{id}`
 - `DELETE /api/v1/wants/{id}`
 - `GET /api/v1/cards/search`
+- `GET /api/v1/trade-partners`
+- `GET /api/v1/trade-cards`
 - `GET /api/v1/trades`
+- `POST /api/v1/trades`
 - `GET /api/v1/trades/{id}`
+- `POST /api/v1/trades/{id}/accept`
+- `POST /api/v1/trades/{id}/decline`
+- `POST /api/v1/trades/{id}/cancel`
+- `POST /api/v1/trades/{id}/complete`
 - `GET /api/v1/notifications`
 - `GET /api/v1/notifications/{id}`
 - `POST /api/v1/notifications/{id}/read`
