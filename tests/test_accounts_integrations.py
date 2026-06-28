@@ -678,6 +678,139 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(request.response[0]["data"]["items"][0]["quantity"], 2)
         self.assertEqual(request.response[0]["data"]["comments"][0]["body"], "Looks good.")
 
+    def test_api_can_propose_trade_with_visible_trade_cards(self):
+        proposer_id = app.create_user("api-mobile-proposer", "password123", "Mobile Proposer")
+        recipient_id = app.create_user("api-mobile-recipient", "password123", "Mobile Recipient")
+        hidden_recipient_id = app.create_user("api-mobile-hidden", "password123", "Hidden Recipient")
+        token = app.create_api_token(proposer_id, "Write token", ["read", "write"])["token"]
+        proposer_card = factory.collection_item_row(proposer_id, "Sol Ring", quantity=2, quantity_for_trade=1)
+        recipient_card = factory.collection_item_row(recipient_id, "Lightning Bolt", quantity=2, quantity_for_trade=1)
+        factory.collection_item_row(recipient_id, "Private Tutor", quantity=1, quantity_for_trade=1, visibility="private", is_public=0)
+        factory.collection_item_row(hidden_recipient_id, "Hidden Card", quantity=1, quantity_for_trade=0)
+
+        class DummyApiRequest:
+            _request_path = "/api/v1/trades"
+
+            def __init__(self, payload=None):
+                self.headers = {"Authorization": f"Bearer {token}"}
+                self.payload = payload or {}
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "203.0.113.12"
+
+        partners = DummyApiRequest()
+        app.api_dispatch(partners, "GET", "/api/v1/trade-partners", {"q": ["recipient"]})
+        self.assertEqual(partners.response[1], HTTPStatus.OK)
+        partner_ids = {item["id"] for item in partners.response[0]["data"]}
+        self.assertIn(recipient_id, partner_ids)
+        self.assertNotIn(hidden_recipient_id, partner_ids)
+
+        cards = DummyApiRequest()
+        app.api_dispatch(cards, "GET", "/api/v1/trade-cards", {"owner_id": [str(recipient_id)]})
+        self.assertEqual(cards.response[1], HTTPStatus.OK)
+        self.assertEqual([item["card_name"] for item in cards.response[0]["data"]], ["Lightning Bolt"])
+
+        create = DummyApiRequest({
+            "recipient_id": recipient_id,
+            "proposer_note": "Built from Android.",
+            "offered": [{"collection_item_id": proposer_card["id"], "quantity": 1}],
+            "requested": [{"collection_item_id": recipient_card["id"], "quantity": 1}],
+        })
+        app.api_dispatch(create, "POST", "/api/v1/trades", {})
+        self.assertEqual(create.response[1], HTTPStatus.CREATED)
+        self.assertEqual(create.response[0]["data"]["status"], "pending")
+        self.assertEqual(create.response[0]["data"]["proposer"]["id"], proposer_id)
+        self.assertEqual(create.response[0]["data"]["recipient"]["id"], recipient_id)
+        self.assertEqual(len(create.response[0]["data"]["items"]), 2)
+
+    def test_api_trade_actions_update_trade_statuses(self):
+        proposer_id = app.create_user("api-action-proposer", "password123", "Action Proposer")
+        recipient_id = app.create_user("api-action-recipient", "password123", "Action Recipient")
+        proposer_token = app.create_api_token(proposer_id, "Write token", ["read", "write"])["token"]
+        recipient_token = app.create_api_token(recipient_id, "Write token", ["read", "write"])["token"]
+
+        proposer_card = factory.collection_item_row(proposer_id, "Sol Ring", quantity=2, quantity_for_trade=1)
+        recipient_card = factory.collection_item_row(recipient_id, "Lightning Bolt", quantity=2, quantity_for_trade=1)
+        trade_id = app.create_trade_offer(proposer_id, recipient_id, "Mobile review", [(proposer_card, 1)], [(recipient_card, 1)])
+
+        class DummyApiRequest:
+            _request_path = "/api/v1/trades"
+
+            def __init__(self, token, payload=None):
+                self.headers = {"Authorization": f"Bearer {token}"}
+                self.payload = payload or {}
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "203.0.113.12"
+
+        listing = DummyApiRequest(recipient_token)
+        app.api_dispatch(listing, "GET", "/api/v1/trades", {"direction": ["needs_action"]})
+        self.assertEqual(listing.response[1], HTTPStatus.OK)
+        self.assertEqual(listing.response[0]["data"][0]["viewer"]["direction"], "incoming")
+        self.assertTrue(listing.response[0]["data"][0]["viewer"]["can_accept"])
+        self.assertEqual(listing.response[0]["metrics"]["needs_action"], 1)
+
+        accept = DummyApiRequest(recipient_token, {"response_note": "Looks fair."})
+        app.api_dispatch(accept, "POST", f"/api/v1/trades/{trade_id}/accept", {})
+        self.assertEqual(accept.response[1], HTTPStatus.OK)
+        self.assertEqual(accept.response[0]["data"]["status"], "accepted")
+        self.assertTrue(accept.response[0]["data"]["viewer"]["can_complete"])
+
+        complete = DummyApiRequest(recipient_token)
+        app.api_dispatch(complete, "POST", f"/api/v1/trades/{trade_id}/complete", {})
+        self.assertEqual(complete.response[1], HTTPStatus.OK)
+        self.assertEqual(complete.response[0]["data"]["status"], "completed")
+
+        cancel_proposer_card = factory.collection_item_row(proposer_id, "Counterspell", quantity=1, quantity_for_trade=1)
+        cancel_recipient_card = factory.collection_item_row(recipient_id, "Opt", quantity=1, quantity_for_trade=1)
+        cancel_trade_id = app.create_trade_offer(
+            proposer_id,
+            recipient_id,
+            "Cancel from mobile",
+            [(cancel_proposer_card, 1)],
+            [(cancel_recipient_card, 1)],
+        )
+        cancel = DummyApiRequest(proposer_token)
+        app.api_dispatch(cancel, "POST", f"/api/v1/trades/{cancel_trade_id}/cancel", {})
+        self.assertEqual(cancel.response[1], HTTPStatus.OK)
+        self.assertEqual(cancel.response[0]["data"]["status"], "cancelled")
+
+        decline_trade_id = factory.create_trade(proposer_id, recipient_id, status="pending")
+        decline = DummyApiRequest(recipient_token, {"response_note": "Not this time."})
+        app.api_dispatch(decline, "POST", f"/api/v1/trades/{decline_trade_id}/decline", {})
+        self.assertEqual(decline.response[1], HTTPStatus.OK)
+        self.assertEqual(decline.response[0]["data"]["status"], "declined")
+
     def test_notification_webhooks_are_queued_and_delivered_with_payload(self):
         user_id = app.create_user("hookuser", "password123", "Hook User")
         app.create_webhook_endpoint(
