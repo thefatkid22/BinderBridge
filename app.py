@@ -600,6 +600,10 @@ class App(BaseHTTPRequestHandler):
                 return self.collection_bulk_delete(user)
             if path == "/collection/delete-all" and method == "POST":
                 return self.collection_delete_all(user)
+            if path == "/collection/bulk-group" and method == "POST":
+                return self.collection_bulk_group(user)
+            if path == "/collection/group-all" and method == "POST":
+                return self.collection_group_all(user)
             if path == "/collection/new":
                 return self.collection_new(method, user)
             if path.startswith("/collection/photos/") and method == "GET":
@@ -622,6 +626,18 @@ class App(BaseHTTPRequestHandler):
                 return self.html(render_wants(user, query=query))
             if path == "/wants/export" and method == "GET":
                 return self.wants_export(user)
+            if path == "/wants/bulk-update" and method == "POST":
+                return self.want_bulk_update(user)
+            if path == "/wants/update-all" and method == "POST":
+                return self.want_update_all(user)
+            if path == "/wants/bulk-delete" and method == "POST":
+                return self.want_bulk_delete(user)
+            if path == "/wants/delete-all" and method == "POST":
+                return self.want_delete_all(user)
+            if path == "/wants/bulk-group" and method == "POST":
+                return self.want_bulk_group(user)
+            if path == "/wants/group-all" and method == "POST":
+                return self.want_group_all(user)
             if path == "/wants/new":
                 return self.want_new(user) if method == "POST" else self.redirect("/wants")
             if path.startswith("/wants/") and "/share-links" in path:
