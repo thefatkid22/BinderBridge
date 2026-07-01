@@ -233,16 +233,7 @@ def remove_group_item(user_id, group_id, group_item_id):
         return cursor.rowcount
 
 
-def delete_card_group(user_id, group_id):
-    with db() as conn:
-        cursor = conn.execute("DELETE FROM card_groups WHERE id = ? AND user_id = ?", (group_id, user_id))
-        return cursor.rowcount
-
-
-def remove_group_items(user_id, group_id, group_item_ids):
-    group = user_group(user_id, group_id)
-    if not group:
-        return 0
+def _clean_group_item_ids(group_item_ids):
     clean_ids = []
     for value in group_item_ids or []:
         try:
@@ -251,6 +242,80 @@ def remove_group_items(user_id, group_id, group_item_ids):
             continue
         if item_id > 0 and item_id not in clean_ids:
             clean_ids.append(item_id)
+    return clean_ids
+
+
+def parse_group_item_quantity(value):
+    text = str(value or "").strip()
+    if not text.isdigit():
+        raise ValueError("Group quantity must be a whole number.")
+    quantity = clamp_quantity(text, 1)
+    if quantity < 1:
+        raise ValueError("Group quantity must be at least 1.")
+    return quantity
+
+
+def _apply_group_collection_quantity_rows(items, quantity):
+    timestamp = now_iso()
+    updated = 0
+    with db() as conn:
+        for item in items:
+            capped_quantity = min(max(1, int(quantity or 1)), max(1, int(item["owned_quantity"] or 1)))
+            cursor = conn.execute(
+                "UPDATE group_collection_items SET quantity = ?, updated_at = ? WHERE id = ?",
+                (capped_quantity, timestamp, item["group_item_id"]),
+            )
+            updated += cursor.rowcount
+    return updated
+
+
+def update_group_collection_item_quantities(user_id, group_id, group_item_ids, quantity):
+    group = user_group(user_id, group_id)
+    if not group or group["group_type"] == "wishlist":
+        raise ValueError("Deck and binder groups can update group quantities.")
+    clean_ids = _clean_group_item_ids(group_item_ids)
+    if not clean_ids:
+        return 0
+    placeholders = ", ".join("?" for _ in clean_ids)
+    quantity = parse_group_item_quantity(quantity)
+    items = rows(
+        f"""
+        SELECT group_collection_items.id AS group_item_id, collection_items.quantity AS owned_quantity
+        FROM group_collection_items
+        JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+        WHERE group_collection_items.group_id = ?
+          AND collection_items.user_id = ?
+          AND group_collection_items.id IN ({placeholders})
+        """,
+        [group_id, user_id, *clean_ids],
+    )
+    return _apply_group_collection_quantity_rows(items, quantity)
+
+
+def update_group_collection_item_quantities_matching(user_id, group_id, filters, quantity):
+    group = user_group(user_id, group_id)
+    if not group or group["group_type"] == "wishlist":
+        raise ValueError("Deck and binder groups can update group quantities.")
+    quantity = parse_group_item_quantity(quantity)
+    filter_sql, params = _group_item_filter_sql(filters, "collection_items")
+    items = rows(
+        f"""
+        SELECT group_collection_items.id AS group_item_id, collection_items.quantity AS owned_quantity
+        FROM group_collection_items
+        JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+        WHERE group_collection_items.group_id = ?
+          AND collection_items.user_id = ?{filter_sql}
+        """,
+        [group_id, user_id, *params],
+    )
+    return _apply_group_collection_quantity_rows(items, quantity)
+
+
+def remove_group_items(user_id, group_id, group_item_ids):
+    group = user_group(user_id, group_id)
+    if not group:
+        return 0
+    clean_ids = _clean_group_item_ids(group_item_ids)
     if not clean_ids:
         return 0
     table = "group_want_items" if group["group_type"] == "wishlist" else "group_collection_items"
@@ -260,6 +325,43 @@ def remove_group_items(user_id, group_id, group_item_ids):
             f"DELETE FROM {table} WHERE group_id = ? AND id IN ({placeholders})",
             [group_id, *clean_ids],
         )
+        return cursor.rowcount
+
+
+def remove_group_items_matching(user_id, group_id, filters=None):
+    group = user_group(user_id, group_id)
+    if not group:
+        return 0
+    if group["group_type"] == "wishlist":
+        table = "group_want_items"
+        source_table = "want_items"
+        source_key = "want_item_id"
+        filter_sql, params = _group_item_filter_sql(filters, source_table, wishlist=True)
+    else:
+        table = "group_collection_items"
+        source_table = "collection_items"
+        source_key = "collection_item_id"
+        filter_sql, params = _group_item_filter_sql(filters, source_table)
+    with db() as conn:
+        cursor = conn.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE id IN (
+                SELECT {table}.id
+                FROM {table}
+                JOIN {source_table} ON {source_table}.id = {table}.{source_key}
+                WHERE {table}.group_id = ?
+                  AND {source_table}.user_id = ?{filter_sql}
+            )
+            """,
+            [group_id, user_id, *params],
+        )
+        return cursor.rowcount
+
+
+def delete_card_group(user_id, group_id):
+    with db() as conn:
+        cursor = conn.execute("DELETE FROM card_groups WHERE id = ? AND user_id = ?", (group_id, user_id))
         return cursor.rowcount
 
 
@@ -313,7 +415,11 @@ __all__ = [
     "add_collection_item_to_group",
     "add_want_item_to_group",
     "remove_group_item",
+    "parse_group_item_quantity",
+    "update_group_collection_item_quantities",
+    "update_group_collection_item_quantities_matching",
     "remove_group_items",
+    "remove_group_items_matching",
     "delete_card_group",
     "update_card_group_visibility",
     "update_card_group_sharing_defaults",

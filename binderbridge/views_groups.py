@@ -193,6 +193,16 @@ def group_item_filter_values(query, wishlist=False):
     return filters
 
 
+def group_item_hidden_filter_inputs(filters):
+    inputs = []
+    for key in ("q", "game", "condition", "finish", "priority"):
+        value = (filters or {}).get(key)
+        if value in ("", None, False):
+            continue
+        inputs.append(f'<input type="hidden" name="{e(key)}" value="{e(value)}">')
+    return "".join(inputs)
+
+
 def group_item_filter_chip_specs(wishlist=False):
     specs = [
         {"key": "q", "label": "Search"},
@@ -238,8 +248,10 @@ def render_group_item_controls(group, query, filters, current_sort, current_dir)
     """
 
 
-def render_group_collection_items(group, items, controls="", pagination="", total_count=0, redirect_to=""):
+def render_group_collection_items(group, items, controls="", pagination="", total_count=0, redirect_to="", filters=None):
     bulk_disabled = "" if items else " disabled"
+    matching_disabled = "" if int(total_count or 0) else " disabled"
+    hidden_filters = group_item_hidden_filter_inputs(filters)
     if items:
         rendered = "".join(
             f"""
@@ -294,9 +306,20 @@ def render_group_collection_items(group, items, controls="", pagination="", tota
         {controls}
         <form method="post" action="/groups/{group["id"]}/items/bulk-delete">
             <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
+            {hidden_filters}
             <div class="group-bulk-bar">
-                <label class="select-all-control"><input type="checkbox"{bulk_disabled} onclick="this.form.querySelectorAll('input[name=group_item_id]').forEach((box) => box.checked = this.checked)"><span>Select page</span></label>
-                <button class="button danger small" type="submit"{bulk_disabled} data-confirm="Remove selected cards from this group? Source collection cards will remain.">Remove selected</button>
+                <div class="group-bulk-controls">
+                    <label class="select-all-control"><input type="checkbox"{bulk_disabled} onclick="this.form.querySelectorAll('input[name=group_item_id]').forEach((box) => box.checked = this.checked)"><span>Select page</span></label>
+                    <label class="group-bulk-quantity">Group qty
+                        <input type="number" min="1" name="group_quantity" placeholder="Quantity">
+                    </label>
+                </div>
+                <div class="actions group-bulk-actions">
+                    <button class="button secondary small" type="submit" formaction="/groups/{group["id"]}/items/bulk-update"{bulk_disabled}>Update selected</button>
+                    <button class="button secondary small" type="submit" formaction="/groups/{group["id"]}/items/update-all"{matching_disabled} data-confirm="Update all {e(total_count)} cards matching the current filters?">Update all matching</button>
+                    <button class="button danger small" type="submit" formaction="/groups/{group["id"]}/items/bulk-delete"{bulk_disabled} data-confirm="Remove selected cards from this group? Source collection cards will remain.">Remove selected</button>
+                    <button class="button danger small" type="submit" formaction="/groups/{group["id"]}/items/delete-all"{matching_disabled} data-confirm="Remove all {e(total_count)} cards matching the current filters from this group? Source collection cards will remain.">Remove all matching</button>
+                </div>
             </div>
             <ul class="group-item-list selectable-group-list">{rendered}</ul>
         </form>
@@ -306,8 +329,10 @@ def render_group_collection_items(group, items, controls="", pagination="", tota
     """
 
 
-def render_group_want_items(group, wants, controls="", pagination="", total_count=0, redirect_to=""):
+def render_group_want_items(group, wants, controls="", pagination="", total_count=0, redirect_to="", filters=None):
     bulk_disabled = "" if wants else " disabled"
+    matching_disabled = "" if int(total_count or 0) else " disabled"
+    hidden_filters = group_item_hidden_filter_inputs(filters)
     if wants:
         rows = []
         for want in wants:
@@ -367,9 +392,15 @@ def render_group_want_items(group, wants, controls="", pagination="", total_coun
         {controls}
         <form method="post" action="/groups/{group["id"]}/items/bulk-delete">
             <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
+            {hidden_filters}
             <div class="group-bulk-bar">
-                <label class="select-all-control"><input type="checkbox"{bulk_disabled} onclick="this.form.querySelectorAll('input[name=group_item_id]').forEach((box) => box.checked = this.checked)"><span>Select page</span></label>
-                <button class="button danger small" type="submit"{bulk_disabled} data-confirm="Remove selected wanted cards from this group? Your source wishlist will remain.">Remove selected</button>
+                <div class="group-bulk-controls">
+                    <label class="select-all-control"><input type="checkbox"{bulk_disabled} onclick="this.form.querySelectorAll('input[name=group_item_id]').forEach((box) => box.checked = this.checked)"><span>Select page</span></label>
+                </div>
+                <div class="actions group-bulk-actions">
+                    <button class="button danger small" type="submit" formaction="/groups/{group["id"]}/items/bulk-delete"{bulk_disabled} data-confirm="Remove selected wanted cards from this group? Your source wishlist will remain.">Remove selected</button>
+                    <button class="button danger small" type="submit" formaction="/groups/{group["id"]}/items/delete-all"{matching_disabled} data-confirm="Remove all {e(total_count)} wanted cards matching the current filters from this group? Your source wishlist will remain.">Remove all matching</button>
+                </div>
             </div>
             <ul class="group-item-list selectable-group-list">{rendered}</ul>
         </form>
@@ -816,7 +847,7 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         controls = render_group_item_controls(group, query, filters, current_sort, current_dir)
         pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count)
         redirect_to = page_url(f"/groups/{group_id}", query, page, per_page) + "#group-cards"
-        items_html = render_group_want_items(group, group_items, controls, pagination, filtered_count, redirect_to)
+        items_html = render_group_want_items(group, group_items, controls, pagination, filtered_count, redirect_to, filters)
         group_item_count = wishlist_group_item_count(group_id)
         group_item_label = "wanted cards"
         subnav = render_wishlist_subnav("groups")
@@ -837,7 +868,7 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         controls = render_group_item_controls(group, query, filters, current_sort, current_dir)
         pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count)
         redirect_to = page_url(f"/groups/{group_id}", query, page, per_page) + "#group-cards"
-        items_html = render_group_collection_items(group, group_items, controls, pagination, filtered_count, redirect_to)
+        items_html = render_group_collection_items(group, group_items, controls, pagination, filtered_count, redirect_to, filters)
         group_item_count = collection_group_quantity(group_id)
         group_item_label = "cards in group"
         subnav = render_cards_subnav("groups")
@@ -1138,5 +1169,5 @@ def render_public_group_detail(user, member_id, group_id, query=None, notice=Non
     return render_layout(user, group["name"], content, active="browse", notice=notice, status=status)
 
 
-__all__ = ['group_count_label', 'record_is_public', 'visibility_label', 'visibility_badge', 'visibility_checkbox', 'render_group_card', 'normalize_group_view', 'render_groups', 'collection_item_option_tags', 'want_item_option_tags', 'render_group_collection_items', 'render_group_want_items', 'render_group_import_result', 'render_import_warning_block', 'render_import_preview_rows', 'render_import_batch_list', 'render_collection_import_preview', 'render_deck_import_preview', 'render_deck_missing_wishlist_prompt', 'render_deck_import_review', 'render_deck_import_panel', 'render_group_detail', 'public_member_group_rows', 'render_public_group_collection_items', 'render_public_group_want_items', 'render_public_group_detail']
+__all__ = ['group_count_label', 'record_is_public', 'visibility_label', 'visibility_badge', 'visibility_checkbox', 'render_group_card', 'normalize_group_view', 'render_groups', 'collection_item_option_tags', 'want_item_option_tags', 'group_item_filter_values', 'group_item_hidden_filter_inputs', 'render_group_collection_items', 'render_group_want_items', 'render_group_import_result', 'render_import_warning_block', 'render_import_preview_rows', 'render_import_batch_list', 'render_collection_import_preview', 'render_deck_import_preview', 'render_deck_missing_wishlist_prompt', 'render_deck_import_review', 'render_deck_import_panel', 'render_group_detail', 'public_member_group_rows', 'render_public_group_collection_items', 'render_public_group_want_items', 'render_public_group_detail']
 __all__.extend(['render_group_share_link_row', 'render_group_privacy_panel', 'render_shared_photo_gallery', 'render_shared_group'])

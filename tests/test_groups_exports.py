@@ -391,6 +391,7 @@ class GroupsExportsTests(BinderBridgeTestCase):
                 set_name="Filtered Set" if index >= 28 else "Main Set",
                 condition="LP" if index >= 28 else "NM",
                 finish="Foil" if index >= 28 else "Regular",
+                quantity=4,
             )
             app.add_collection_item_to_group(user_id, deck_id, card_id, 1)
             card_ids.append(card_id)
@@ -415,6 +416,11 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertIn("Finish: Foil", filtered)
         self.assertIn("Showing 1-2 of 2", filtered)
         self.assertIn(f'action="/groups/{deck_id}/items/bulk-delete"', filtered)
+        self.assertIn(f'formaction="/groups/{deck_id}/items/bulk-update"', filtered)
+        self.assertIn(f'formaction="/groups/{deck_id}/items/update-all"', filtered)
+        self.assertIn(f'formaction="/groups/{deck_id}/items/delete-all"', filtered)
+        self.assertIn('name="group_quantity"', filtered)
+        self.assertIn('<input type="hidden" name="q" value="Filtered Set">', filtered)
         self.assertIn("Select page", filtered)
         self.assertEqual(removed, 2)
         self.assertEqual(app.collection_group_item_count(deck_id), 28)
@@ -423,11 +429,11 @@ class GroupsExportsTests(BinderBridgeTestCase):
         remaining_group_item = app.collection_group_items(deck_id)[0]
 
         class RouteHarness:
+            def __init__(self, form):
+                self.form = form
+
             def read_form(self):
-                return {
-                    "group_item_id": [str(remaining_group_item["group_item_id"])],
-                    "redirect_to": [f"/groups/{deck_id}?q=Group#group-cards"],
-                }
+                return self.form
 
             def redirect(self, location):
                 return location
@@ -436,13 +442,73 @@ class GroupsExportsTests(BinderBridgeTestCase):
                 raise AssertionError(f"Unexpected not found for {current_user['id']}")
 
         redirect = app.group_action(
-            RouteHarness(),
+            RouteHarness(
+                {
+                    "group_item_id": [str(remaining_group_item["group_item_id"])],
+                    "group_quantity": ["3"],
+                    "redirect_to": [f"/groups/{deck_id}?q=Group#group-cards"],
+                }
+            ),
+            "POST",
+            user,
+            f"/groups/{deck_id}/items/bulk-update",
+        )
+        updated_row = app.row("SELECT quantity FROM group_collection_items WHERE id = ?", (remaining_group_item["group_item_id"],))
+        self.assertEqual(redirect, f"/groups/{deck_id}?q=Group#group-cards")
+        self.assertEqual(updated_row["quantity"], 3)
+
+        redirect = app.group_action(
+            RouteHarness(
+                {
+                    "q": ["Filtered Set"],
+                    "condition": ["LP"],
+                    "finish": ["Foil"],
+                    "group_quantity": ["2"],
+                    "redirect_to": [f"/groups/{deck_id}?q=Filtered+Set&condition=LP&finish=Foil#group-cards"],
+                }
+            ),
+            "POST",
+            user,
+            f"/groups/{deck_id}/items/update-all",
+        )
+        filtered_rows = app.collection_group_items(
+            deck_id,
+            filters={"q": "Filtered Set", "condition": "LP", "finish": "Foil"},
+        )
+        self.assertEqual(redirect, f"/groups/{deck_id}?q=Filtered+Set&condition=LP&finish=Foil#group-cards")
+        self.assertEqual([row["group_quantity"] for row in filtered_rows], [2, 2])
+
+        redirect = app.group_action(
+            RouteHarness(
+                {
+                    "group_item_id": [str(remaining_group_item["group_item_id"])],
+                    "redirect_to": [f"/groups/{deck_id}?q=Group#group-cards"],
+                }
+            ),
             "POST",
             user,
             f"/groups/{deck_id}/items/bulk-delete",
         )
         self.assertEqual(redirect, f"/groups/{deck_id}?q=Group#group-cards")
         self.assertEqual(app.collection_group_item_count(deck_id), 27)
+
+        redirect = app.group_action(
+            RouteHarness(
+                {
+                    "q": ["Filtered Set"],
+                    "condition": ["LP"],
+                    "finish": ["Foil"],
+                    "redirect_to": [f"/groups/{deck_id}?q=Filtered+Set&condition=LP&finish=Foil#group-cards"],
+                }
+            ),
+            "POST",
+            user,
+            f"/groups/{deck_id}/items/delete-all",
+        )
+        self.assertEqual(redirect, f"/groups/{deck_id}?q=Filtered+Set&condition=LP&finish=Foil#group-cards")
+        self.assertEqual(app.collection_group_item_count(deck_id, {"q": "Filtered Set", "condition": "LP", "finish": "Foil"}), 0)
+        self.assertEqual(app.collection_group_item_count(deck_id), 25)
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM collection_items WHERE user_id = ?", (user_id,))["count"], 30)
 
     def test_wishlist_group_filters_by_priority_and_paginates(self):
         user_id = app.create_user("groupwants", "password123", "Group Wants")
@@ -462,7 +528,34 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertEqual(app.wishlist_group_item_count(wishlist_id, {"priority": "urgent"}), 2)
         self.assertIn("Priority: Urgent", filtered)
         self.assertIn("Showing 1-2 of 2", filtered)
+        self.assertIn(f'formaction="/groups/{wishlist_id}/items/delete-all"', filtered)
+        self.assertIn("Remove all matching", filtered)
+        self.assertNotIn('name="group_quantity"', filtered)
         self.assertNotIn("<strong>Wanted Group Card 00</strong>", filtered)
+
+        class RouteHarness:
+            def read_form(self):
+                return {
+                    "priority": ["urgent"],
+                    "redirect_to": [f"/groups/{wishlist_id}?priority=urgent#group-cards"],
+                }
+
+            def redirect(self, location):
+                return location
+
+            def not_found(self, current_user):
+                raise AssertionError(f"Unexpected not found for {current_user['id']}")
+
+        redirect = app.group_action(
+            RouteHarness(),
+            "POST",
+            user,
+            f"/groups/{wishlist_id}/items/delete-all",
+        )
+        self.assertEqual(redirect, f"/groups/{wishlist_id}?priority=urgent#group-cards")
+        self.assertEqual(app.wishlist_group_item_count(wishlist_id, {"priority": "urgent"}), 0)
+        self.assertEqual(app.wishlist_group_item_count(wishlist_id), 25)
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM want_items WHERE user_id = ?", (user_id,))["count"], 27)
 
     def test_deck_group_bulk_imports_csv_and_deck_text(self):
         user_id = app.create_user("deckimport", "password123", "Deck Import")
