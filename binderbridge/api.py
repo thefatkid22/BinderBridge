@@ -15,6 +15,20 @@ from binderbridge.collection_queries import browse_filter_users, trade_picker_co
 from binderbridge.collection_service import collection_item_photo_count
 from binderbridge.config import config_bool, config_float, config_int
 from binderbridge.formatting import TRADE_STATUS_LABELS
+from binderbridge.groups import (
+    add_collection_item_to_group,
+    collection_group_item_count,
+    collection_group_items,
+    create_card_group,
+    delete_card_group,
+    group_summary_rows,
+    group_type_label,
+    normalize_group_type,
+    remove_group_item,
+    update_card_group,
+    update_group_collection_item_quantities,
+    user_group,
+)
 from binderbridge.privacy import can_view_collection_values
 from binderbridge.trade_queries import (
     trade_comment_rows,
@@ -799,6 +813,10 @@ WANT_API_FIELDS = (
     "oracle_text", "rarity", "colors", "color_identity", "scryfall_uri", "price_usd", "price_source",
     "preferred_printing_notes", "notes", "is_public", "visibility", "created_at", "updated_at",
 )
+GROUP_API_FIELDS = (
+    "id", "group_type", "name", "description", "is_public", "visibility", "default_item_visibility",
+    "show_values", "show_photos", "collection_quantity", "collection_entries", "want_entries", "created_at", "updated_at",
+)
 
 
 def api_collection_item_dict(item):
@@ -814,6 +832,50 @@ def api_want_item_dict(item):
     for key in ("id", "desired_quantity", "is_public"):
         data[key] = int(data[key] or 0)
     return data
+
+
+def api_group_dict(group):
+    data = api_row_dict(group, GROUP_API_FIELDS)
+    for key in ("id", "is_public", "show_values", "show_photos", "collection_quantity", "collection_entries", "want_entries"):
+        data[key] = int(data[key] or 0)
+    data["group_type_label"] = group_type_label(data["group_type"])
+    return data
+
+
+def api_group_collection_item_dict(item):
+    data = api_collection_item_dict(item)
+    data["group_item_id"] = int(row_value(item, "group_item_id", 0) or 0)
+    data["group_quantity"] = int(row_value(item, "group_quantity", 0) or 0)
+    return data
+
+
+def api_bool_value(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    return text not in ("0", "false", "no", "off")
+
+
+def api_group_type_filter(query):
+    group_type = query_value(query or {}, "type").strip().lower()
+    if group_type in ("collection", "collections", "deck-binder", "deck_binder", "deck-binders", "deck_binders"):
+        return "collection"
+    if group_type:
+        return normalize_group_type(group_type)
+    return ""
+
+
+def api_group_item_filters(query):
+    return {
+        "q": query_value(query or {}, "q"),
+        "game": query_value(query or {}, "game"),
+        "condition": query_value(query or {}, "condition"),
+        "finish": query_value(query or {}, "finish"),
+    }
 
 
 def api_payload_to_form(payload):
@@ -1154,6 +1216,93 @@ def api_collection_create(self, user):
     return self.api_json({"status": action, "data": api_collection_item_dict(item)}, HTTPStatus.CREATED if action == "inserted" else HTTPStatus.OK)
 
 
+def api_collection_import(self, user):
+    payload = self.api_read_json()
+    raw_items = payload.get("items", payload.get("rows", []))
+    if not isinstance(raw_items, list) or not raw_items:
+        return self.api_error("Import items are required.", HTTPStatus.BAD_REQUEST)
+    if len(raw_items) > API_PAGE_SIZE_MAX:
+        return self.api_error(f"Import is limited to {API_PAGE_SIZE_MAX} rows per request.", HTTPStatus.BAD_REQUEST)
+    try:
+        group_id = int(payload.get("group_id", 0) or 0)
+    except (TypeError, ValueError):
+        return self.api_error("Group id must be a number.", HTTPStatus.BAD_REQUEST)
+    if group_id:
+        group = user_group(user["id"], group_id)
+        if not group or row_value(group, "group_type", "") == "wishlist":
+            return self.api_error("Deck or binder group not found.", HTTPStatus.BAD_REQUEST)
+
+    result_rows = []
+    summary = {
+        "inserted": 0,
+        "updated": 0,
+        "failed": 0,
+        "grouped": 0,
+        "group_failed": 0,
+    }
+    for index, item_payload in enumerate(raw_items, start=1):
+        if not isinstance(item_payload, dict):
+            summary["failed"] += 1
+            result_rows.append({"ok": False, "index": index, "error": "Import row must be an object."})
+            continue
+        try:
+            form = api_payload_to_form(item_payload)
+            data = validate_collection_form(form)
+            if data["game"] == "mtg" and form.get("lookup_on_save", [""])[0] == "1":
+                if not rate_limit_allowed("scryfall_lookup", f"api:user:{user['id']}"):
+                    raise ValueError("Too many Scryfall lookup requests. Try again shortly.")
+                try:
+                    data = enrich_collection_data_from_scryfall(data)
+                except ScryfallError as exc:
+                    raise ValueError(str(exc)) from exc
+            merge_value = item_payload.get("merge", True)
+            merge = str(merge_value).strip().lower() not in ("0", "false", "no", "off")
+            action, item_id = upsert_collection_item(user["id"], data, merge=merge, return_id=True)
+            item = row("SELECT * FROM collection_items WHERE id = ? AND user_id = ?", (item_id, user["id"]))
+            summary["updated" if action == "updated" else "inserted"] += 1
+            row_result = {
+                "ok": True,
+                "index": index,
+                "status": action,
+                "data": api_collection_item_dict(item),
+            }
+            if group_id:
+                try:
+                    add_collection_item_to_group(user["id"], group_id, item_id, item_payload.get("group_quantity", item_payload.get("quantity", 1)))
+                    group_item = row(
+                        """
+                        SELECT
+                            group_collection_items.id AS group_item_id,
+                            group_collection_items.quantity AS group_quantity,
+                            collection_items.*
+                        FROM group_collection_items
+                        JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+                        WHERE group_collection_items.group_id = ? AND group_collection_items.collection_item_id = ? AND collection_items.user_id = ?
+                        """,
+                        (group_id, item_id, user["id"]),
+                    )
+                    row_result["group_status"] = "added"
+                    row_result["group"] = api_group_collection_item_dict(group_item)
+                    summary["grouped"] += 1
+                except ValueError as exc:
+                    row_result["group_status"] = "failed"
+                    row_result["group_error"] = str(exc)
+                    summary["group_failed"] += 1
+            result_rows.append(row_result)
+        except ValueError as exc:
+            summary["failed"] += 1
+            result_rows.append({"ok": False, "index": index, "error": str(exc)})
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        "Collection import",
+        f"Imported {summary['inserted']} new, updated {summary['updated']}, failed {summary['failed']} via API batch import.",
+        "api",
+    )
+    return self.api_json({"data": result_rows, "summary": summary})
+
+
 def api_collection_detail(self, user, item_id):
     item = row("SELECT * FROM collection_items WHERE id = ? AND user_id = ?", (item_id, user["id"]))
     if not item:
@@ -1193,6 +1342,205 @@ def api_collection_delete(self, user, item_id):
         "api_write",
         f"Collection item #{item_id}",
         "Deleted collection item via API.",
+        "api",
+    )
+    return self.api_json({"deleted": deleted})
+
+
+def api_groups_list(self, user, query):
+    type_filter = api_group_type_filter(query)
+    q = query_value(query, "q").lower()
+    page, per_page, offset = api_pagination(query)
+    group_rows = []
+    for group in group_summary_rows(user["id"]):
+        group_type = row_value(group, "group_type", "")
+        if type_filter == "collection" and group_type not in ("deck", "binder"):
+            continue
+        if type_filter and type_filter != "collection" and group_type != type_filter:
+            continue
+        if q and q not in row_value(group, "name", "").lower() and q not in row_value(group, "description", "").lower():
+            continue
+        group_rows.append(group)
+    total = len(group_rows)
+    paged = group_rows[offset:offset + per_page]
+    return self.api_json({
+        "data": [api_group_dict(group) for group in paged],
+        "pagination": {"page": page, "per_page": per_page, "total": total},
+    })
+
+
+def api_group_create(self, user):
+    payload = self.api_read_json()
+    group_type = payload.get("group_type", payload.get("type", "deck"))
+    visibility = payload.get("visibility")
+    is_public = api_bool_value(payload.get("is_public"), default=True)
+    group_id = create_card_group(
+        user["id"],
+        group_type,
+        payload.get("name", ""),
+        payload.get("description", ""),
+        is_public=is_public,
+        visibility=visibility,
+    )
+    group = user_group(user["id"], group_id)
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        f"Group #{group_id}",
+        f"Created {group_type_label(group['group_type']).lower()} group via API: {group['name']}.",
+        "api",
+    )
+    return self.api_json({"data": api_group_dict(group)}, HTTPStatus.CREATED)
+
+
+def api_group_detail(self, user, group_id, query=None):
+    group = user_group(user["id"], group_id)
+    if not group:
+        return self.api_error("Group not found.", HTTPStatus.NOT_FOUND)
+    page, per_page, offset = api_pagination(query or {})
+    data = api_group_dict(group)
+    if row_value(group, "group_type", "") == "wishlist":
+        counts = row(
+            "SELECT COUNT(*) AS entries FROM group_want_items WHERE group_id = ?",
+            (group_id,),
+        )
+        data["want_entries"] = int(row_value(counts, "entries", 0) or 0)
+        return self.api_json({
+            "data": data,
+            "items": [],
+            "pagination": {"page": page, "per_page": per_page, "total": 0},
+        })
+    filters = api_group_item_filters(query or {})
+    total = collection_group_item_count(group_id, filters)
+    counts = row(
+        """
+        SELECT COALESCE(SUM(quantity), 0) AS quantity, COUNT(*) AS entries
+        FROM group_collection_items
+        WHERE group_id = ?
+        """,
+        (group_id,),
+    )
+    data["collection_quantity"] = int(row_value(counts, "quantity", 0) or 0)
+    data["collection_entries"] = int(row_value(counts, "entries", 0) or 0)
+    items = collection_group_items(group_id, filters=filters, limit=per_page, offset=offset)
+    return self.api_json({
+        "data": data,
+        "items": [api_group_collection_item_dict(item) for item in items],
+        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+    })
+
+
+def api_group_update(self, user, group_id):
+    existing = user_group(user["id"], group_id)
+    if not existing:
+        return self.api_error("Group not found.", HTTPStatus.NOT_FOUND)
+    payload = self.api_read_json()
+    visibility = None
+    if "visibility" in payload:
+        visibility = payload.get("visibility")
+    elif "is_public" in payload:
+        visibility = api_bool_value(payload.get("is_public"), default=bool(row_value(existing, "is_public", 1)))
+    updated = update_card_group(
+        user["id"],
+        group_id,
+        name=payload.get("name") if "name" in payload else None,
+        description=payload.get("description") if "description" in payload else None,
+        visibility=visibility,
+    )
+    if not updated:
+        return self.api_error("Group not found.", HTTPStatus.NOT_FOUND)
+    group = user_group(user["id"], group_id)
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        f"Group #{group_id}",
+        f"Updated group via API: {group['name']}.",
+        "api",
+    )
+    return self.api_json({"data": api_group_dict(group)})
+
+
+def api_group_delete(self, user, group_id):
+    group = user_group(user["id"], group_id)
+    deleted = delete_card_group(user["id"], group_id)
+    if not deleted:
+        return self.api_error("Group not found.", HTTPStatus.NOT_FOUND)
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        f"Group #{group_id}",
+        f"Deleted group via API: {row_value(group, 'name', 'group')}.",
+        "api",
+    )
+    return self.api_json({"deleted": deleted})
+
+
+def api_group_add_collection_item(self, user, group_id):
+    payload = self.api_read_json()
+    try:
+        collection_item_id = int(payload.get("collection_item_id", 0))
+    except (TypeError, ValueError):
+        return self.api_error("Collection item id must be a number.", HTTPStatus.BAD_REQUEST)
+    quantity = payload.get("quantity", 1)
+    add_collection_item_to_group(user["id"], group_id, collection_item_id, quantity)
+    group_item = row(
+        """
+        SELECT
+            group_collection_items.id AS group_item_id,
+            group_collection_items.quantity AS group_quantity,
+            collection_items.*
+        FROM group_collection_items
+        JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+        WHERE group_collection_items.group_id = ? AND group_collection_items.collection_item_id = ? AND collection_items.user_id = ?
+        """,
+        (group_id, collection_item_id, user["id"]),
+    )
+    if not group_item:
+        return self.api_error("Group card was not added.", HTTPStatus.BAD_REQUEST)
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        f"Group #{group_id}",
+        f"Added collection item #{collection_item_id} to group via API.",
+        "api",
+    )
+    return self.api_json({"data": api_group_collection_item_dict(group_item)}, HTTPStatus.CREATED)
+
+
+def api_group_update_collection_item(self, user, group_id, group_item_id):
+    payload = self.api_read_json()
+    updated = update_group_collection_item_quantities(user["id"], group_id, [group_item_id], payload.get("quantity", 1))
+    if not updated:
+        return self.api_error("Group card not found.", HTTPStatus.NOT_FOUND)
+    group_item = row(
+        """
+        SELECT
+            group_collection_items.id AS group_item_id,
+            group_collection_items.quantity AS group_quantity,
+            collection_items.*
+        FROM group_collection_items
+        JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+        WHERE group_collection_items.group_id = ? AND group_collection_items.id = ? AND collection_items.user_id = ?
+        """,
+        (group_id, group_item_id, user["id"]),
+    )
+    return self.api_json({"data": api_group_collection_item_dict(group_item)})
+
+
+def api_group_remove_collection_item(self, user, group_id, group_item_id):
+    deleted = remove_group_item(user["id"], group_id, group_item_id)
+    if not deleted:
+        return self.api_error("Group card not found.", HTTPStatus.NOT_FOUND)
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        f"Group #{group_id}",
+        f"Removed group item #{group_item_id} via API.",
         "api",
     )
     return self.api_json({"deleted": deleted})
@@ -1637,6 +1985,8 @@ def api_dispatch(self, method, path, query):
                 return self.api_collection_list(user, query)
             if method == "POST":
                 return self.api_collection_create(user)
+        if path == "/api/v1/collection/import" and method == "POST":
+            return self.api_collection_import(user)
         if path.startswith("/api/v1/collection/"):
             try:
                 item_id = int(path.rsplit("/", 1)[1])
@@ -1648,6 +1998,38 @@ def api_dispatch(self, method, path, query):
                 return self.api_collection_update(user, item_id)
             if method == "DELETE":
                 return self.api_collection_delete(user, item_id)
+        if path == "/api/v1/groups":
+            if method == "GET":
+                return self.api_groups_list(user, query)
+            if method == "POST":
+                return self.api_group_create(user)
+        if path.startswith("/api/v1/groups/"):
+            parts = path.strip("/").split("/")
+            try:
+                group_id = int(parts[3])
+            except (ValueError, IndexError):
+                return self.api_error("Group id must be a number.", HTTPStatus.NOT_FOUND)
+            action = parts[4] if len(parts) > 4 else ""
+            if len(parts) > 6:
+                return self.api_error("API endpoint not found.", HTTPStatus.NOT_FOUND)
+            if not action:
+                if method == "GET":
+                    return self.api_group_detail(user, group_id, query)
+                if method in ("POST", "PUT", "PATCH"):
+                    return self.api_group_update(user, group_id)
+                if method == "DELETE":
+                    return self.api_group_delete(user, group_id)
+            if action == "collection-items":
+                if len(parts) == 5 and method == "POST":
+                    return self.api_group_add_collection_item(user, group_id)
+                try:
+                    group_item_id = int(parts[5])
+                except (ValueError, IndexError):
+                    return self.api_error("Group item id must be a number.", HTTPStatus.NOT_FOUND)
+                if method in ("POST", "PUT", "PATCH"):
+                    return self.api_group_update_collection_item(user, group_id, group_item_id)
+                if method == "DELETE":
+                    return self.api_group_remove_collection_item(user, group_id, group_item_id)
         if path == "/api/v1/wants":
             if method == "GET":
                 return self.api_wants_list(user, query)
@@ -1717,9 +2099,18 @@ API_ROUTE_METHODS = (
     "api_authenticate",
     "api_collection_list",
     "api_collection_create",
+    "api_collection_import",
     "api_collection_detail",
     "api_collection_update",
     "api_collection_delete",
+    "api_groups_list",
+    "api_group_create",
+    "api_group_detail",
+    "api_group_update",
+    "api_group_delete",
+    "api_group_add_collection_item",
+    "api_group_update_collection_item",
+    "api_group_remove_collection_item",
     "api_wants_list",
     "api_want_create",
     "api_want_detail",
@@ -1802,6 +2193,11 @@ __all__ = [
     "api_row_dict",
     "api_collection_item_dict",
     "api_want_item_dict",
+    "api_group_dict",
+    "api_group_collection_item_dict",
+    "api_bool_value",
+    "api_group_type_filter",
+    "api_group_item_filters",
     "api_payload_to_form",
     "api_extract_bearer_token",
     "integration_request_ip",

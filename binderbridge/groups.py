@@ -365,6 +365,42 @@ def delete_card_group(user_id, group_id):
         return cursor.rowcount
 
 
+def update_card_group(user_id, group_id, name=None, description=None, visibility=None):
+    existing = user_group(user_id, group_id)
+    if not existing:
+        return 0
+    name = sanitize_text_input(row_value(existing, "name", "") if name is None else name, max_length=80).strip()
+    description = sanitize_text_input(
+        row_value(existing, "description", "") if description is None else description,
+        max_length=1000,
+    ).strip()
+    if not name:
+        raise ValueError("Group name is required.")
+    if visibility is None:
+        visibility = row_value(existing, "visibility", VISIBILITY_MEMBERS)
+    elif isinstance(visibility, bool):
+        visibility = VISIBILITY_MEMBERS if visibility else VISIBILITY_PRIVATE
+    visibility = normalize_visibility(visibility)
+    with db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE card_groups
+            SET name = ?, description = ?, visibility = ?, is_public = ?, updated_at = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                name,
+                description,
+                visibility,
+                visibility_to_public_flag(visibility),
+                now_iso(),
+                group_id,
+                user_id,
+            ),
+        )
+        return cursor.rowcount
+
+
 def update_card_group_visibility(user_id, group_id, visibility):
     if isinstance(visibility, bool):
         visibility = VISIBILITY_MEMBERS if visibility else VISIBILITY_PRIVATE
@@ -421,6 +457,7 @@ __all__ = [
     "remove_group_items",
     "remove_group_items_matching",
     "delete_card_group",
+    "update_card_group",
     "update_card_group_visibility",
     "update_card_group_sharing_defaults",
 ]

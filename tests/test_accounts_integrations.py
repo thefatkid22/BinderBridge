@@ -585,6 +585,173 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(delete.response[0]["deleted"], 1)
         self.assertIsNone(app.row("SELECT * FROM want_items WHERE id = ?", (want_id,)))
 
+    def test_api_group_crud_and_collection_items(self):
+        user_id = app.create_user("api-groups", "password123", "API Groups")
+        token = app.create_api_token(user_id, "Write token", ["read", "write"])["token"]
+        collection_id = factory.create_collection_item(
+            user_id,
+            "Arcane Signet",
+            set_name="Commander Legends",
+            set_code="CMR",
+            collector_number="312",
+            quantity=4,
+            image_url="https://img.example/arcane-signet.jpg",
+        )
+
+        class DummyApiRequest:
+            command = "GET"
+
+            def __init__(self, body=None):
+                self.headers = {"Authorization": f"Bearer {token}"}
+                self.response = None
+                self.body = body or {}
+                self._request_path = "/api/v1/groups"
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def api_read_json(self):
+                return self.body
+
+            def client_ip(self):
+                return "203.0.113.11"
+
+        create = DummyApiRequest({"group_type": "deck", "name": "Landfall", "description": "Commander pile", "visibility": "private"})
+        app.api_dispatch(create, "POST", "/api/v1/groups", {})
+        self.assertEqual(create.response[1], HTTPStatus.CREATED)
+        group = create.response[0]["data"]
+        self.assertEqual(group["group_type"], "deck")
+        self.assertEqual(group["name"], "Landfall")
+        self.assertEqual(group["visibility"], "private")
+
+        group_id = group["id"]
+        listing = DummyApiRequest()
+        app.api_dispatch(listing, "GET", "/api/v1/groups", {"type": ["collection"]})
+        self.assertEqual(listing.response[1], HTTPStatus.OK)
+        self.assertEqual(listing.response[0]["pagination"]["total"], 1)
+        self.assertEqual(listing.response[0]["data"][0]["collection_entries"], 0)
+
+        add_item = DummyApiRequest({"collection_item_id": collection_id, "quantity": 3})
+        app.api_dispatch(add_item, "POST", f"/api/v1/groups/{group_id}/collection-items", {})
+        self.assertEqual(add_item.response[1], HTTPStatus.CREATED)
+        group_item = add_item.response[0]["data"]
+        self.assertEqual(group_item["card_name"], "Arcane Signet")
+        self.assertEqual(group_item["group_quantity"], 3)
+        self.assertEqual(group_item["quantity"], 4)
+
+        detail = DummyApiRequest()
+        app.api_dispatch(detail, "GET", f"/api/v1/groups/{group_id}", {"per_page": ["10"]})
+        self.assertEqual(detail.response[1], HTTPStatus.OK)
+        self.assertEqual(detail.response[0]["data"]["collection_quantity"], 3)
+        self.assertEqual(detail.response[0]["pagination"]["total"], 1)
+        self.assertEqual(detail.response[0]["items"][0]["group_item_id"], group_item["group_item_id"])
+
+        update_item = DummyApiRequest({"quantity": 2})
+        app.api_dispatch(update_item, "PATCH", f"/api/v1/groups/{group_id}/collection-items/{group_item['group_item_id']}", {})
+        self.assertEqual(update_item.response[1], HTTPStatus.OK)
+        self.assertEqual(update_item.response[0]["data"]["group_quantity"], 2)
+
+        update_group = DummyApiRequest({"name": "Landfall Maybeboard", "description": "Updated notes", "is_public": True})
+        app.api_dispatch(update_group, "PATCH", f"/api/v1/groups/{group_id}", {})
+        self.assertEqual(update_group.response[1], HTTPStatus.OK)
+        self.assertEqual(update_group.response[0]["data"]["name"], "Landfall Maybeboard")
+        self.assertEqual(update_group.response[0]["data"]["visibility"], "members")
+
+        remove_item = DummyApiRequest()
+        app.api_dispatch(remove_item, "DELETE", f"/api/v1/groups/{group_id}/collection-items/{group_item['group_item_id']}", {})
+        self.assertEqual(remove_item.response[1], HTTPStatus.OK)
+        self.assertEqual(remove_item.response[0]["deleted"], 1)
+
+        delete_group = DummyApiRequest()
+        app.api_dispatch(delete_group, "DELETE", f"/api/v1/groups/{group_id}", {})
+        self.assertEqual(delete_group.response[1], HTTPStatus.OK)
+        self.assertEqual(delete_group.response[0]["deleted"], 1)
+        self.assertIsNone(app.row("SELECT * FROM card_groups WHERE id = ?", (group_id,)))
+
+    def test_api_collection_batch_import_can_target_group(self):
+        user_id = app.create_user("api-batch-import", "password123", "API Batch Import")
+        token = app.create_api_token(user_id, "Write token", ["read", "write"])["token"]
+        group_id = app.create_card_group(user_id, "deck", "Draft deck", is_public=False)
+
+        class DummyApiRequest:
+            command = "POST"
+            _request_path = "/api/v1/collection/import"
+
+            def __init__(self, body):
+                self.headers = {"Authorization": f"Bearer {token}"}
+                self.response = None
+                self.body = body
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def api_read_json(self):
+                return self.body
+
+            def client_ip(self):
+                return "203.0.113.12"
+
+        payload = {
+            "group_id": group_id,
+            "items": [
+                {
+                    "game": "mtg",
+                    "card_name": "Llanowar Elves",
+                    "set_code": "FDN",
+                    "collector_number": "227",
+                    "quantity": 4,
+                    "quantity_for_trade": 0,
+                    "condition": "NM",
+                    "finish": "Regular",
+                    "language": "English",
+                    "is_public": True,
+                    "lookup_on_save": False,
+                    "merge": True,
+                },
+                {
+                    "game": "mtg",
+                    "card_name": "Forest",
+                    "set_code": "FDN",
+                    "collector_number": "281",
+                    "quantity": 10,
+                    "quantity_for_trade": 0,
+                    "condition": "NM",
+                    "finish": "Regular",
+                    "language": "English",
+                    "is_public": True,
+                    "lookup_on_save": False,
+                    "merge": True,
+                },
+            ],
+        }
+
+        request = DummyApiRequest(payload)
+        app.api_dispatch(request, "POST", "/api/v1/collection/import", {})
+
+        self.assertEqual(request.response[1], HTTPStatus.OK)
+        self.assertEqual(request.response[0]["summary"]["inserted"], 2)
+        self.assertEqual(request.response[0]["summary"]["failed"], 0)
+        self.assertEqual(request.response[0]["summary"]["grouped"], 2)
+        self.assertEqual(request.response[0]["data"][0]["group"]["group_quantity"], 4)
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM collection_items WHERE user_id = ?", (user_id,))["count"], 2)
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM group_collection_items WHERE group_id = ?", (group_id,))["count"], 2)
+
     def test_api_notification_detail_read_and_delete(self):
         user_id = app.create_user("api-notifications", "password123", "API Notifications")
         token = app.create_api_token(user_id, "Write token", ["read", "write"])["token"]
