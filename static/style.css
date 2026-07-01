@@ -909,12 +909,38 @@ summary:focus-visible,
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 0.75rem;
     margin-bottom: 0.85rem;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--header-bg);
     padding: 0.7rem 0.8rem;
+}
+
+.group-bulk-controls,
+.group-bulk-actions {
+    display: flex;
+    align-items: end;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+}
+
+.group-bulk-controls {
+    flex: 1 1 280px;
+}
+
+.group-bulk-actions {
+    justify-content: flex-end;
+    margin-left: auto;
+}
+
+.group-bulk-quantity {
+    min-width: 130px;
+}
+
+.group-bulk-quantity input {
+    max-width: 150px;
 }
 
 .group-item-filter-bar {
@@ -5104,6 +5130,18 @@ summary:focus-visible,
     .confirm-dialog-actions {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .group-bulk-controls,
+    .group-bulk-actions {
+        align-items: stretch;
+        width: 100%;
+    }
+
+    .group-bulk-actions .button,
+    .group-bulk-quantity input {
+        max-width: none;
+        width: 100%;
     }
 
     .confirm-dialog-actions .button {

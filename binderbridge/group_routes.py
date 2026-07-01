@@ -121,6 +121,53 @@ def group_action(self, method, user, path, query=None):
         )
         remove_group_items(user["id"], group_id, form.get("group_item_id", []))
         return self.redirect(redirect_to)
+    if len(parts) == 4 and parts[2] == "items" and parts[3] == "bulk-update" and method == "POST":
+        form = self.read_form()
+        redirect_to = safe_local_redirect_path(
+            form.get("redirect_to", [f"/groups/{group_id}#group-cards"])[0],
+            default=f"/groups/{group_id}#group-cards",
+            allowed_prefix=f"/groups/{group_id}",
+        )
+        try:
+            update_group_collection_item_quantities(
+                user["id"],
+                group_id,
+                form.get("group_item_id", []),
+                form.get("group_quantity", [""])[0],
+            )
+        except ValueError as exc:
+            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error", query=form, active_section="group-cards"), HTTPStatus.BAD_REQUEST)
+        return self.redirect(redirect_to)
+    if len(parts) == 4 and parts[2] == "items" and parts[3] == "update-all" and method == "POST":
+        form = self.read_form()
+        redirect_to = safe_local_redirect_path(
+            form.get("redirect_to", [f"/groups/{group_id}#group-cards"])[0],
+            default=f"/groups/{group_id}#group-cards",
+            allowed_prefix=f"/groups/{group_id}",
+        )
+        try:
+            update_group_collection_item_quantities_matching(
+                user["id"],
+                group_id,
+                group_item_filter_values(form),
+                form.get("group_quantity", [""])[0],
+            )
+        except ValueError as exc:
+            return self.html(render_group_detail(user, group_id, notice=str(exc), status="error", query=form, active_section="group-cards"), HTTPStatus.BAD_REQUEST)
+        return self.redirect(redirect_to)
+    if len(parts) == 4 and parts[2] == "items" and parts[3] == "delete-all" and method == "POST":
+        form = self.read_form()
+        redirect_to = safe_local_redirect_path(
+            form.get("redirect_to", [f"/groups/{group_id}#group-cards"])[0],
+            default=f"/groups/{group_id}#group-cards",
+            allowed_prefix=f"/groups/{group_id}",
+        )
+        remove_group_items_matching(
+            user["id"],
+            group_id,
+            group_item_filter_values(form, wishlist=group["group_type"] == "wishlist"),
+        )
+        return self.redirect(redirect_to)
     return self.not_found(user)
 
 def group_deck_import(self, user, group):
