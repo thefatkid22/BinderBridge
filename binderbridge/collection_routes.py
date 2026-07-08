@@ -229,8 +229,9 @@ def prices_refresh(self, user):
 def collection_bulk_delete(self, user):
     form = self.read_form()
     redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/collection"])[0], default="/collection", allowed_prefix="/collection")
-    bulk_delete_collection_items(user["id"], form.get("item_id", []))
-    self.redirect(redirect_to)
+    deleted = bulk_delete_collection_items(user["id"], form.get("item_id", []))
+    notice = f"Deleted {count_phrase(deleted, 'selected card')} from your collection."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def collection_bulk_update(self, user):
     form = self.read_form()
@@ -239,8 +240,9 @@ def collection_bulk_update(self, user):
         quantity, quantity_for_trade, is_public = parse_bulk_collection_update(form)
     except ValueError as exc:
         return self.html(render_collection(user, {}, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-    update_collection_items_by_ids(user["id"], form.get("item_id", []), quantity, quantity_for_trade, is_public)
-    self.redirect(redirect_to)
+    updated = update_collection_items_by_ids(user["id"], form.get("item_id", []), quantity, quantity_for_trade, is_public)
+    notice = f"Updated {count_phrase(updated, 'selected card')}."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def collection_update_all(self, user):
     form = self.read_form()
@@ -250,15 +252,17 @@ def collection_update_all(self, user):
         quantity, quantity_for_trade, is_public = parse_bulk_collection_update(form)
     except ValueError as exc:
         return self.html(render_collection(user, {}, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-    update_collection_items_matching(user["id"], filters, quantity=quantity, quantity_for_trade=quantity_for_trade, is_public=is_public)
-    self.redirect(redirect_to)
+    updated = update_collection_items_matching(user["id"], filters, quantity=quantity, quantity_for_trade=quantity_for_trade, is_public=is_public)
+    notice = f"Updated {count_phrase(updated, 'matching card')}."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def collection_delete_all(self, user):
     form = self.read_form()
     redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/collection"])[0], default="/collection", allowed_prefix="/collection")
     filters = collection_filter_values(form)
-    delete_collection_items_matching(user["id"], filters)
-    self.redirect(redirect_to)
+    deleted = delete_collection_items_matching(user["id"], filters)
+    notice = f"Deleted {count_phrase(deleted, 'matching card')} from your collection."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def collection_bulk_group(self, user):
     form = self.read_form()
@@ -268,8 +272,9 @@ def collection_bulk_group(self, user):
         quantity = parse_bulk_collection_group_quantity(form.get("group_quantity", [""])[0])
     except ValueError as exc:
         return self.html(render_collection(user, form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-    bulk_add_collection_items_to_group_by_ids(user["id"], group_id, form.get("item_id", []), quantity)
-    self.redirect(redirect_to)
+    added = bulk_add_collection_items_to_group_by_ids(user["id"], group_id, form.get("item_id", []), quantity)
+    notice = f"Added {count_phrase(added, 'selected card')} to the group."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def collection_group_all(self, user):
     form = self.read_form()
@@ -280,8 +285,9 @@ def collection_group_all(self, user):
         quantity = parse_bulk_collection_group_quantity(form.get("group_quantity", [""])[0])
     except ValueError as exc:
         return self.html(render_collection(user, form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-    bulk_add_collection_items_to_group_matching(user["id"], group_id, filters, quantity)
-    self.redirect(redirect_to)
+    added = bulk_add_collection_items_to_group_matching(user["id"], group_id, filters, quantity)
+    notice = f"Added {count_phrase(added, 'matching card')} to the group."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def collection_new(self, method, user):
     if method == "GET":
@@ -844,8 +850,9 @@ def want_bulk_update(self, user):
         desired_quantity, priority, visibility = parse_bulk_want_update(form)
     except ValueError as exc:
         return self.html(render_wants(user, query=form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-    update_want_items_by_ids(user["id"], form.get("want_id", []), desired_quantity, priority, visibility)
-    self.redirect(redirect_to)
+    updated = update_want_items_by_ids(user["id"], form.get("want_id", []), desired_quantity, priority, visibility)
+    notice = f"Updated {count_phrase(updated, 'selected wanted card')}."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def want_update_all(self, user):
     form = self.read_form()
@@ -855,21 +862,24 @@ def want_update_all(self, user):
         desired_quantity, priority, visibility = parse_bulk_want_update(form)
     except ValueError as exc:
         return self.html(render_wants(user, query=form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-    update_want_items_matching(user["id"], filters, desired_quantity, priority, visibility)
-    self.redirect(redirect_to)
+    updated = update_want_items_matching(user["id"], filters, desired_quantity, priority, visibility)
+    notice = f"Updated {count_phrase(updated, 'matching wanted card')}."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def want_bulk_delete(self, user):
     form = self.read_form()
     redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/wants"])[0], default="/wants", allowed_prefix="/wants")
-    bulk_delete_want_items(user["id"], form.get("want_id", []))
-    self.redirect(redirect_to)
+    deleted = bulk_delete_want_items(user["id"], form.get("want_id", []))
+    notice = f"Deleted {count_phrase(deleted, 'selected wanted card')}."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def want_delete_all(self, user):
     form = self.read_form()
     redirect_to = safe_local_redirect_path(form.get("redirect_to", ["/wants"])[0], default="/wants", allowed_prefix="/wants")
     filters = want_list_filter_values(form)
-    delete_want_items_matching(user["id"], filters)
-    self.redirect(redirect_to)
+    deleted = delete_want_items_matching(user["id"], filters)
+    notice = f"Deleted {count_phrase(deleted, 'matching wanted card')}."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def want_bulk_group(self, user):
     form = self.read_form()
@@ -878,8 +888,9 @@ def want_bulk_group(self, user):
         group_id = parse_optional_bulk_group_id(form.get("group_id", [""])[0])
     except ValueError as exc:
         return self.html(render_wants(user, query=form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-    bulk_add_want_items_to_group_by_ids(user["id"], group_id, form.get("want_id", []))
-    self.redirect(redirect_to)
+    added = bulk_add_want_items_to_group_by_ids(user["id"], group_id, form.get("want_id", []))
+    notice = f"Added {count_phrase(added, 'selected wanted card')} to the wishlist group."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 def want_group_all(self, user):
     form = self.read_form()
@@ -889,8 +900,9 @@ def want_group_all(self, user):
         group_id = parse_optional_bulk_group_id(form.get("group_id", [""])[0])
     except ValueError as exc:
         return self.html(render_wants(user, query=form, notice=str(exc), status="error"), HTTPStatus.BAD_REQUEST)
-    bulk_add_want_items_to_group_matching(user["id"], group_id, filters)
-    self.redirect(redirect_to)
+    added = bulk_add_want_items_to_group_matching(user["id"], group_id, filters)
+    notice = f"Added {count_phrase(added, 'matching wanted card')} to the wishlist group."
+    self.redirect(redirect_with_notice(redirect_to, notice))
 
 COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_bulk_group', 'collection_group_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_share_link', 'want_delete', 'want_bulk_update', 'want_update_all', 'want_bulk_delete', 'want_delete_all', 'want_bulk_group', 'want_group_all')
 

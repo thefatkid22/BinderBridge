@@ -441,6 +441,15 @@ class GroupsExportsTests(BinderBridgeTestCase):
             def not_found(self, current_user):
                 raise AssertionError(f"Unexpected not found for {current_user['id']}")
 
+        def assert_group_notice_redirect(location, notice):
+            parsed = app.urlparse(location)
+            query = app.parse_qs(parsed.query)
+            self.assertEqual(parsed.path, f"/groups/{deck_id}")
+            self.assertEqual(parsed.fragment, "group-cards")
+            self.assertEqual(query["_notice"], [notice])
+            self.assertEqual(query["_notice_status"], ["success"])
+            return query
+
         redirect = app.group_action(
             RouteHarness(
                 {
@@ -454,7 +463,8 @@ class GroupsExportsTests(BinderBridgeTestCase):
             f"/groups/{deck_id}/items/bulk-update",
         )
         updated_row = app.row("SELECT quantity FROM group_collection_items WHERE id = ?", (remaining_group_item["group_item_id"],))
-        self.assertEqual(redirect, f"/groups/{deck_id}?q=Group#group-cards")
+        redirect_query = assert_group_notice_redirect(redirect, "Updated 1 selected group card.")
+        self.assertEqual(redirect_query["q"], ["Group"])
         self.assertEqual(updated_row["quantity"], 3)
 
         redirect = app.group_action(
@@ -475,7 +485,10 @@ class GroupsExportsTests(BinderBridgeTestCase):
             deck_id,
             filters={"q": "Filtered Set", "condition": "LP", "finish": "Foil"},
         )
-        self.assertEqual(redirect, f"/groups/{deck_id}?q=Filtered+Set&condition=LP&finish=Foil#group-cards")
+        redirect_query = assert_group_notice_redirect(redirect, "Updated 2 matching group cards.")
+        self.assertEqual(redirect_query["q"], ["Filtered Set"])
+        self.assertEqual(redirect_query["condition"], ["LP"])
+        self.assertEqual(redirect_query["finish"], ["Foil"])
         self.assertEqual([row["group_quantity"] for row in filtered_rows], [2, 2])
 
         redirect = app.group_action(
@@ -489,7 +502,8 @@ class GroupsExportsTests(BinderBridgeTestCase):
             user,
             f"/groups/{deck_id}/items/bulk-delete",
         )
-        self.assertEqual(redirect, f"/groups/{deck_id}?q=Group#group-cards")
+        redirect_query = assert_group_notice_redirect(redirect, "Removed 1 selected card from this group.")
+        self.assertEqual(redirect_query["q"], ["Group"])
         self.assertEqual(app.collection_group_item_count(deck_id), 27)
 
         redirect = app.group_action(
@@ -505,7 +519,10 @@ class GroupsExportsTests(BinderBridgeTestCase):
             user,
             f"/groups/{deck_id}/items/delete-all",
         )
-        self.assertEqual(redirect, f"/groups/{deck_id}?q=Filtered+Set&condition=LP&finish=Foil#group-cards")
+        redirect_query = assert_group_notice_redirect(redirect, "Removed 2 matching cards from this group.")
+        self.assertEqual(redirect_query["q"], ["Filtered Set"])
+        self.assertEqual(redirect_query["condition"], ["LP"])
+        self.assertEqual(redirect_query["finish"], ["Foil"])
         self.assertEqual(app.collection_group_item_count(deck_id, {"q": "Filtered Set", "condition": "LP", "finish": "Foil"}), 0)
         self.assertEqual(app.collection_group_item_count(deck_id), 25)
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM collection_items WHERE user_id = ?", (user_id,))["count"], 30)
@@ -552,7 +569,13 @@ class GroupsExportsTests(BinderBridgeTestCase):
             user,
             f"/groups/{wishlist_id}/items/delete-all",
         )
-        self.assertEqual(redirect, f"/groups/{wishlist_id}?priority=urgent#group-cards")
+        parsed = app.urlparse(redirect)
+        redirect_query = app.parse_qs(parsed.query)
+        self.assertEqual(parsed.path, f"/groups/{wishlist_id}")
+        self.assertEqual(parsed.fragment, "group-cards")
+        self.assertEqual(redirect_query["priority"], ["urgent"])
+        self.assertEqual(redirect_query["_notice"], ["Removed 2 matching wanted cards from this group."])
+        self.assertEqual(redirect_query["_notice_status"], ["success"])
         self.assertEqual(app.wishlist_group_item_count(wishlist_id, {"priority": "urgent"}), 0)
         self.assertEqual(app.wishlist_group_item_count(wishlist_id), 25)
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM want_items WHERE user_id = ?", (user_id,))["count"], 27)
