@@ -427,6 +427,7 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM collection_items WHERE user_id = ?", (user_id,))["count"], 30)
 
         remaining_group_item = app.collection_group_items(deck_id)[0]
+        token, _expires_at = app.create_session(user_id)
 
         class RouteHarness:
             def __init__(self, form):
@@ -441,13 +442,19 @@ class GroupsExportsTests(BinderBridgeTestCase):
             def not_found(self, current_user):
                 raise AssertionError(f"Unexpected not found for {current_user['id']}")
 
+            def flash_notice(self, notice, status="success"):
+                return app.set_session_flash(token, notice, status)
+
         def assert_group_notice_redirect(location, notice):
             parsed = app.urlparse(location)
             query = app.parse_qs(parsed.query)
+            flashed_notice, flashed_status = app.consume_session_flash(token)
             self.assertEqual(parsed.path, f"/groups/{deck_id}")
             self.assertEqual(parsed.fragment, "group-cards")
-            self.assertEqual(query["_notice"], [notice])
-            self.assertEqual(query["_notice_status"], ["success"])
+            self.assertNotIn("_notice", query)
+            self.assertEqual(flashed_notice, notice)
+            self.assertEqual(flashed_status, "success")
+            self.assertEqual(app.consume_session_flash(token), ("", "info"))
             return query
 
         redirect = app.group_action(
@@ -549,6 +556,7 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertIn("Remove all matching", filtered)
         self.assertNotIn('name="group_quantity"', filtered)
         self.assertNotIn("<strong>Wanted Group Card 00</strong>", filtered)
+        token, _expires_at = app.create_session(user_id)
 
         class RouteHarness:
             def read_form(self):
@@ -563,6 +571,9 @@ class GroupsExportsTests(BinderBridgeTestCase):
             def not_found(self, current_user):
                 raise AssertionError(f"Unexpected not found for {current_user['id']}")
 
+            def flash_notice(self, notice, status="success"):
+                return app.set_session_flash(token, notice, status)
+
         redirect = app.group_action(
             RouteHarness(),
             "POST",
@@ -574,8 +585,9 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertEqual(parsed.path, f"/groups/{wishlist_id}")
         self.assertEqual(parsed.fragment, "group-cards")
         self.assertEqual(redirect_query["priority"], ["urgent"])
-        self.assertEqual(redirect_query["_notice"], ["Removed 2 matching wanted cards from this group."])
-        self.assertEqual(redirect_query["_notice_status"], ["success"])
+        self.assertNotIn("_notice", redirect_query)
+        self.assertEqual(app.consume_session_flash(token), ("Removed 2 matching wanted cards from this group.", "success"))
+        self.assertEqual(app.consume_session_flash(token), ("", "info"))
         self.assertEqual(app.wishlist_group_item_count(wishlist_id, {"priority": "urgent"}), 0)
         self.assertEqual(app.wishlist_group_item_count(wishlist_id), 25)
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM want_items WHERE user_id = ?", (user_id,))["count"], 27)

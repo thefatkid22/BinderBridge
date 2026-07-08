@@ -6,6 +6,7 @@ so the legacy app.py public API remains compatible during the split.
 
 import hashlib
 from pathlib import Path
+from urllib.parse import urlencode
 
 from binderbridge.want_queries import want_list_where
 

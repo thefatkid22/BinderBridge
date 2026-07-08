@@ -691,6 +691,7 @@ class CollectionBrowseTests(BinderBridgeTestCase):
     def test_collection_bulk_route_redirects_with_counted_notice(self):
         user_id = factory.create_user("bulkroute", display_name="Bulk Route")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        token, _expires_at = app.create_session(user_id)
         card_id = factory.create_collection_item(user_id, "Sol Ring", quantity=4)
 
         class RouteHarness:
@@ -706,17 +707,22 @@ class CollectionBrowseTests(BinderBridgeTestCase):
             def redirect(self, location):
                 self.location = location
 
+            def flash_notice(self, notice, status="success"):
+                return app.set_session_flash(token, notice, status)
+
         harness = RouteHarness()
         app.collection_bulk_update(harness, user)
         parsed = app.urlparse(harness.location)
         query = app.parse_qs(parsed.query)
-        page_query, notice, status = app.query_notice_parts(query)
-        html = app.render_collection(user, page_query, notice=notice, status=status)
+        notice, status = app.consume_session_flash(token)
+        html = app.render_collection(user, query, notice=notice, status=status)
+        next_notice, next_status = app.consume_session_flash(token)
 
         self.assertEqual(parsed.path, "/collection")
         self.assertEqual(query["q"], ["Sol"])
-        self.assertEqual(query["_notice"], ["Updated 1 selected card."])
-        self.assertEqual(query["_notice_status"], ["success"])
+        self.assertEqual(notice, "Updated 1 selected card.")
+        self.assertEqual(status, "success")
+        self.assertEqual((next_notice, next_status), ("", "info"))
         self.assertIn("Updated 1 selected card.", html)
         self.assertNotIn("_notice", html)
 
@@ -862,6 +868,7 @@ class CollectionBrowseTests(BinderBridgeTestCase):
     def test_want_bulk_route_redirects_with_counted_notice(self):
         user_id = factory.create_user("wantbulkroute", display_name="Want Bulk Route")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        token, _expires_at = app.create_session(user_id)
         want_id = factory.create_want_item(user_id, "Sol Ring")
 
         class RouteHarness:
@@ -876,17 +883,22 @@ class CollectionBrowseTests(BinderBridgeTestCase):
             def redirect(self, location):
                 self.location = location
 
+            def flash_notice(self, notice, status="success"):
+                return app.set_session_flash(token, notice, status)
+
         harness = RouteHarness()
         app.want_bulk_delete(harness, user)
         parsed = app.urlparse(harness.location)
         query = app.parse_qs(parsed.query)
-        page_query, notice, status = app.query_notice_parts(query)
-        html = app.render_wants(user, query=page_query, notice=notice, status=status)
+        notice, status = app.consume_session_flash(token)
+        html = app.render_wants(user, query=query, notice=notice, status=status)
+        next_notice, next_status = app.consume_session_flash(token)
 
         self.assertEqual(parsed.path, "/wants")
         self.assertEqual(query["q"], ["Sol"])
-        self.assertEqual(query["_notice"], ["Deleted 1 selected wanted card."])
-        self.assertEqual(query["_notice_status"], ["success"])
+        self.assertEqual(notice, "Deleted 1 selected wanted card.")
+        self.assertEqual(status, "success")
+        self.assertEqual((next_notice, next_status), ("", "info"))
         self.assertIn("Deleted 1 selected wanted card.", html)
         self.assertNotIn("_notice", html)
 
