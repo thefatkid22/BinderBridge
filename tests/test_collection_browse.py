@@ -688,6 +688,38 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIsNone(alice_card)
         self.assertIsNotNone(bob_card)
 
+    def test_collection_bulk_route_redirects_with_counted_notice(self):
+        user_id = factory.create_user("bulkroute", display_name="Bulk Route")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        card_id = factory.create_collection_item(user_id, "Sol Ring", quantity=4)
+
+        class RouteHarness:
+            location = ""
+
+            def read_form(self):
+                return {
+                    "item_id": [str(card_id)],
+                    "quantity": ["2"],
+                    "redirect_to": ["/collection?q=Sol"],
+                }
+
+            def redirect(self, location):
+                self.location = location
+
+        harness = RouteHarness()
+        app.collection_bulk_update(harness, user)
+        parsed = app.urlparse(harness.location)
+        query = app.parse_qs(parsed.query)
+        page_query, notice, status = app.query_notice_parts(query)
+        html = app.render_collection(user, page_query, notice=notice, status=status)
+
+        self.assertEqual(parsed.path, "/collection")
+        self.assertEqual(query["q"], ["Sol"])
+        self.assertEqual(query["_notice"], ["Updated 1 selected card."])
+        self.assertEqual(query["_notice_status"], ["success"])
+        self.assertIn("Updated 1 selected card.", html)
+        self.assertNotIn("_notice", html)
+
     def test_bulk_update_selected_caps_trade_quantity_and_respects_user(self):
         alice_id = factory.create_user("alice", display_name="Alice")
         bob_id = factory.create_user("bob", display_name="Bob")
@@ -826,6 +858,37 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertEqual(deleted, 1)
         self.assertEqual([card["card_name"] for card in remaining_alice], ["Pikachu", "Solitude"])
         self.assertEqual(remaining_bob[0]["card_name"], "Sol Ring")
+
+    def test_want_bulk_route_redirects_with_counted_notice(self):
+        user_id = factory.create_user("wantbulkroute", display_name="Want Bulk Route")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        want_id = factory.create_want_item(user_id, "Sol Ring")
+
+        class RouteHarness:
+            location = ""
+
+            def read_form(self):
+                return {
+                    "want_id": [str(want_id)],
+                    "redirect_to": ["/wants?q=Sol"],
+                }
+
+            def redirect(self, location):
+                self.location = location
+
+        harness = RouteHarness()
+        app.want_bulk_delete(harness, user)
+        parsed = app.urlparse(harness.location)
+        query = app.parse_qs(parsed.query)
+        page_query, notice, status = app.query_notice_parts(query)
+        html = app.render_wants(user, query=page_query, notice=notice, status=status)
+
+        self.assertEqual(parsed.path, "/wants")
+        self.assertEqual(query["q"], ["Sol"])
+        self.assertEqual(query["_notice"], ["Deleted 1 selected wanted card."])
+        self.assertEqual(query["_notice_status"], ["success"])
+        self.assertIn("Deleted 1 selected wanted card.", html)
+        self.assertNotIn("_notice", html)
 
     def test_bulk_want_update_group_and_delete_respect_user_and_filters(self):
         alice_id = factory.create_user("alice", display_name="Alice")

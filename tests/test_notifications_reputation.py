@@ -44,6 +44,31 @@ class NotificationsReputationTests(BinderBridgeTestCase):
             "/notifications#notification-cleanup",
         )
 
+    def test_notification_bulk_notice_query_renders_and_strips_from_controls(self):
+        user_id = factory.create_user("notification-notice", display_name="Notification Notice")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        app.create_notification(user_id, "trade_status", "Trade update", "Trade activity")
+
+        redirect_to = app.redirect_with_notice(
+            app.workspace_redirect_path(
+                "/notifications",
+                {"_workspace_section": ["notification-cleanup"]},
+                ("notification-inbox", "notification-cleanup"),
+                default="notification-inbox",
+            ),
+            "Deleted 1 read notification.",
+        )
+        parsed = app.urlparse(redirect_to)
+        query = app.parse_qs(parsed.query)
+        page_query, notice, status = app.query_notice_parts(query)
+        html = app.render_notifications(user, query=page_query, notice=notice, status=status)
+
+        self.assertEqual(parsed.path, "/notifications")
+        self.assertEqual(parsed.fragment, "notification-cleanup")
+        self.assertEqual(query["_notice"], ["Deleted 1 read notification."])
+        self.assertIn("Deleted 1 read notification.", html)
+        self.assertNotIn("_notice", html)
+
     def test_trade_events_create_notifications(self):
         alice_id = app.create_user("alice", "password123", "Alice")
         bob_id = app.create_user("bob", "password123", "Bob")

@@ -241,6 +241,47 @@ def safe_local_redirect_path(value, default="/", allowed_prefix=None):
     return text
 
 
+BULK_NOTICE_PARAM = "_notice"
+BULK_NOTICE_STATUS_PARAM = "_notice_status"
+BULK_NOTICE_STATUSES = {"info", "success", "error", "warning"}
+
+
+def query_notice_parts(query):
+    clean = {}
+    for key, values in (query or {}).items():
+        if key in (BULK_NOTICE_PARAM, BULK_NOTICE_STATUS_PARAM):
+            continue
+        clean[key] = values if isinstance(values, list) else [values]
+    notice_values = (query or {}).get(BULK_NOTICE_PARAM, [])
+    status_values = (query or {}).get(BULK_NOTICE_STATUS_PARAM, [])
+    notice = sanitize_text_input((notice_values[0] if notice_values else ""), max_length=400).strip()
+    status = sanitize_text_input((status_values[0] if status_values else "info"), max_length=20).strip().lower()
+    if status not in BULK_NOTICE_STATUSES:
+        status = "info"
+    return clean, notice, status
+
+
+def redirect_with_notice(location, notice, status="success"):
+    safe_location = safe_local_redirect_path(location, default="/")
+    notice = sanitize_text_input(notice, max_length=400).strip()
+    if not notice:
+        return safe_location
+    status = sanitize_text_input(status, max_length=20).strip().lower()
+    if status not in BULK_NOTICE_STATUSES:
+        status = "info"
+    parsed = urlparse(safe_location)
+    query = sanitize_form_values(parse_qs(parsed.query, keep_blank_values=True, max_num_fields=MAX_FORM_FIELDS))
+    query[BULK_NOTICE_PARAM] = [notice]
+    query[BULK_NOTICE_STATUS_PARAM] = [status]
+    return parsed._replace(query=urlencode(query, doseq=True)).geturl()
+
+
+def count_phrase(count, singular, plural=None):
+    count = int(count or 0)
+    label = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count} {label}"
+
+
 def safe_download_filename(filename, default="download"):
     text = sanitize_text_input(filename, max_length=180).strip()
     text = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip(".-")
@@ -491,7 +532,8 @@ class App(BaseHTTPRequestHandler):
             if path == "/cleanup/wants" and method == "POST":
                 return self.cleanup_wants(user)
             if path == "/cleanup/audit":
-                return self.condition_finish_audit_page(user, query)
+                page_query, notice, notice_status = query_notice_parts(query)
+                return self.condition_finish_audit_page(user, page_query, notice=notice, status=notice_status)
             if path == "/cleanup/audit/update" and method == "POST":
                 return self.condition_finish_audit_update(user)
             if path == "/cleanup/audit/update-all" and method == "POST":
@@ -587,7 +629,8 @@ class App(BaseHTTPRequestHandler):
             if path.startswith("/admin/user/") and method == "POST":
                 return self.admin_user_action(user, path)
             if path == "/collection":
-                return self.html(render_collection(user, query))
+                page_query, notice, notice_status = query_notice_parts(query)
+                return self.html(render_collection(user, page_query, notice=notice, status=notice_status))
             if path == "/collection/stats":
                 return self.html(render_collection_statistics(user))
             if path == "/collection/export" and method == "GET":
@@ -623,7 +666,8 @@ class App(BaseHTTPRequestHandler):
             if path == "/import":
                 return self.collection_import(method, user)
             if path == "/wants":
-                return self.html(render_wants(user, query=query))
+                page_query, notice, notice_status = query_notice_parts(query)
+                return self.html(render_wants(user, query=page_query, notice=notice, status=notice_status))
             if path == "/wants/export" and method == "GET":
                 return self.wants_export(user)
             if path == "/wants/bulk-update" and method == "POST":
@@ -657,19 +701,24 @@ class App(BaseHTTPRequestHandler):
             if path.startswith("/members/"):
                 return self.member_detail(user, path, query)
             if path == "/notifications":
-                return self.html(render_notifications(user, query=query))
+                page_query, notice, notice_status = query_notice_parts(query)
+                return self.html(render_notifications(user, query=page_query, notice=notice, status=notice_status))
             if path == "/notifications/read-all" and method == "POST":
                 form = self.read_form()
+                marked = unread_notification_count(user["id"])
                 mark_all_notifications_read(user["id"])
-                return self.redirect(workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox"))
+                redirect_to = workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox")
+                return self.redirect(redirect_with_notice(redirect_to, f"Marked {count_phrase(marked, 'notification')} read."))
             if path == "/notifications/delete-read" and method == "POST":
                 form = self.read_form()
-                delete_read_notifications(user["id"])
-                return self.redirect(workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox"))
+                deleted = delete_read_notifications(user["id"])
+                redirect_to = workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox")
+                return self.redirect(redirect_with_notice(redirect_to, f"Deleted {count_phrase(deleted, 'read notification')}."))
             if path == "/notifications/delete-all" and method == "POST":
                 form = self.read_form()
-                delete_all_notifications(user["id"])
-                return self.redirect(workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-cleanup"))
+                deleted = delete_all_notifications(user["id"])
+                redirect_to = workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-cleanup")
+                return self.redirect(redirect_with_notice(redirect_to, f"Deleted {count_phrase(deleted, 'notification')}."))
             if path.startswith("/notifications/") and path.endswith("/read") and method == "POST":
                 return self.notification_action(user, path)
             if path.startswith("/notifications/") and path.endswith("/delete") and method == "POST":
