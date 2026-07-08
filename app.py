@@ -24,7 +24,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 
 from binderbridge.config import config_bool, config_int, config_str
@@ -241,39 +241,59 @@ def safe_local_redirect_path(value, default="/", allowed_prefix=None):
     return text
 
 
-BULK_NOTICE_PARAM = "_notice"
-BULK_NOTICE_STATUS_PARAM = "_notice_status"
-BULK_NOTICE_STATUSES = {"info", "success", "error", "warning"}
+FLASH_NOTICE_PARAM = "_notice"
+FLASH_NOTICE_STATUS_PARAM = "_notice_status"
+FLASH_NOTICE_STATUSES = {"info", "success", "error", "warning"}
 
 
-def query_notice_parts(query):
+def query_without_notice_params(query):
     clean = {}
     for key, values in (query or {}).items():
-        if key in (BULK_NOTICE_PARAM, BULK_NOTICE_STATUS_PARAM):
+        if key in (FLASH_NOTICE_PARAM, FLASH_NOTICE_STATUS_PARAM):
             continue
         clean[key] = values if isinstance(values, list) else [values]
-    notice_values = (query or {}).get(BULK_NOTICE_PARAM, [])
-    status_values = (query or {}).get(BULK_NOTICE_STATUS_PARAM, [])
-    notice = sanitize_text_input((notice_values[0] if notice_values else ""), max_length=400).strip()
-    status = sanitize_text_input((status_values[0] if status_values else "info"), max_length=20).strip().lower()
-    if status not in BULK_NOTICE_STATUSES:
-        status = "info"
-    return clean, notice, status
+    return clean
 
 
-def redirect_with_notice(location, notice, status="success"):
-    safe_location = safe_local_redirect_path(location, default="/")
+def clean_flash_notice(notice, status="success"):
     notice = sanitize_text_input(notice, max_length=400).strip()
     if not notice:
-        return safe_location
+        return "", "info"
     status = sanitize_text_input(status, max_length=20).strip().lower()
-    if status not in BULK_NOTICE_STATUSES:
+    if status not in FLASH_NOTICE_STATUSES:
         status = "info"
-    parsed = urlparse(safe_location)
-    query = sanitize_form_values(parse_qs(parsed.query, keep_blank_values=True, max_num_fields=MAX_FORM_FIELDS))
-    query[BULK_NOTICE_PARAM] = [notice]
-    query[BULK_NOTICE_STATUS_PARAM] = [status]
-    return parsed._replace(query=urlencode(query, doseq=True)).geturl()
+    return notice, status
+
+
+def set_session_flash(token, notice, status="success"):
+    notice, status = clean_flash_notice(notice, status)
+    if not token or not notice:
+        return 0
+    with db() as conn:
+        cursor = conn.execute(
+            "UPDATE sessions SET flash_notice = ?, flash_status = ? WHERE token = ?",
+            (notice, status, token),
+        )
+        return cursor.rowcount
+
+
+def consume_session_flash(token):
+    if not token:
+        return "", "info"
+    with db() as conn:
+        found = conn.execute(
+            "SELECT flash_notice, flash_status FROM sessions WHERE token = ?",
+            (token,),
+        ).fetchone()
+        if not found:
+            return "", "info"
+        notice, status = clean_flash_notice(found["flash_notice"], found["flash_status"])
+        if notice:
+            conn.execute(
+                "UPDATE sessions SET flash_notice = '', flash_status = '' WHERE token = ?",
+                (token,),
+            )
+        return notice, status
 
 
 def count_phrase(count, singular, plural=None):
@@ -532,7 +552,8 @@ class App(BaseHTTPRequestHandler):
             if path == "/cleanup/wants" and method == "POST":
                 return self.cleanup_wants(user)
             if path == "/cleanup/audit":
-                page_query, notice, notice_status = query_notice_parts(query)
+                page_query = query_without_notice_params(query)
+                notice, notice_status = self.consume_flash_notice()
                 return self.condition_finish_audit_page(user, page_query, notice=notice, status=notice_status)
             if path == "/cleanup/audit/update" and method == "POST":
                 return self.condition_finish_audit_update(user)
@@ -629,7 +650,8 @@ class App(BaseHTTPRequestHandler):
             if path.startswith("/admin/user/") and method == "POST":
                 return self.admin_user_action(user, path)
             if path == "/collection":
-                page_query, notice, notice_status = query_notice_parts(query)
+                page_query = query_without_notice_params(query)
+                notice, notice_status = self.consume_flash_notice()
                 return self.html(render_collection(user, page_query, notice=notice, status=notice_status))
             if path == "/collection/stats":
                 return self.html(render_collection_statistics(user))
@@ -666,7 +688,8 @@ class App(BaseHTTPRequestHandler):
             if path == "/import":
                 return self.collection_import(method, user)
             if path == "/wants":
-                page_query, notice, notice_status = query_notice_parts(query)
+                page_query = query_without_notice_params(query)
+                notice, notice_status = self.consume_flash_notice()
                 return self.html(render_wants(user, query=page_query, notice=notice, status=notice_status))
             if path == "/wants/export" and method == "GET":
                 return self.wants_export(user)
@@ -701,24 +724,28 @@ class App(BaseHTTPRequestHandler):
             if path.startswith("/members/"):
                 return self.member_detail(user, path, query)
             if path == "/notifications":
-                page_query, notice, notice_status = query_notice_parts(query)
+                page_query = query_without_notice_params(query)
+                notice, notice_status = self.consume_flash_notice()
                 return self.html(render_notifications(user, query=page_query, notice=notice, status=notice_status))
             if path == "/notifications/read-all" and method == "POST":
                 form = self.read_form()
                 marked = unread_notification_count(user["id"])
                 mark_all_notifications_read(user["id"])
                 redirect_to = workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox")
-                return self.redirect(redirect_with_notice(redirect_to, f"Marked {count_phrase(marked, 'notification')} read."))
+                self.flash_notice(f"Marked {count_phrase(marked, 'notification')} read.")
+                return self.redirect(redirect_to)
             if path == "/notifications/delete-read" and method == "POST":
                 form = self.read_form()
                 deleted = delete_read_notifications(user["id"])
                 redirect_to = workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-inbox")
-                return self.redirect(redirect_with_notice(redirect_to, f"Deleted {count_phrase(deleted, 'read notification')}."))
+                self.flash_notice(f"Deleted {count_phrase(deleted, 'read notification')}.")
+                return self.redirect(redirect_to)
             if path == "/notifications/delete-all" and method == "POST":
                 form = self.read_form()
                 deleted = delete_all_notifications(user["id"])
                 redirect_to = workspace_redirect_path("/notifications", form, ("notification-inbox", "notification-cleanup"), default="notification-cleanup")
-                return self.redirect(redirect_with_notice(redirect_to, f"Deleted {count_phrase(deleted, 'notification')}."))
+                self.flash_notice(f"Deleted {count_phrase(deleted, 'notification')}.")
+                return self.redirect(redirect_to)
             if path.startswith("/notifications/") and path.endswith("/read") and method == "POST":
                 return self.notification_action(user, path)
             if path.startswith("/notifications/") and path.endswith("/delete") and method == "POST":
@@ -771,6 +798,12 @@ class App(BaseHTTPRequestHandler):
         cookie = SimpleCookie(self.headers.get("Cookie"))
         token = cookie.get(SESSION_COOKIE)
         return token.value if token else None
+
+    def flash_notice(self, notice, status="success"):
+        return set_session_flash(self.current_session_token(), notice, status)
+
+    def consume_flash_notice(self):
+        return consume_session_flash(self.current_session_token())
 
     def client_ip(self):
         forwarded = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()

@@ -131,6 +131,8 @@ def init_db():
                 token TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 expires_at INTEGER NOT NULL,
+                flash_notice TEXT NOT NULL DEFAULT '',
+                flash_status TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             );
 
@@ -756,6 +758,15 @@ def init_db():
         migrate_db(conn)
 
 def migrate_db(conn):
+    session_columns = {column["name"] for column in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    session_missing_columns = {
+        "flash_notice": "TEXT NOT NULL DEFAULT ''",
+        "flash_status": "TEXT NOT NULL DEFAULT ''",
+    }
+    for name, definition in session_missing_columns.items():
+        if name not in session_columns:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {name} {definition}")
+
     user_columns = {column["name"] for column in conn.execute("PRAGMA table_info(users)").fetchall()}
     user_missing_columns = {
         "email": "TEXT NOT NULL DEFAULT ''",

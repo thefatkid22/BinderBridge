@@ -36,7 +36,8 @@ def group_action(self, method, user, path, query=None):
     if not group:
         return self.not_found(user)
     if len(parts) == 2 and method == "GET":
-        page_query, notice, notice_status = query_notice_parts(query)
+        page_query = query_without_notice_params(query)
+        notice, notice_status = self.consume_flash_notice()
         page = render_group_detail(user, group_id, query=page_query, notice=notice, status=notice_status)
         if not page:
             return self.not_found(user)
@@ -114,7 +115,8 @@ def group_action(self, method, user, path, query=None):
         removed = remove_group_item(user["id"], group_id, group_item_id)
         item_label = "wanted card" if group["group_type"] == "wishlist" else "card"
         notice = f"Removed {count_phrase(removed, item_label)} from this group."
-        return self.redirect(redirect_with_notice(f"/groups/{group_id}#group-cards", notice))
+        self.flash_notice(notice)
+        return self.redirect(f"/groups/{group_id}#group-cards")
     if len(parts) == 4 and parts[2] == "items" and parts[3] == "bulk-delete" and method == "POST":
         form = self.read_form()
         redirect_to = safe_local_redirect_path(
@@ -125,7 +127,8 @@ def group_action(self, method, user, path, query=None):
         removed = remove_group_items(user["id"], group_id, form.get("group_item_id", []))
         item_label = "wanted card" if group["group_type"] == "wishlist" else "card"
         notice = f"Removed {count_phrase(removed, f'selected {item_label}')} from this group."
-        return self.redirect(redirect_with_notice(redirect_to, notice))
+        self.flash_notice(notice)
+        return self.redirect(redirect_to)
     if len(parts) == 4 and parts[2] == "items" and parts[3] == "bulk-update" and method == "POST":
         form = self.read_form()
         redirect_to = safe_local_redirect_path(
@@ -143,7 +146,8 @@ def group_action(self, method, user, path, query=None):
         except ValueError as exc:
             return self.html(render_group_detail(user, group_id, notice=str(exc), status="error", query=form, active_section="group-cards"), HTTPStatus.BAD_REQUEST)
         notice = f"Updated {count_phrase(updated, 'selected group card')}."
-        return self.redirect(redirect_with_notice(redirect_to, notice))
+        self.flash_notice(notice)
+        return self.redirect(redirect_to)
     if len(parts) == 4 and parts[2] == "items" and parts[3] == "update-all" and method == "POST":
         form = self.read_form()
         redirect_to = safe_local_redirect_path(
@@ -161,7 +165,8 @@ def group_action(self, method, user, path, query=None):
         except ValueError as exc:
             return self.html(render_group_detail(user, group_id, notice=str(exc), status="error", query=form, active_section="group-cards"), HTTPStatus.BAD_REQUEST)
         notice = f"Updated {count_phrase(updated, 'matching group card')}."
-        return self.redirect(redirect_with_notice(redirect_to, notice))
+        self.flash_notice(notice)
+        return self.redirect(redirect_to)
     if len(parts) == 4 and parts[2] == "items" and parts[3] == "delete-all" and method == "POST":
         form = self.read_form()
         redirect_to = safe_local_redirect_path(
@@ -176,7 +181,8 @@ def group_action(self, method, user, path, query=None):
         )
         item_label = "wanted card" if group["group_type"] == "wishlist" else "card"
         notice = f"Removed {count_phrase(removed, f'matching {item_label}')} from this group."
-        return self.redirect(redirect_with_notice(redirect_to, notice))
+        self.flash_notice(notice)
+        return self.redirect(redirect_to)
     return self.not_found(user)
 
 def group_deck_import(self, user, group):
