@@ -30,76 +30,109 @@ def cleanup_wants(self, user):
 def condition_finish_audit_page(self, user, query=None, notice=None, status="info", active_section=""):
     return self.html(render_condition_finish_audit(user, query or {}, notice=notice, status=status, active_section=active_section))
 
-def condition_finish_audit_query_from_form(self, form):
-    redirect_to = safe_local_redirect_path(
+def condition_finish_audit_redirect_to(form):
+    return safe_local_redirect_path(
         form.get("redirect_to", ["/cleanup/audit"])[0],
         default="/cleanup/audit",
         allowed_prefix="/cleanup/audit",
     )
+
+def condition_finish_audit_query_from_form(self, form):
+    redirect_to = condition_finish_audit_redirect_to(form)
     return sanitize_form_values(parse_qs(urlparse(redirect_to).query, keep_blank_values=True, max_num_fields=MAX_FORM_FIELDS))
+
+def condition_finish_audit_active_section_from_form(form, default_section=None):
+    default_section = default_section or AUDIT_DEFAULT_SECTION
+    section = workspace_section_from_form(form, AUDIT_SECTION_IDS)
+    if section:
+        return section
+    redirect_to = condition_finish_audit_redirect_to(form)
+    return audit_section_id(urlparse(redirect_to).fragment, default=default_section)
+
+def condition_finish_audit_route_response(self, user, form, notice=None, status="info", default_section=None):
+    query = self.condition_finish_audit_query_from_form(form)
+    active_section = condition_finish_audit_active_section_from_form(form, default_section=default_section)
+    return self.condition_finish_audit_page(user, query, notice=notice, status=status, active_section=active_section)
 
 def condition_finish_audit_update(self, user):
     form = self.read_form()
-    query = self.condition_finish_audit_query_from_form(form)
     try:
         condition, finish = parse_condition_finish_audit_update(form)
     except ValueError as exc:
-        return self.condition_finish_audit_page(user, query, notice=str(exc), status="error", active_section="audit-results")
+        return condition_finish_audit_route_response(self, user, form, notice=str(exc), status="error")
     updated = update_collection_condition_finish_by_ids(user["id"], form.get("item_id", []), condition, finish)
     notice = f"Updated {updated} selected card{'s' if updated != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
+    return condition_finish_audit_route_response(self, user, form, notice=notice)
 
 def condition_finish_audit_update_all(self, user):
     form = self.read_form()
-    query = self.condition_finish_audit_query_from_form(form)
     filters = condition_finish_audit_filter_values(form)
     try:
         condition, finish = parse_condition_finish_audit_update(form)
     except ValueError as exc:
-        return self.condition_finish_audit_page(user, query, notice=str(exc), status="error", active_section="audit-results")
+        return condition_finish_audit_route_response(self, user, form, notice=str(exc), status="error")
     updated = update_collection_condition_finish_matching(user["id"], filters, condition, finish)
     notice = f"Updated {updated} matching card{'s' if updated != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
+    return condition_finish_audit_route_response(self, user, form, notice=notice)
 
 def condition_finish_audit_normalize(self, user):
     form = self.read_form()
-    query = self.condition_finish_audit_query_from_form(form)
     updated = normalize_collection_condition_finish_by_ids(user["id"], form.get("item_id", []))
     notice = f"Normalized {updated} selected card{'s' if updated != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
+    return condition_finish_audit_route_response(self, user, form, notice=notice)
 
 def condition_finish_audit_normalize_all(self, user):
     form = self.read_form()
-    query = self.condition_finish_audit_query_from_form(form)
     filters = condition_finish_audit_filter_values(form)
     updated = normalize_collection_condition_finish_matching(user["id"], filters)
     notice = f"Normalized {updated} matching card{'s' if updated != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
+    return condition_finish_audit_route_response(self, user, form, notice=notice)
 
 def condition_finish_audit_scryfall(self, user):
     form = self.read_form()
-    query = self.condition_finish_audit_query_from_form(form)
     queued = queue_scryfall_enhancement_by_ids(user["id"], form.get("item_id", []))
     if queued:
         start_scryfall_enrichment_worker()
     notice = f"Queued {queued} selected card{'s' if queued != 1 else ''} for Scryfall enhancement."
-    return self.condition_finish_audit_page(user, query, notice=notice, active_section="scryfall-enhancement")
+    return condition_finish_audit_route_response(self, user, form, notice=notice, default_section=AUDIT_SECTION_COLLECTION_SCRYFALL)
 
 def condition_finish_audit_scryfall_all(self, user):
     form = self.read_form()
-    query = self.condition_finish_audit_query_from_form(form)
     queued = queue_scryfall_enhancement_matching(user["id"])
     if queued:
         start_scryfall_enrichment_worker()
     notice = f"Queued {queued} collection card{'s' if queued != 1 else ''} for Scryfall enhancement."
-    return self.condition_finish_audit_page(user, query, notice=notice, active_section="scryfall-enhancement")
+    return condition_finish_audit_route_response(self, user, form, notice=notice, default_section=AUDIT_SECTION_COLLECTION_SCRYFALL)
 
 def condition_finish_audit_scryfall_delete(self, user):
     form = self.read_form()
-    query = self.condition_finish_audit_query_from_form(form)
     deleted = bulk_delete_collection_items(user["id"], form.get("item_id", []))
     notice = f"Deleted {deleted} selected collection card{'s' if deleted != 1 else ''}."
-    return self.condition_finish_audit_page(user, query, notice=notice, active_section="scryfall-enhancement")
+    return condition_finish_audit_route_response(self, user, form, notice=notice, default_section=AUDIT_SECTION_COLLECTION_SCRYFALL)
+
+def want_scryfall_enhancement_notice(result, scope):
+    notice = f"Enhanced {result['enhanced']} {scope} wanted card{'s' if result['enhanced'] != 1 else ''} from local Scryfall data."
+    if result.get("missing"):
+        notice += f" {result['missing']} could not be matched yet."
+    return notice
+
+def condition_finish_audit_want_scryfall(self, user):
+    form = self.read_form()
+    result = enhance_want_scryfall_by_ids(user["id"], form.get("item_id", []))
+    notice = want_scryfall_enhancement_notice(result, "selected")
+    return condition_finish_audit_route_response(self, user, form, notice=notice, default_section=AUDIT_SECTION_WISHLIST_SCRYFALL)
+
+def condition_finish_audit_want_scryfall_all(self, user):
+    form = self.read_form()
+    result = enhance_want_scryfall_matching(user["id"])
+    notice = want_scryfall_enhancement_notice(result, "matching")
+    return condition_finish_audit_route_response(self, user, form, notice=notice, default_section=AUDIT_SECTION_WISHLIST_SCRYFALL)
+
+def condition_finish_audit_want_scryfall_delete(self, user):
+    form = self.read_form()
+    deleted = bulk_delete_want_items(user["id"], form.get("item_id", []))
+    notice = f"Deleted {deleted} selected wanted card{'s' if deleted != 1 else ''}."
+    return condition_finish_audit_route_response(self, user, form, notice=notice, default_section=AUDIT_SECTION_WISHLIST_SCRYFALL)
 
 def collection_import(self, method, user):
     if method == "GET":
@@ -941,7 +974,7 @@ def want_group_all(self, user):
     self.flash_notice(notice)
     self.redirect(redirect_to)
 
-COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'condition_finish_audit_scryfall', 'condition_finish_audit_scryfall_all', 'condition_finish_audit_scryfall_delete', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_bulk_group', 'collection_group_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_share_link', 'want_delete', 'want_bulk_update', 'want_update_all', 'want_bulk_delete', 'want_delete_all', 'want_bulk_group', 'want_group_all')
+COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'condition_finish_audit_scryfall', 'condition_finish_audit_scryfall_all', 'condition_finish_audit_scryfall_delete', 'condition_finish_audit_want_scryfall', 'condition_finish_audit_want_scryfall_all', 'condition_finish_audit_want_scryfall_delete', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_bulk_group', 'collection_group_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_share_link', 'want_delete', 'want_bulk_update', 'want_update_all', 'want_bulk_delete', 'want_delete_all', 'want_bulk_group', 'want_group_all')
 
 __all__ = [
     "COLLECTION_ROUTE_METHODS",
