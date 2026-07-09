@@ -1222,7 +1222,7 @@ def render_account(user, notice=None, status="info", recovery_codes=None, active
             <div class="form-actions">
                 <a class="button primary" href="/account/export">Download account data</a>
                 <a class="button secondary" href="/cleanup">Open cleanup tools</a>
-                <a class="button secondary" href="/cleanup/audit">Audit condition/finish</a>
+                <a class="button secondary" href="/cleanup/audit">Audit collection</a>
             </div>
         </article>
     </section>

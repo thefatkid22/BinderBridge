@@ -76,6 +76,31 @@ def condition_finish_audit_normalize_all(self, user):
     notice = f"Normalized {updated} matching card{'s' if updated != 1 else ''}."
     return self.condition_finish_audit_page(user, query, notice=notice, active_section="audit-results")
 
+def condition_finish_audit_scryfall(self, user):
+    form = self.read_form()
+    query = self.condition_finish_audit_query_from_form(form)
+    queued = queue_scryfall_enhancement_by_ids(user["id"], form.get("item_id", []))
+    if queued:
+        start_scryfall_enrichment_worker()
+    notice = f"Queued {queued} selected card{'s' if queued != 1 else ''} for Scryfall enhancement."
+    return self.condition_finish_audit_page(user, query, notice=notice, active_section="scryfall-enhancement")
+
+def condition_finish_audit_scryfall_all(self, user):
+    form = self.read_form()
+    query = self.condition_finish_audit_query_from_form(form)
+    queued = queue_scryfall_enhancement_matching(user["id"])
+    if queued:
+        start_scryfall_enrichment_worker()
+    notice = f"Queued {queued} collection card{'s' if queued != 1 else ''} for Scryfall enhancement."
+    return self.condition_finish_audit_page(user, query, notice=notice, active_section="scryfall-enhancement")
+
+def condition_finish_audit_scryfall_delete(self, user):
+    form = self.read_form()
+    query = self.condition_finish_audit_query_from_form(form)
+    deleted = bulk_delete_collection_items(user["id"], form.get("item_id", []))
+    notice = f"Deleted {deleted} selected collection card{'s' if deleted != 1 else ''}."
+    return self.condition_finish_audit_page(user, query, notice=notice, active_section="scryfall-enhancement")
+
 def collection_import(self, method, user):
     if method == "GET":
         return self.html(render_import(user))
@@ -916,7 +941,7 @@ def want_group_all(self, user):
     self.flash_notice(notice)
     self.redirect(redirect_to)
 
-COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_bulk_group', 'collection_group_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_share_link', 'want_delete', 'want_bulk_update', 'want_update_all', 'want_bulk_delete', 'want_delete_all', 'want_bulk_group', 'want_group_all')
+COLLECTION_ROUTE_METHODS = ('collection_export', 'wants_export', 'cleanup_page', 'cleanup_collection', 'cleanup_wants', 'condition_finish_audit_page', 'condition_finish_audit_query_from_form', 'condition_finish_audit_update', 'condition_finish_audit_update_all', 'condition_finish_audit_normalize', 'condition_finish_audit_normalize_all', 'condition_finish_audit_scryfall', 'condition_finish_audit_scryfall_all', 'condition_finish_audit_scryfall_delete', 'collection_import', 'csv_import_mapping_preset_create', 'csv_import_mapping_preset_delete', 'import_undo', 'import_scryfall_sync', 'prices_refresh', 'collection_bulk_delete', 'collection_bulk_update', 'collection_update_all', 'collection_delete_all', 'collection_bulk_group', 'collection_group_all', 'collection_new', 'collection_item', 'collection_photo', 'want_new', 'want_edit', 'want_share_link', 'want_delete', 'want_bulk_update', 'want_update_all', 'want_bulk_delete', 'want_delete_all', 'want_bulk_group', 'want_group_all')
 
 __all__ = [
     "COLLECTION_ROUTE_METHODS",

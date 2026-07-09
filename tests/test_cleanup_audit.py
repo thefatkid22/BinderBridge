@@ -1,4 +1,4 @@
-"""Duplicate cleanup, condition/finish audit, and Scryfall finish-gate tests."""
+"""Duplicate cleanup, collection audit, and Scryfall finish-gate tests."""
 
 from tests.base import *  # noqa: F401,F403
 
@@ -265,7 +265,7 @@ class CleanupAuditTests(BinderBridgeTestCase):
         self.assertEqual(summary["trade_needs_review"], 2)
         self.assertEqual([item["card_name"] for item in rows], ["Counterspell", "Island", "Sol Ring"])
         self.assertEqual([item["card_name"] for item in normalize_rows], ["Sol Ring"])
-        self.assertIn("Condition &amp; finish audit", html)
+        self.assertIn("Collection audit", html)
         self.assertIn("/cleanup/audit/normalize", html)
         self.assertIn("Apply all matching", html)
         self.assertIn('<table class="responsive-card-table audit-table">', html)
@@ -333,6 +333,133 @@ class CleanupAuditTests(BinderBridgeTestCase):
         self.assertEqual((second["condition"], second["finish"]), ("NM", "Foil"))
         self.assertEqual((clean["condition"], clean["finish"]), ("NM", "Regular"))
         self.assertEqual((bob["condition"], bob["finish"]), ("", ""))
+
+    def test_scryfall_enhancement_audit_queues_missing_collection_cards(self):
+        user_id = app.create_user("scryfallaudit", "password123", "Scryfall Audit")
+        other_id = app.create_user("otherscryfallaudit", "password123", "Other Scryfall Audit")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        timestamp = app.now_iso()
+        missing_id = app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, set_code, collector_number, condition, finish,
+                 quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Missing Metadata', 'TST', '1', 'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        partial_id = app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, set_code, collector_number, scryfall_id,
+                 condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Partial Metadata', 'TST', '2', 'partial-card',
+                    'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        complete_id = app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, set_code, collector_number, scryfall_id, image_url,
+                 type_line, scryfall_uri, condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Complete Metadata', 'TST', '3', 'complete-card', 'https://cards.example/complete.jpg',
+                    'Artifact', 'https://scryfall.example/complete', 'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'pokemon', 'Other Game Card', 'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        other_user_missing_id = app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Other User Missing', 'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (other_id, timestamp, timestamp),
+        )
+
+        summary = app.scryfall_enhancement_audit_summary(user_id)
+        audit_rows = app.scryfall_enhancement_audit_rows(user_id)
+        html = app.render_condition_finish_audit(user, {})
+        queued_selected = app.queue_scryfall_enhancement_by_ids(user_id, [missing_id, complete_id, other_user_missing_id])
+        queued_all = app.queue_scryfall_enhancement_matching(user_id)
+        jobs = app.rows("SELECT * FROM scryfall_enrichment_jobs WHERE user_id = ? ORDER BY collection_item_id", (user_id,))
+
+        self.assertEqual(summary, {"missing": 2, "queued": 0})
+        self.assertEqual([item["id"] for item in audit_rows], [missing_id, partial_id])
+        self.assertEqual(audit_rows[0]["missing_scryfall_labels"], ["Scryfall ID", "image", "type line", "Scryfall link"])
+        self.assertEqual(audit_rows[1]["missing_scryfall_labels"], ["image", "type line", "Scryfall link"])
+        self.assertIn('id="scryfall-enhancement"', html)
+        self.assertIn("Scryfall enhancement", html)
+        self.assertIn("/cleanup/audit/scryfall", html)
+        self.assertIn("/cleanup/audit/scryfall-delete", html)
+        self.assertIn("Queue all missing", html)
+        self.assertIn("Delete selected", html)
+        self.assertEqual(queued_selected, 1)
+        self.assertEqual(queued_all, 2)
+        self.assertEqual([job["collection_item_id"] for job in jobs], [missing_id, partial_id])
+        self.assertEqual([job["status"] for job in jobs], ["pending", "pending"])
+
+    def test_scryfall_enhancement_audit_delete_removes_selected_user_cards(self):
+        user_id = app.create_user("scryfalldelete", "password123", "Scryfall Delete")
+        other_id = app.create_user("otherscryfalldelete", "password123", "Other Scryfall Delete")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        timestamp = app.now_iso()
+        card_id = app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Delete Missing Metadata', 'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        other_card_id = app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Other User Missing Metadata', 'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (other_id, timestamp, timestamp),
+        )
+        captured = {}
+
+        class Harness:
+            def read_form(self):
+                return {
+                    "item_id": [str(card_id), str(other_card_id)],
+                    "redirect_to": ["/cleanup/audit#scryfall-enhancement"],
+                }
+
+            def condition_finish_audit_query_from_form(self, form):
+                return app.condition_finish_audit_query_from_form(self, form)
+
+            def condition_finish_audit_page(self, page_user, query, notice=None, status="info", active_section=""):
+                captured.update({
+                    "user_id": page_user["id"],
+                    "query": query,
+                    "notice": notice,
+                    "status": status,
+                    "active_section": active_section,
+                })
+                return "deleted"
+
+        response = app.condition_finish_audit_scryfall_delete(Harness(), user)
+        deleted_card = app.row("SELECT * FROM collection_items WHERE id = ?", (card_id,))
+        other_card = app.row("SELECT * FROM collection_items WHERE id = ?", (other_card_id,))
+
+        self.assertEqual(response, "deleted")
+        self.assertIsNone(deleted_card)
+        self.assertIsNotNone(other_card)
+        self.assertEqual(captured["user_id"], user_id)
+        self.assertEqual(captured["notice"], "Deleted 1 selected collection card.")
+        self.assertEqual(captured["active_section"], "scryfall-enhancement")
 
     def test_condition_finish_audit_flags_scryfall_finish_mismatches(self):
         user_id = app.create_user("finishcheck", "password123", "Finish Check")
