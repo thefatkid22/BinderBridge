@@ -563,6 +563,12 @@ class App(BaseHTTPRequestHandler):
                 return self.condition_finish_audit_normalize(user)
             if path == "/cleanup/audit/normalize-all" and method == "POST":
                 return self.condition_finish_audit_normalize_all(user)
+            if path == "/cleanup/audit/scryfall" and method == "POST":
+                return self.condition_finish_audit_scryfall(user)
+            if path == "/cleanup/audit/scryfall-all" and method == "POST":
+                return self.condition_finish_audit_scryfall_all(user)
+            if path == "/cleanup/audit/scryfall-delete" and method == "POST":
+                return self.condition_finish_audit_scryfall_delete(user)
             if path == "/admin":
                 return self.admin_page(user)
             if path == "/admin/setup":

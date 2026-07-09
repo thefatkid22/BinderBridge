@@ -441,7 +441,7 @@ def verify_cleanup_workspace(page, base_url: str) -> None:
     expect(page.locator("#cleanup-wants").get_by_role("heading", name="Wanted-card duplicates", exact=True)).to_be_visible()
 
     page.goto(f"{base_url}/cleanup/audit")
-    expect(page.get_by_role("heading", name=re.compile("Condition .* finish audit", re.I))).to_be_visible()
+    expect(page.get_by_role("heading", name=re.compile("Collection audit", re.I))).to_be_visible()
     open_workspace_tab(page, "#audit-summary", "#audit-summary")
     expect(page.locator("#audit-summary")).to_contain_text("cards need audit")
 

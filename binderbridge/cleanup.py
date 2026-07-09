@@ -92,6 +92,13 @@ SCRYFALL_FINISH_LABELS = {
     "etched": "Etched",
 }
 
+SCRYFALL_ENHANCEMENT_REQUIRED_FIELDS = (
+    ("scryfall_id", "Scryfall ID"),
+    ("image_url", "image"),
+    ("type_line", "type line"),
+    ("scryfall_uri", "Scryfall link"),
+)
+
 
 def duplicate_key(parts):
     raw = json.dumps(parts, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -868,6 +875,118 @@ def normalize_collection_condition_finish_matching(user_id, filters):
     return normalize_collection_condition_finish_by_ids(user_id, item_ids)
 
 
+def scryfall_enhancement_missing_reasons(item):
+    if row_value(item, "game", "mtg") != "mtg" or not str(row_value(item, "card_name", "") or "").strip():
+        return []
+    return [
+        {"field": field, "label": label}
+        for field, label in SCRYFALL_ENHANCEMENT_REQUIRED_FIELDS
+        if not str(row_value(item, field, "") or "").strip()
+    ]
+
+
+def scryfall_enhancement_where_clause():
+    field_checks = " OR ".join(f"collection_items.{field} = ''" for field, _label in SCRYFALL_ENHANCEMENT_REQUIRED_FIELDS)
+    return f"""
+        collection_items.user_id = ?
+        AND collection_items.game = 'mtg'
+        AND TRIM(collection_items.card_name) != ''
+        AND ({field_checks})
+    """
+
+
+def scryfall_enhancement_audit_rows(user_id, limit=50):
+    params = [user_id]
+    limit_clause = ""
+    if limit is not None:
+        try:
+            clean_limit = max(1, int(limit))
+        except (TypeError, ValueError):
+            clean_limit = 50
+        limit_clause = "LIMIT ?"
+        params.append(clean_limit)
+    with db() as conn:
+        items = conn.execute(
+            f"""
+            SELECT collection_items.*,
+                   COALESCE(scryfall_enrichment_jobs.status, '') AS enrichment_status,
+                   COALESCE(scryfall_enrichment_jobs.last_error, '') AS enrichment_error
+            FROM collection_items
+            LEFT JOIN scryfall_enrichment_jobs
+                ON scryfall_enrichment_jobs.collection_item_id = collection_items.id
+            WHERE {scryfall_enhancement_where_clause()}
+            ORDER BY collection_items.card_name COLLATE NOCASE,
+                     collection_items.set_name COLLATE NOCASE,
+                     collection_items.collector_number COLLATE NOCASE,
+                     collection_items.id
+            {limit_clause}
+            """,
+            params,
+        ).fetchall()
+    audited = []
+    for item in items:
+        reasons = scryfall_enhancement_missing_reasons(item)
+        if not reasons:
+            continue
+        enriched = dict(item)
+        enriched["missing_scryfall_fields"] = [reason["field"] for reason in reasons]
+        enriched["missing_scryfall_labels"] = [reason["label"] for reason in reasons]
+        audited.append(enriched)
+    return audited
+
+
+def scryfall_enhancement_audit_summary(user_id):
+    with db() as conn:
+        missing = conn.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM collection_items
+            WHERE {scryfall_enhancement_where_clause()}
+            """,
+            (user_id,),
+        ).fetchone()["count"]
+        queued = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM scryfall_enrichment_jobs
+            JOIN collection_items ON collection_items.id = scryfall_enrichment_jobs.collection_item_id
+            WHERE collection_items.user_id = ?
+              AND scryfall_enrichment_jobs.status IN ('pending', 'processing')
+            """,
+            (user_id,),
+        ).fetchone()["count"]
+    return {"missing": missing, "queued": queued}
+
+
+def queue_scryfall_enhancement_by_ids(user_id, item_ids):
+    clean_ids = clean_collection_item_ids(item_ids)
+    if not clean_ids:
+        return 0
+    placeholders = ",".join("?" for _id in clean_ids)
+    queued = 0
+    with db() as conn:
+        items = conn.execute(
+            f"""
+            SELECT *
+            FROM collection_items
+            WHERE user_id = ? AND id IN ({placeholders})
+            ORDER BY card_name COLLATE NOCASE, id
+            """,
+            [user_id, *clean_ids],
+        ).fetchall()
+    for item in items:
+        if not scryfall_enhancement_missing_reasons(item):
+            continue
+        if enqueue_scryfall_enrichment(item["id"], user_id, dict(item)):
+            queued += 1
+    return queued
+
+
+def queue_scryfall_enhancement_matching(user_id):
+    item_ids = [item["id"] for item in scryfall_enhancement_audit_rows(user_id, limit=None)]
+    return queue_scryfall_enhancement_by_ids(user_id, item_ids)
+
+
 __all__ = [
     "COLLECTION_DUPLICATE_FIELDS",
     "WANT_DUPLICATE_FIELDS",
@@ -877,6 +996,7 @@ __all__ = [
     "AUDIT_ISSUE_LABELS",
     "APP_FINISH_TO_SCRYFALL",
     "SCRYFALL_FINISH_LABELS",
+    "SCRYFALL_ENHANCEMENT_REQUIRED_FIELDS",
     "duplicate_key",
     "normalized_duplicate_value",
     "item_duplicate_key",
@@ -919,4 +1039,9 @@ __all__ = [
     "update_collection_condition_finish_matching",
     "normalize_collection_condition_finish_by_ids",
     "normalize_collection_condition_finish_matching",
+    "scryfall_enhancement_missing_reasons",
+    "scryfall_enhancement_audit_rows",
+    "scryfall_enhancement_audit_summary",
+    "queue_scryfall_enhancement_by_ids",
+    "queue_scryfall_enhancement_matching",
 ]
