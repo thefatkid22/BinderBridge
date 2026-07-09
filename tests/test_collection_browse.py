@@ -157,6 +157,9 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn("Find matches", trades_html)
         self.assertIn("No wanted cards yet.", wants_html)
         self.assertIn("Add a want", wants_html)
+        self.assertIn("Audit wishlist", wants_html)
+        self.assertIn('/cleanup/audit#wishlist-scryfall', wants_html)
+        self.assertIn("Duplicate cleanup", wants_html)
         self.assertIn('class="panel want-add-panel" id="add-want" open', wants_html)
         self.assertIn("No other members are available yet.", members_html)
 

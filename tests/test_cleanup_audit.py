@@ -218,6 +218,52 @@ class CleanupAuditTests(BinderBridgeTestCase):
         self.assertIn("No collection cards need condition or finish cleanup.", audit_html)
         self.assertIn("Import cards", audit_html)
 
+    def test_audit_workspace_navigation_uses_shared_section_definitions(self):
+        user_id = app.create_user("auditnav", "password123", "Audit Nav")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        timestamp = app.now_iso()
+        app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Audit Nav Collection', 'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, desired_quantity, priority, condition, finish, language, created_at, updated_at)
+            VALUES (?, 'mtg', 'Audit Nav Wishlist', 1, 'normal', 'NM', 'Regular', 'English', ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+
+        html = app.render_condition_finish_audit(user, {}, active_section=app.AUDIT_SECTION_WISHLIST_SCRYFALL)
+        expected_items = tuple(
+            (f'#{section["id"]}', section["label"], section["detail"])
+            for section in app.AUDIT_SECTION_DEFINITIONS
+        )
+
+        self.assertEqual(app.audit_workspace_items(), expected_items)
+        self.assertEqual(tuple(section["id"] for section in app.AUDIT_SECTION_DEFINITIONS), app.AUDIT_SECTION_IDS)
+        self.assertEqual(app.audit_section_id("not-real"), app.AUDIT_DEFAULT_SECTION)
+        self.assertIn(f'data-active-section="{app.AUDIT_SECTION_WISHLIST_SCRYFALL}"', html)
+        for section in app.AUDIT_SECTION_DEFINITIONS:
+            self.assertIn(f'href="#{section["id"]}"', html)
+            self.assertIn(f'id="{section["id"]}"', html)
+            self.assertIn(app.e(section["label"]), html)
+            self.assertIn(app.e(section["detail"]), html)
+            self.assertEqual(app.audit_section_path(section["id"]), f'/cleanup/audit#{section["id"]}')
+        self.assertIn(
+            f'name="redirect_to" value="/cleanup/audit#{app.AUDIT_SECTION_COLLECTION_SCRYFALL}"',
+            html,
+        )
+        self.assertIn(
+            f'name="redirect_to" value="/cleanup/audit#{app.AUDIT_SECTION_WISHLIST_SCRYFALL}"',
+            html,
+        )
+
     def test_condition_finish_audit_flags_and_normalizes_import_labels(self):
         alice_id = app.create_user("alice", "password123", "Alice")
         bob_id = app.create_user("bob", "password123", "Bob")
@@ -396,8 +442,10 @@ class CleanupAuditTests(BinderBridgeTestCase):
         self.assertEqual([item["id"] for item in audit_rows], [missing_id, partial_id])
         self.assertEqual(audit_rows[0]["missing_scryfall_labels"], ["Scryfall ID", "image", "type line", "Scryfall link"])
         self.assertEqual(audit_rows[1]["missing_scryfall_labels"], ["image", "type line", "Scryfall link"])
-        self.assertIn('id="scryfall-enhancement"', html)
-        self.assertIn("Scryfall enhancement", html)
+        self.assertIn('id="collection-scryfall"', html)
+        self.assertIn('id="wishlist-scryfall"', html)
+        self.assertIn("Collection Scryfall", html)
+        self.assertIn("Wishlist Scryfall", html)
         self.assertIn("/cleanup/audit/scryfall", html)
         self.assertIn("/cleanup/audit/scryfall-delete", html)
         self.assertIn("Queue all missing", html)
@@ -434,7 +482,7 @@ class CleanupAuditTests(BinderBridgeTestCase):
             def read_form(self):
                 return {
                     "item_id": [str(card_id), str(other_card_id)],
-                    "redirect_to": ["/cleanup/audit#scryfall-enhancement"],
+                    "redirect_to": ["/cleanup/audit#collection-scryfall"],
                 }
 
             def condition_finish_audit_query_from_form(self, form):
@@ -459,7 +507,168 @@ class CleanupAuditTests(BinderBridgeTestCase):
         self.assertIsNotNone(other_card)
         self.assertEqual(captured["user_id"], user_id)
         self.assertEqual(captured["notice"], "Deleted 1 selected collection card.")
-        self.assertEqual(captured["active_section"], "scryfall-enhancement")
+        self.assertEqual(captured["active_section"], "collection-scryfall")
+
+    def test_wishlist_scryfall_audit_enhances_missing_want_cards(self):
+        user_id = app.create_user("wantscryfall", "password123", "Want Scryfall")
+        other_id = app.create_user("otherwantscryfall", "password123", "Other Want Scryfall")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        timestamp = app.now_iso()
+        app.store_scryfall_bulk_cards([
+            {
+                "object": "card",
+                "id": "missing-want-card",
+                "name": "Missing Want Metadata",
+                "set_name": "Test Set",
+                "set": "tst",
+                "collector_number": "10",
+                "type_line": "Artifact",
+                "image_uris": {"small": "https://cards.example/missing.jpg"},
+                "scryfall_uri": "https://scryfall.example/missing",
+                "prices": {"usd": "1.25"},
+            },
+            {
+                "object": "card",
+                "id": "partial-want-card",
+                "name": "Partial Want Metadata",
+                "set_name": "Test Set",
+                "set": "tst",
+                "collector_number": "11",
+                "type_line": "Instant",
+                "image_uris": {"small": "https://cards.example/partial.jpg"},
+                "scryfall_uri": "https://scryfall.example/partial",
+                "prices": {"usd": "0.75"},
+            },
+        ])
+        missing_id = app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, set_code, collector_number, desired_quantity,
+                 priority, condition, finish, language, created_at, updated_at)
+            VALUES (?, 'mtg', 'Missing Want Metadata', 'TST', '10', 2,
+                    'high', 'NM', 'Regular', 'English', ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        partial_id = app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, set_code, collector_number, scryfall_id,
+                 desired_quantity, priority, condition, finish, language, created_at, updated_at)
+            VALUES (?, 'mtg', 'Partial Want Metadata', 'TST', '11', 'partial-want-card',
+                    1, 'normal', 'NM', 'Regular', 'English', ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        complete_id = app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, set_code, collector_number, scryfall_id, image_url,
+                 type_line, scryfall_uri, desired_quantity, priority, condition, finish, language, created_at, updated_at)
+            VALUES (?, 'mtg', 'Complete Want Metadata', 'TST', '12', 'complete-want-card',
+                    'https://cards.example/complete.jpg', 'Creature', 'https://scryfall.example/complete',
+                    1, 'normal', 'NM', 'Regular', 'English', ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, desired_quantity, priority, condition, finish, language, created_at, updated_at)
+            VALUES (?, 'pokemon', 'Other Game Want', 1, 'normal', 'NM', 'Regular', 'English', ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        other_user_want_id = app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, desired_quantity, priority, condition, finish, language, created_at, updated_at)
+            VALUES (?, 'mtg', 'Other User Want', 1, 'normal', 'NM', 'Regular', 'English', ?, ?)
+            """,
+            (other_id, timestamp, timestamp),
+        )
+
+        summary = app.want_scryfall_enhancement_audit_summary(user_id)
+        audit_rows = app.want_scryfall_enhancement_audit_rows(user_id)
+        html = app.render_condition_finish_audit(user, {})
+        selected_result = app.enhance_want_scryfall_by_ids(user_id, [missing_id, complete_id, other_user_want_id])
+        all_result = app.enhance_want_scryfall_matching(user_id)
+        missing_want = app.row("SELECT * FROM want_items WHERE id = ?", (missing_id,))
+        partial_want = app.row("SELECT * FROM want_items WHERE id = ?", (partial_id,))
+        complete_want = app.row("SELECT * FROM want_items WHERE id = ?", (complete_id,))
+        remaining_summary = app.want_scryfall_enhancement_audit_summary(user_id)
+
+        self.assertEqual(summary, {"missing": 2})
+        self.assertEqual([item["id"] for item in audit_rows], [missing_id, partial_id])
+        self.assertEqual(audit_rows[0]["missing_scryfall_labels"], ["Scryfall ID", "image", "type line", "Scryfall link"])
+        self.assertIn("/cleanup/audit/wishlist-scryfall", html)
+        self.assertIn("/cleanup/audit/wishlist-scryfall-delete", html)
+        self.assertIn("Enhance all missing", html)
+        self.assertEqual(selected_result, {"checked": 1, "enhanced": 1, "missing": 0})
+        self.assertEqual(all_result, {"checked": 1, "enhanced": 1, "missing": 0})
+        self.assertEqual(missing_want["scryfall_id"], "missing-want-card")
+        self.assertEqual(missing_want["image_url"], "https://cards.example/missing.jpg")
+        self.assertEqual(missing_want["type_line"], "Artifact")
+        self.assertEqual(missing_want["price_usd"], "1.25")
+        self.assertEqual(missing_want["price_source"], "scryfall")
+        self.assertEqual(partial_want["image_url"], "https://cards.example/partial.jpg")
+        self.assertEqual(partial_want["type_line"], "Instant")
+        self.assertEqual(complete_want["scryfall_id"], "complete-want-card")
+        self.assertEqual(remaining_summary, {"missing": 0})
+
+    def test_wishlist_scryfall_audit_delete_removes_selected_user_wants(self):
+        user_id = app.create_user("wantscryfalldelete", "password123", "Want Scryfall Delete")
+        other_id = app.create_user("otherwantscryfalldelete", "password123", "Other Want Scryfall Delete")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        timestamp = app.now_iso()
+        want_id = app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, desired_quantity, priority, condition, finish, language, created_at, updated_at)
+            VALUES (?, 'mtg', 'Delete Wanted Metadata', 1, 'normal', 'NM', 'Regular', 'English', ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        other_want_id = app.execute(
+            """
+            INSERT INTO want_items
+                (user_id, game, card_name, desired_quantity, priority, condition, finish, language, created_at, updated_at)
+            VALUES (?, 'mtg', 'Other Delete Wanted Metadata', 1, 'normal', 'NM', 'Regular', 'English', ?, ?)
+            """,
+            (other_id, timestamp, timestamp),
+        )
+        captured = {}
+
+        class Harness:
+            def read_form(self):
+                return {
+                    "item_id": [str(want_id), str(other_want_id)],
+                    "redirect_to": ["/cleanup/audit#wishlist-scryfall"],
+                }
+
+            def condition_finish_audit_query_from_form(self, form):
+                return app.condition_finish_audit_query_from_form(self, form)
+
+            def condition_finish_audit_page(self, page_user, query, notice=None, status="info", active_section=""):
+                captured.update({
+                    "user_id": page_user["id"],
+                    "query": query,
+                    "notice": notice,
+                    "status": status,
+                    "active_section": active_section,
+                })
+                return "deleted"
+
+        response = app.condition_finish_audit_want_scryfall_delete(Harness(), user)
+        deleted_want = app.row("SELECT * FROM want_items WHERE id = ?", (want_id,))
+        other_want = app.row("SELECT * FROM want_items WHERE id = ?", (other_want_id,))
+
+        self.assertEqual(response, "deleted")
+        self.assertIsNone(deleted_want)
+        self.assertIsNotNone(other_want)
+        self.assertEqual(captured["user_id"], user_id)
+        self.assertEqual(captured["notice"], "Deleted 1 selected wanted card.")
+        self.assertEqual(captured["active_section"], "wishlist-scryfall")
 
     def test_condition_finish_audit_flags_scryfall_finish_mismatches(self):
         user_id = app.create_user("finishcheck", "password123", "Finish Check")

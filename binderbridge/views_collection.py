@@ -7,6 +7,58 @@ from binderbridge.collection_queries import *
 from binderbridge.components import *
 
 
+AUDIT_SECTION_CONDITION_FINISH = "audit-results"
+AUDIT_SECTION_COLLECTION_SCRYFALL = "collection-scryfall"
+AUDIT_SECTION_WISHLIST_SCRYFALL = "wishlist-scryfall"
+AUDIT_SECTION_SUMMARY = "audit-summary"
+AUDIT_DEFAULT_SECTION = AUDIT_SECTION_CONDITION_FINISH
+AUDIT_SECTION_DEFINITIONS = (
+    {
+        "id": AUDIT_SECTION_CONDITION_FINISH,
+        "label": "Condition & finish",
+        "detail": "Filter and update cards",
+    },
+    {
+        "id": AUDIT_SECTION_COLLECTION_SCRYFALL,
+        "label": "Collection Scryfall",
+        "detail": "Queue missing card data",
+    },
+    {
+        "id": AUDIT_SECTION_WISHLIST_SCRYFALL,
+        "label": "Wishlist Scryfall",
+        "detail": "Enhance wanted cards",
+    },
+    {
+        "id": AUDIT_SECTION_SUMMARY,
+        "label": "Summary",
+        "detail": "Counts by issue type",
+    },
+)
+AUDIT_SECTION_IDS = tuple(section["id"] for section in AUDIT_SECTION_DEFINITIONS)
+
+
+def audit_section_id(section_id, default=AUDIT_DEFAULT_SECTION):
+    return normalize_workspace_section(section_id, AUDIT_SECTION_IDS, default=default)
+
+
+def audit_workspace_items():
+    return tuple((f'#{section["id"]}', section["label"], section["detail"]) for section in AUDIT_SECTION_DEFINITIONS)
+
+
+def audit_section_path(section_id, base_path="/cleanup/audit"):
+    section = audit_section_id(section_id)
+    return f"{base_path}#{section}" if section else base_path
+
+
+def audit_section_redirect_input(section_id, base_path="/cleanup/audit"):
+    return f'<input type="hidden" name="redirect_to" value="{e(audit_section_path(section_id, base_path))}">'
+
+
+def render_audit_workspace_section(section_id, body):
+    section = audit_section_id(section_id)
+    return f'<section class="workspace-section" id="{e(section)}">{body}</section>'
+
+
 def query_value(query, key):
     return query.get(key, [""])[0].strip()
 
@@ -379,7 +431,7 @@ def render_scryfall_enhancement_audit_row(item):
     """
 
 
-def render_scryfall_enhancement_audit_panel(user):
+def render_collection_scryfall_audit_panel(user):
     summary = scryfall_enhancement_audit_summary(user["id"])
     rows = scryfall_enhancement_audit_rows(user["id"], limit=50)
     row_html = "".join(render_scryfall_enhancement_audit_row(item) for item in rows)
@@ -392,7 +444,7 @@ def render_scryfall_enhancement_audit_panel(user):
     if rows:
         body = f"""
         <form method="post" action="/cleanup/audit/scryfall">
-            <input type="hidden" name="redirect_to" value="/cleanup/audit#scryfall-enhancement">
+            {audit_section_redirect_input(AUDIT_SECTION_COLLECTION_SCRYFALL)}
             <div class="bulk-action-bar audit-action-bar">
                 <div>
                     <span class="muted compact">Select MTG collection rows missing core Scryfall data.</span>
@@ -437,13 +489,104 @@ def render_scryfall_enhancement_audit_panel(user):
     <section class="panel flush">
         <div class="panel-heading">
             <div>
-                <h2>Scryfall enhancement</h2>
+                <h2>Collection Scryfall</h2>
                 <p class="muted compact">Find collection cards missing Scryfall IDs, images, type lines, or card links, then queue background enhancement.</p>
             </div>
             <div class="inline-actions">
                 <span class="pill">{e(summary["missing"])} missing</span>
                 <span class="pill">{e(summary["queued"])} queued</span>
             </div>
+        </div>
+        {body}
+    </section>
+    """
+
+
+def render_wishlist_scryfall_audit_row(item):
+    set_bits = [row_value(item, "set_name", "")]
+    if row_value(item, "set_code", ""):
+        set_bits.append(f'({row_value(item, "set_code")})')
+    if row_value(item, "collector_number", ""):
+        set_bits.append(f'#{row_value(item, "collector_number")}')
+    set_text = " ".join(str(bit) for bit in set_bits if bit) or "Any set"
+    missing = ", ".join(item["missing_scryfall_labels"])
+    return f"""
+    <tr>
+        <td class="select-col" data-label=""><input type="checkbox" name="item_id" value="{e(item["id"])}" aria-label="Select {e(item['card_name'])}"></td>
+        <td data-label="Card">
+            <strong>{e(item["card_name"])}</strong>
+            <span class="subtle">{e(row_value(item, "type_line", "") or "MTG")}</span>
+        </td>
+        <td data-label="Set">{e(set_text)}</td>
+        <td data-label="Wanted"><span class="pill">{e(row_value(item, "desired_quantity", 1))}</span></td>
+        <td data-label="Missing"><span class="audit-suggestion">{e(missing)}</span></td>
+        <td class="actions-cell table-actions" data-label="Actions"><a class="button ghost small" href="/wants/{item["id"]}/edit">Edit</a></td>
+    </tr>
+    """
+
+
+def render_wishlist_scryfall_audit_panel(user):
+    summary = want_scryfall_enhancement_audit_summary(user["id"])
+    rows = want_scryfall_enhancement_audit_rows(user["id"], limit=50)
+    row_html = "".join(render_wishlist_scryfall_audit_row(item) for item in rows)
+    hidden_overflow = max(0, int(summary["missing"] or 0) - len(rows))
+    overflow_note = (
+        f'<p class="muted compact">Showing the first {e(len(rows))} rows. Enhance all missing to include {e(hidden_overflow)} more.</p>'
+        if hidden_overflow
+        else ""
+    )
+    if rows:
+        body = f"""
+        <form method="post" action="/cleanup/audit/wishlist-scryfall">
+            {audit_section_redirect_input(AUDIT_SECTION_WISHLIST_SCRYFALL)}
+            <div class="bulk-action-bar audit-action-bar">
+                <div>
+                    <span class="muted compact">Select MTG wishlist rows missing core Scryfall data.</span>
+                    <span class="subtle">Enhancement uses local Scryfall cache and bulk data when available.</span>
+                </div>
+                <div class="actions">
+                    <button class="button secondary small" type="submit">Enhance selected</button>
+                    <button class="button secondary small" type="submit" formaction="/cleanup/audit/wishlist-scryfall-all" data-confirm="Enhance all {summary["missing"]} wanted cards missing local Scryfall data?">Enhance all missing</button>
+                    <button class="button danger small" type="submit" formaction="/cleanup/audit/wishlist-scryfall-delete" data-confirm="Delete selected cards from your wishlist? This cannot be undone.">Delete selected</button>
+                </div>
+            </div>
+            {overflow_note}
+            <div class="table-wrap">
+                <table class="responsive-card-table audit-table">
+                    <thead>
+                        <tr>
+                            <th class="select-col">
+                                <label class="select-all-control">
+                                    <input type="checkbox" onclick="this.form.querySelectorAll('input[name=item_id]').forEach((box) => box.checked = this.checked)">
+                                    <span>All</span>
+                                </label>
+                            </th>
+                            <th>Card</th>
+                            <th>Set</th>
+                            <th>Wanted</th>
+                            <th>Missing</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>{row_html}</tbody>
+                </table>
+            </div>
+        </form>
+        """
+    else:
+        body = render_empty_action_state(
+            "No wishlist cards need Scryfall enhancement.",
+            "All MTG wishlist rows have core Scryfall ID, image, type, and link data.",
+            actions=(("/wants", "Review wishlist", "secondary"), ("/groups?type=wishlist", "Wishlist groups", "ghost")),
+        )
+    return f"""
+    <section class="panel flush">
+        <div class="panel-heading">
+            <div>
+                <h2>Wishlist Scryfall</h2>
+                <p class="muted compact">Find wanted cards missing Scryfall IDs, images, type lines, or card links, then enhance them from local Scryfall data.</p>
+            </div>
+            <span class="pill">{e(summary["missing"])} missing</span>
         </div>
         {body}
     </section>
@@ -476,7 +619,7 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
     if page_items:
         table = f"""
         <form method="post" action="/cleanup/audit/update">
-            <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
+            {audit_section_redirect_input(AUDIT_SECTION_CONDITION_FINISH, redirect_to)}
             {hidden_filters}
             <div class="bulk-action-bar audit-action-bar">
                 <div>
@@ -551,19 +694,15 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
         <article class="metric"><span>{e(summary["trade_needs_review"])}</span><p>trade cards to review</p></article>
     </section>
     """
-    workspace_items = [
-        ("#audit-results", "Condition & finish", "Filter and update cards"),
-        ("#scryfall-enhancement", "Scryfall enhancement", "Queue missing card data"),
-        ("#audit-summary", "Summary", "Counts by issue type"),
-    ]
-    active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])
+    workspace_items = audit_workspace_items()
+    active_attr = workspace_active_attr(active_section, AUDIT_SECTION_IDS)
     content = f"""
     {render_cards_subnav("collection")}
     <section class="section-heading">
         <div>
             <p class="eyebrow">Collection hygiene</p>
             <h1>Collection audit</h1>
-            <p class="lead">Find collection cards that need cleanup, from condition and finish issues to missing Scryfall enhancement data.</p>
+            <p class="lead">Find cards that need cleanup, from collection condition and finish issues to missing Scryfall data on collection and wishlist rows.</p>
         </div>
         <div class="actions">
             <a class="button secondary" href="/cleanup">Duplicate cleanup</a>
@@ -571,9 +710,9 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
         </div>
     </section>
     <section class="workspace-layout tabbed-workspace audit-workspace" data-workspace-tabs{active_attr}>
-        {render_workspace_nav(workspace_items, label="Collection audit", compact=True, vertical=True)}
+        {render_workspace_nav(workspace_items, label="Audit workspace", compact=True, vertical=True)}
         <div class="workspace-pane-stack">
-            <section class="workspace-section" id="audit-results">
+            <section class="workspace-section" id="{AUDIT_SECTION_CONDITION_FINISH}">
                 <form class="filter-bar collection-filter-bar audit-filter-bar" method="get" action="/cleanup/audit">
                     <div class="filter-primary-row">
                         <label class="search-field">Search
@@ -625,8 +764,9 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
                 <section class="panel flush">{table}</section>
                 {pagination}
             </section>
-            <section class="workspace-section" id="scryfall-enhancement">{render_scryfall_enhancement_audit_panel(user)}</section>
-            <section class="workspace-section" id="audit-summary">{audit_summary}</section>
+            {render_audit_workspace_section(AUDIT_SECTION_COLLECTION_SCRYFALL, render_collection_scryfall_audit_panel(user))}
+            {render_audit_workspace_section(AUDIT_SECTION_WISHLIST_SCRYFALL, render_wishlist_scryfall_audit_panel(user))}
+            {render_audit_workspace_section(AUDIT_SECTION_SUMMARY, audit_summary)}
         </div>
     </section>
     """
@@ -2120,5 +2260,5 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
     return render_layout(user, "Import", content, active="cards", notice=notice, status=status)
 
 
-__all__ = ['query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_scryfall_enhancement_audit_row', 'render_scryfall_enhancement_audit_panel', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_browse_photo_preview', 'render_collection_row', 'render_price_history_panel', 'card_photo_size_label', 'render_collection_photo_gallery', 'render_collection_photo_panel', 'render_collection_form', 'render_import']
+__all__ = ['AUDIT_SECTION_CONDITION_FINISH', 'AUDIT_SECTION_COLLECTION_SCRYFALL', 'AUDIT_SECTION_WISHLIST_SCRYFALL', 'AUDIT_SECTION_SUMMARY', 'AUDIT_DEFAULT_SECTION', 'AUDIT_SECTION_DEFINITIONS', 'AUDIT_SECTION_IDS', 'audit_section_id', 'audit_workspace_items', 'audit_section_path', 'audit_section_redirect_input', 'render_audit_workspace_section', 'query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_scryfall_enhancement_audit_row', 'render_collection_scryfall_audit_panel', 'render_wishlist_scryfall_audit_row', 'render_wishlist_scryfall_audit_panel', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_browse_photo_preview', 'render_collection_row', 'render_price_history_panel', 'card_photo_size_label', 'render_collection_photo_gallery', 'render_collection_photo_panel', 'render_collection_form', 'render_import']
 __all__.extend(['render_collection_share_link_row', 'render_collection_share_panel', 'shared_collection_item_from_link', 'render_shared_collection_card'])

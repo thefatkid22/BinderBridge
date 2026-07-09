@@ -1130,7 +1130,8 @@ def render_wants(
             <p class="lead">Track priorities and printing preferences, then focus on wants that other members can fill.</p>
         </div>
         <div class="actions">
-            <a class="button secondary" href="/cleanup">Cleanup duplicates</a>
+            <a class="button secondary" href="{e(audit_section_path(AUDIT_SECTION_WISHLIST_SCRYFALL))}">Audit wishlist</a>
+            <a class="button secondary" href="/cleanup">Duplicate cleanup</a>
             <a class="button secondary" href="/wants/export">Export CSV</a>
             <a class="button primary" href="{e(add_href)}">Add wanted card</a>
         </div>

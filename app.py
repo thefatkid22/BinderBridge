@@ -569,6 +569,12 @@ class App(BaseHTTPRequestHandler):
                 return self.condition_finish_audit_scryfall_all(user)
             if path == "/cleanup/audit/scryfall-delete" and method == "POST":
                 return self.condition_finish_audit_scryfall_delete(user)
+            if path == "/cleanup/audit/wishlist-scryfall" and method == "POST":
+                return self.condition_finish_audit_want_scryfall(user)
+            if path == "/cleanup/audit/wishlist-scryfall-all" and method == "POST":
+                return self.condition_finish_audit_want_scryfall_all(user)
+            if path == "/cleanup/audit/wishlist-scryfall-delete" and method == "POST":
+                return self.condition_finish_audit_want_scryfall_delete(user)
             if path == "/admin":
                 return self.admin_page(user)
             if path == "/admin/setup":

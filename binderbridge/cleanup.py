@@ -885,12 +885,12 @@ def scryfall_enhancement_missing_reasons(item):
     ]
 
 
-def scryfall_enhancement_where_clause():
-    field_checks = " OR ".join(f"collection_items.{field} = ''" for field, _label in SCRYFALL_ENHANCEMENT_REQUIRED_FIELDS)
+def scryfall_enhancement_where_clause(table_name="collection_items"):
+    field_checks = " OR ".join(f"{table_name}.{field} = ''" for field, _label in SCRYFALL_ENHANCEMENT_REQUIRED_FIELDS)
     return f"""
-        collection_items.user_id = ?
-        AND collection_items.game = 'mtg'
-        AND TRIM(collection_items.card_name) != ''
+        {table_name}.user_id = ?
+        AND {table_name}.game = 'mtg'
+        AND TRIM({table_name}.card_name) != ''
         AND ({field_checks})
     """
 
@@ -987,6 +987,122 @@ def queue_scryfall_enhancement_matching(user_id):
     return queue_scryfall_enhancement_by_ids(user_id, item_ids)
 
 
+def want_scryfall_enhancement_audit_rows(user_id, limit=50):
+    params = [user_id]
+    limit_clause = ""
+    if limit is not None:
+        try:
+            clean_limit = max(1, int(limit))
+        except (TypeError, ValueError):
+            clean_limit = 50
+        limit_clause = "LIMIT ?"
+        params.append(clean_limit)
+    with db() as conn:
+        items = conn.execute(
+            f"""
+            SELECT *
+            FROM want_items
+            WHERE {scryfall_enhancement_where_clause("want_items")}
+            ORDER BY card_name COLLATE NOCASE,
+                     set_name COLLATE NOCASE,
+                     collector_number COLLATE NOCASE,
+                     id
+            {limit_clause}
+            """,
+            params,
+        ).fetchall()
+    audited = []
+    for item in items:
+        reasons = scryfall_enhancement_missing_reasons(item)
+        if not reasons:
+            continue
+        enriched = dict(item)
+        enriched["missing_scryfall_fields"] = [reason["field"] for reason in reasons]
+        enriched["missing_scryfall_labels"] = [reason["label"] for reason in reasons]
+        audited.append(enriched)
+    return audited
+
+
+def want_scryfall_enhancement_audit_summary(user_id):
+    with db() as conn:
+        missing = conn.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM want_items
+            WHERE {scryfall_enhancement_where_clause("want_items")}
+            """,
+            (user_id,),
+        ).fetchone()["count"]
+    return {"missing": missing}
+
+
+def update_want_item_scryfall_fields(conn, user_id, want_id, data):
+    conn.execute(
+        """
+        UPDATE want_items
+        SET card_name = ?, set_name = ?, set_code = ?, collector_number = ?,
+            scryfall_id = ?, image_url = ?, mana_cost = ?, type_line = ?, oracle_text = ?,
+            rarity = ?, colors = ?, color_identity = ?, scryfall_uri = ?, price_usd = ?,
+            price_source = ?, updated_at = ?
+        WHERE id = ? AND user_id = ?
+        """,
+        (
+            data.get("card_name", ""),
+            data.get("set_name", ""),
+            data.get("set_code", ""),
+            data.get("collector_number", ""),
+            data.get("scryfall_id", ""),
+            data.get("image_url", ""),
+            data.get("mana_cost", ""),
+            data.get("type_line", ""),
+            data.get("oracle_text", ""),
+            data.get("rarity", ""),
+            data.get("colors", ""),
+            data.get("color_identity", ""),
+            data.get("scryfall_uri", ""),
+            normalize_price_usd(data.get("price_usd", "")),
+            data.get("price_source", ""),
+            now_iso(),
+            want_id,
+            user_id,
+        ),
+    )
+
+
+def enhance_want_scryfall_by_ids(user_id, want_ids):
+    clean_ids = clean_collection_item_ids(want_ids)
+    result = {"checked": 0, "enhanced": 0, "missing": 0}
+    if not clean_ids:
+        return result
+    placeholders = ",".join("?" for _id in clean_ids)
+    with db() as conn:
+        items = conn.execute(
+            f"""
+            SELECT *
+            FROM want_items
+            WHERE user_id = ? AND id IN ({placeholders})
+            ORDER BY card_name COLLATE NOCASE, id
+            """,
+            [user_id, *clean_ids],
+        ).fetchall()
+        for item in items:
+            if not scryfall_enhancement_missing_reasons(item):
+                continue
+            result["checked"] += 1
+            card_data = local_scryfall_card_for_item(item)
+            if not card_data:
+                result["missing"] += 1
+                continue
+            update_want_item_scryfall_fields(conn, user_id, item["id"], apply_scryfall_data(dict(item), card_data))
+            result["enhanced"] += 1
+    return result
+
+
+def enhance_want_scryfall_matching(user_id):
+    want_ids = [item["id"] for item in want_scryfall_enhancement_audit_rows(user_id, limit=None)]
+    return enhance_want_scryfall_by_ids(user_id, want_ids)
+
+
 __all__ = [
     "COLLECTION_DUPLICATE_FIELDS",
     "WANT_DUPLICATE_FIELDS",
@@ -1044,4 +1160,9 @@ __all__ = [
     "scryfall_enhancement_audit_summary",
     "queue_scryfall_enhancement_by_ids",
     "queue_scryfall_enhancement_matching",
+    "want_scryfall_enhancement_audit_rows",
+    "want_scryfall_enhancement_audit_summary",
+    "update_want_item_scryfall_fields",
+    "enhance_want_scryfall_by_ids",
+    "enhance_want_scryfall_matching",
 ]
