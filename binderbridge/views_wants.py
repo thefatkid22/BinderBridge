@@ -1121,6 +1121,8 @@ def render_wants(
     active_filters = render_active_filter_chips("/wants", query, filters, want_list_filter_chip_specs())
     want_datalist = render_datalist("want-search-suggestions", want_search_suggestions(user["id"]))
     add_href = "/wants#add-want" if edit_want_id else "#add-want"
+    wishlist_scryfall_count = int(want_scryfall_enhancement_audit_summary(user["id"]).get("missing", 0) or 0)
+    duplicate_counts = duplicate_cleanup_count_summary(user["id"])
     content = f"""
     {render_wishlist_subnav("wants")}
     <section class="section-heading">
@@ -1130,8 +1132,8 @@ def render_wants(
             <p class="lead">Track priorities and printing preferences, then focus on wants that other members can fill.</p>
         </div>
         <div class="actions">
-            <a class="button secondary" href="{e(audit_section_path(AUDIT_SECTION_WISHLIST_SCRYFALL))}">Audit wishlist</a>
-            <a class="button secondary" href="/cleanup">Duplicate cleanup</a>
+            {render_counted_action(audit_section_path(AUDIT_SECTION_WISHLIST_SCRYFALL), "Audit wishlist", wishlist_scryfall_count, "missing Scryfall", "missing Scryfall")}
+            {render_counted_action("/cleanup", "Duplicate cleanup", duplicate_counts["want_duplicate_groups"], "group")}
             <a class="button secondary" href="/wants/export">Export CSV</a>
             <a class="button primary" href="{e(add_href)}">Add wanted card</a>
         </div>

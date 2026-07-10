@@ -163,6 +163,60 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn('class="panel want-add-panel" id="add-want" open', wants_html)
         self.assertIn("No other members are available yet.", members_html)
 
+    def test_collection_and_wants_show_hygiene_count_badges(self):
+        user_id = app.create_user("hygienebadges", "password123", "Hygiene Badges")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        timestamp = app.now_iso()
+        app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'pokemon', 'Needs Condition', '', '', 1, 0, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        app.execute(
+            """
+            INSERT INTO collection_items
+                (user_id, game, card_name, condition, finish, quantity, quantity_for_trade, created_at, updated_at)
+            VALUES (?, 'mtg', 'Needs Scryfall', 'NM', 'Regular', 1, 0, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        )
+        for _index in range(2):
+            app.execute(
+                """
+                INSERT INTO collection_items
+                    (user_id, game, card_name, set_code, collector_number, condition, finish,
+                     language, quantity, quantity_for_trade, created_at, updated_at)
+                VALUES (?, 'pokemon', 'Duplicate Collection', 'DUP', '1', 'NM', 'Regular',
+                        'English', 1, 0, ?, ?)
+                """,
+                (user_id, timestamp, timestamp),
+            )
+            app.execute(
+                """
+                INSERT INTO want_items
+                    (user_id, game, card_name, desired_quantity, priority, condition, finish,
+                     language, created_at, updated_at)
+                VALUES (?, 'mtg', 'Duplicate Wishlist', 1, 'normal', 'NM', 'Regular',
+                        'English', ?, ?)
+                """,
+                (user_id, timestamp, timestamp),
+            )
+
+        collection_html = app.render_collection(user, {})
+        wants_html = app.render_wants(user)
+
+        self.assertIn("Audit collection", collection_html)
+        self.assertIn("2 issues", collection_html)
+        self.assertIn("Duplicate cleanup", collection_html)
+        self.assertIn("1 group", collection_html)
+        self.assertIn("Audit wishlist", wants_html)
+        self.assertIn("2 missing Scryfall", wants_html)
+        self.assertIn("Duplicate cleanup", wants_html)
+        self.assertIn("1 group", wants_html)
+
     def test_trade_list_filters_and_paginates_offers(self):
         alice_id = factory.create_user("trade-list-alice", display_name="Trade List Alice")
         bob_id = factory.create_user("trade-list-bob", display_name="Trade List Bob")

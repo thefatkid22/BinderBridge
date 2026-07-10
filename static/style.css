@@ -400,6 +400,14 @@ summary:focus-visible,
     text-decoration: none;
 }
 
+.workspace-nav-link strong {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
 .workspace-nav-link:hover,
 .workspace-nav-link:focus-visible,
 .workspace-nav-link.active {
@@ -422,6 +430,12 @@ summary:focus-visible,
     color: var(--muted);
     font-size: 0.8rem;
     font-weight: 700;
+}
+
+.workspace-nav-badge {
+    flex: 0 0 auto;
+    min-width: 1.55rem;
+    padding: 0.25rem 0.4rem;
 }
 
 .compact-workspace-nav .workspace-nav-link {
@@ -723,6 +737,29 @@ summary:focus-visible,
 
 .button.full {
     width: 100%;
+}
+
+.hygiene-action-link {
+    gap: 0.45rem;
+}
+
+.button-count-badge,
+.workspace-nav-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--pill-bg);
+    color: var(--pill-text);
+    font-size: 0.72rem;
+    font-style: normal;
+    font-weight: 850;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.button-count-badge {
+    padding: 0.25rem 0.42rem;
 }
 
 .section-heading {

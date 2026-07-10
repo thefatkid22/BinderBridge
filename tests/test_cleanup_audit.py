@@ -104,6 +104,7 @@ class CleanupAuditTests(BinderBridgeTestCase):
 
         html = app.render_cleanup(app.row("SELECT * FROM users WHERE id = ?", (alice_id,)))
         groups = app.collection_duplicate_groups(alice_id)
+        count_summary = app.duplicate_cleanup_count_summary(alice_id)
         result = app.cleanup_collection_duplicates(alice_id, [groups[0]["key"]])
 
         cards = app.rows("SELECT * FROM collection_items WHERE user_id = ? AND card_name = 'Sol Ring' ORDER BY id", (alice_id,))
@@ -116,6 +117,8 @@ class CleanupAuditTests(BinderBridgeTestCase):
         photos = app.collection_item_photo_rows(first_card_id)
 
         self.assertEqual(result, {"groups": 1, "merged": 1})
+        self.assertEqual(count_summary["collection_duplicate_groups"], 1)
+        self.assertEqual(count_summary["collection_duplicate_rows"], 1)
         self.assertIn("/cleanup/collection", html)
         self.assertIn("Sol Ring", html)
         self.assertIn('id="cleanup-collection"', html)
@@ -244,11 +247,19 @@ class CleanupAuditTests(BinderBridgeTestCase):
             (f'#{section["id"]}', section["label"], section["detail"])
             for section in app.AUDIT_SECTION_DEFINITIONS
         )
+        counted_items = app.audit_workspace_items({
+            app.AUDIT_SECTION_COLLECTION_SCRYFALL: 1,
+            app.AUDIT_SECTION_WISHLIST_SCRYFALL: 1,
+        })
 
         self.assertEqual(app.audit_workspace_items(), expected_items)
+        self.assertEqual(counted_items[1], ("#collection-scryfall", "Collection Scryfall", "Queue missing card data", "1"))
+        self.assertEqual(counted_items[2], ("#wishlist-scryfall", "Wishlist Scryfall", "Enhance wanted cards", "1"))
         self.assertEqual(tuple(section["id"] for section in app.AUDIT_SECTION_DEFINITIONS), app.AUDIT_SECTION_IDS)
         self.assertEqual(app.audit_section_id("not-real"), app.AUDIT_DEFAULT_SECTION)
         self.assertIn(f'data-active-section="{app.AUDIT_SECTION_WISHLIST_SCRYFALL}"', html)
+        self.assertEqual(html.count('class="workspace-nav-badge">1</em>'), 2)
+        self.assertIn('class="workspace-nav-badge">2</em>', html)
         for section in app.AUDIT_SECTION_DEFINITIONS:
             self.assertIn(f'href="#{section["id"]}"', html)
             self.assertIn(f'id="{section["id"]}"', html)
