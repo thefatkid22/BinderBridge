@@ -1848,7 +1848,8 @@ def api_trade_create(self, user):
         "scryfall",
     )
     trade = trade_detail_for_user(trade_id, user["id"])
-    return self.api_json({"data": api_trade_dict(trade, include_comments=True, viewer_id=user["id"])}, HTTPStatus.CREATED)
+    status = HTTPStatus.OK if counter_trade_id else HTTPStatus.CREATED
+    return self.api_json({"data": api_trade_dict(trade, include_comments=True, viewer_id=user["id"])}, status)
 
 
 def api_trades_list(self, user, query):

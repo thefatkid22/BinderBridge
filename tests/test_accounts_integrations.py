@@ -1009,13 +1009,17 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         })
         app.api_dispatch(counter, "POST", "/api/v1/trades", {})
 
-        self.assertEqual(counter.response[1], HTTPStatus.CREATED)
+        self.assertEqual(counter.response[1], HTTPStatus.OK)
         counter_trade = counter.response[0]["data"]
-        self.assertEqual(counter_trade["countered_from_trade_id"], trade_id)
+        self.assertEqual(counter_trade["id"], trade_id)
+        self.assertEqual(counter_trade["countered_from_trade_id"], 0)
+        self.assertEqual(counter_trade["counter_trade_id"], 0)
         self.assertEqual(counter_trade["viewer"]["role"], "proposer")
         original = app.row("SELECT * FROM trades WHERE id = ?", (trade_id,))
-        self.assertEqual(original["status"], "countered")
-        self.assertEqual(original["counter_trade_id"], counter_trade["id"])
+        self.assertEqual(original["status"], "pending")
+        self.assertEqual(original["proposer_id"], recipient_id)
+        self.assertEqual(original["recipient_id"], proposer_id)
+        self.assertIsNone(original["counter_trade_id"])
 
     def test_api_trade_actions_update_trade_statuses(self):
         proposer_id = app.create_user("api-action-proposer", "password123", "Action Proposer")

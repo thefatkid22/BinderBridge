@@ -872,9 +872,9 @@ def add_trade_item(trade_id, owner_id, item, quantity, side):
 def create_trade_offer(proposer_id, recipient_id, proposer_note, offered, requested, counter_trade_id=0, price_source_preference=""):
     timestamp = now_iso()
     price_source_preference = normalize_price_basis(price_source_preference)
+    clean_note = sanitize_text_input(proposer_note, max_length=1200).strip()
     validate_trade_fairness_for_creation(offered, requested)
     with db() as conn:
-        counter_source = None
         if counter_trade_id:
             counter_source = conn.execute(
                 """
@@ -889,40 +889,54 @@ def create_trade_offer(proposer_id, recipient_id, proposer_note, offered, reques
             ).fetchone()
             if not counter_source:
                 raise ValueError("The original trade is no longer available to counter.")
-        cursor = conn.execute(
-            """
-            INSERT INTO trades
-                (proposer_id, recipient_id, proposer_note, price_source_preference, countered_from_trade_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (proposer_id, recipient_id, sanitize_text_input(proposer_note, max_length=1200).strip(), price_source_preference, counter_trade_id or None, timestamp, timestamp),
-        )
-        trade_id = cursor.lastrowid
-        for item, quantity in offered:
-            insert_trade_item_record(conn, trade_id, proposer_id, item, quantity, "offered")
-        for item, quantity in requested:
-            insert_trade_item_record(conn, trade_id, recipient_id, item, quantity, "requested")
-        if counter_source:
+            trade_id = counter_trade_id
+            conn.execute("DELETE FROM trade_items WHERE trade_id = ?", (trade_id,))
             conn.execute(
                 """
                 UPDATE trades
-                SET status = 'countered', counter_trade_id = ?, updated_at = ?
+                SET proposer_id = ?,
+                    recipient_id = ?,
+                    status = 'pending',
+                    proposer_note = ?,
+                    response_note = '',
+                    price_source_preference = ?,
+                    countered_from_trade_id = NULL,
+                    counter_trade_id = NULL,
+                    stale_reminder_sent_at = '',
+                    updated_at = ?
                 WHERE id = ?
                 """,
-                (trade_id, timestamp, counter_trade_id),
+                (proposer_id, recipient_id, clean_note, price_source_preference, timestamp, trade_id),
             )
-        trade = trade_with_names_conn(conn, trade_id)
-        if counter_source:
+            for item, quantity in offered:
+                insert_trade_item_record(conn, trade_id, proposer_id, item, quantity, "offered")
+            for item, quantity in requested:
+                insert_trade_item_record(conn, trade_id, recipient_id, item, quantity, "requested")
+            trade = trade_with_names_conn(conn, trade_id)
             create_notification(
                 recipient_id,
                 "trade_counter",
-                f"New counter offer: Trade #{trade_id}",
-                f"{trade['proposer_name']} sent a counter offer for Trade #{counter_trade_id}.",
+                f"Counter offer on Trade #{trade_id}",
+                f"{trade['proposer_name']} sent a counter offer on Trade #{trade_id}.",
                 f"/trades/{trade_id}",
                 trade_id,
                 conn=conn,
             )
         else:
+            cursor = conn.execute(
+                """
+                INSERT INTO trades
+                    (proposer_id, recipient_id, proposer_note, price_source_preference, countered_from_trade_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (proposer_id, recipient_id, clean_note, price_source_preference, None, timestamp, timestamp),
+            )
+            trade_id = cursor.lastrowid
+            for item, quantity in offered:
+                insert_trade_item_record(conn, trade_id, proposer_id, item, quantity, "offered")
+            for item, quantity in requested:
+                insert_trade_item_record(conn, trade_id, recipient_id, item, quantity, "requested")
+            trade = trade_with_names_conn(conn, trade_id)
             create_notification(
                 recipient_id,
                 "trade_offer",

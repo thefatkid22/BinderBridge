@@ -468,7 +468,7 @@ def render_counter_context_panel(source_trade):
     return f"""
     <section class="trade-link-panel">
         <strong>Counter offer for <a href="/trades/{source_trade["id"]}">Trade #{source_trade["id"]}</a></strong>
-        <p>This will send a new offer to {e(source_trade["proposer_name"])} and mark the original trade as countered after you send it.</p>
+        <p>This updates Trade #{e(source_trade["id"])} with your revised cards and sends it back to {e(source_trade["proposer_name"])} for review.</p>
     </section>
     """
 
