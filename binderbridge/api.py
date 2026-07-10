@@ -39,6 +39,7 @@ from binderbridge.trade_queries import (
     trade_page_rows,
 )
 from binderbridge.trade_service import (
+    add_trade_comment,
     cancel_trade_offer,
     complete_trade,
     create_trade_offer,
@@ -1662,6 +1663,8 @@ def api_trade_dict(trade, include_comments=False, viewer_id=None):
         viewer_role = "recipient"
     status_value = trade["status"]
     is_pending = status_value == "pending"
+    counter_trade_id = row_value(trade, "counter_trade_id")
+    countered_from_trade_id = row_value(trade, "countered_from_trade_id")
     data = {
         "id": int(trade["id"]),
         "status": status_value,
@@ -1677,7 +1680,10 @@ def api_trade_dict(trade, include_comments=False, viewer_id=None):
             "can_decline": bool(is_pending and viewer_role == "recipient"),
             "can_cancel": bool(is_pending and viewer_role == "proposer"),
             "can_complete": bool(status_value == "accepted" and viewer_role in ("proposer", "recipient")),
+            "can_counter": bool(is_pending and viewer_role == "recipient" and not counter_trade_id),
         },
+        "countered_from_trade_id": int(countered_from_trade_id or 0),
+        "counter_trade_id": int(counter_trade_id or 0),
         "proposer_note": row_value(trade, "proposer_note", ""),
         "response_note": row_value(trade, "response_note", ""),
         "price_source_preference": row_value(trade, "price_source_preference", "scryfall"),
@@ -1887,6 +1893,19 @@ def api_trade_action(self, user, trade_id, action):
     return self.api_json({"data": api_trade_dict(trade, include_comments=True, viewer_id=user["id"]), "action": action})
 
 
+def api_trade_comment_create(self, user, trade_id):
+    payload = self.api_read_json()
+    body = sanitize_text_input(
+        str(payload.get("body", payload.get("comment", payload.get("message", "")))),
+        max_length=2000,
+    ).strip()
+    add_trade_comment(trade_id, user["id"], body)
+    trade = trade_detail_for_user(trade_id, user["id"])
+    if not trade:
+        return self.api_error("Trade not found.", HTTPStatus.NOT_FOUND)
+    return self.api_json({"data": api_trade_dict(trade, include_comments=True, viewer_id=user["id"])}, HTTPStatus.CREATED)
+
+
 def api_notification_dict(item):
     return {
         "id": int(item["id"]),
@@ -2070,6 +2089,8 @@ def api_dispatch(self, method, path, query):
                 return self.api_trade_detail(user, trade_id)
             if action in ("accept", "decline", "cancel", "complete") and method in ("POST", "PUT", "PATCH"):
                 return self.api_trade_action(user, trade_id, action)
+            if action == "comments" and method == "POST":
+                return self.api_trade_comment_create(user, trade_id)
         if path == "/api/v1/notifications" and method == "GET":
             return self.api_notifications_list(user, query)
         if path == "/api/v1/notifications/read-all" and method == "POST":
@@ -2127,6 +2148,7 @@ API_ROUTE_METHODS = (
     "api_trades_list",
     "api_trade_detail",
     "api_trade_action",
+    "api_trade_comment_create",
     "api_notification_dict",
     "api_notifications_list",
     "api_notification_detail",
