@@ -1006,9 +1006,15 @@ def render_wants(
             for value, label in VISIBILITY_OPTIONS
         )
         bulk_controls = f"""
-        <form id="{bulk_form_id}" class="bulk-action-bar want-bulk-form" method="post" action="/wants/bulk-update">
+        <form id="{bulk_form_id}" class="bulk-selection-form want-bulk-form" method="post" action="/wants/bulk-update" data-bulk-selection-form data-bulk-selection-name="want_id">
             <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
             {hidden_filters}
+            <details class="bulk-tools-disclosure" data-bulk-tools>
+            <summary>
+                <span>Bulk actions</span>
+                <span class="bulk-selection-status" data-bulk-selection-status aria-live="polite">Select cards below or open for all matching</span>
+            </summary>
+            <div class="bulk-action-bar">
             <div class="bulk-action-intro">
                 <strong>Bulk edit wishlist</strong>
                 <span class="muted compact">Select wanted cards below, then update shared fields or move cards into a wishlist group.</span>
@@ -1059,6 +1065,8 @@ def render_wants(
                     <button class="button danger small" type="submit" formaction="/wants/bulk-delete" data-confirm="Delete selected wanted cards?">Delete selected</button>
                     <button class="button danger small" type="submit" formaction="/wants/delete-all" data-confirm="Delete all {total_count} wanted cards matching the current filters? This cannot be undone.">Delete all matching</button>
                 </div>
+            </details>
+            </div>
             </details>
         </form>
         """
@@ -1132,13 +1140,20 @@ def render_wants(
             <p class="lead">Track priorities and printing preferences, then focus on wants that other members can fill.</p>
         </div>
         <div class="actions">
-            {render_counted_action(audit_section_path(AUDIT_SECTION_WISHLIST_SCRYFALL), "Audit wishlist", wishlist_scryfall_count, "missing Scryfall", "missing Scryfall")}
-            {render_counted_action("/cleanup", "Duplicate cleanup", duplicate_counts["want_duplicate_groups"], "group")}
-            <a class="button secondary" href="/wants/export">Export CSV</a>
             <a class="button primary" href="{e(add_href)}">Add wanted card</a>
+            <details class="header-action-menu">
+                <summary class="button secondary">More actions</summary>
+                <div class="header-action-menu-panel">
+                    {render_counted_action(audit_section_path(AUDIT_SECTION_WISHLIST_SCRYFALL), "Audit wishlist", wishlist_scryfall_count, "missing Scryfall", "missing Scryfall")}
+                    {render_counted_action("/cleanup", "Duplicate cleanup", duplicate_counts["want_duplicate_groups"], "group")}
+                    <a class="button secondary" href="/wants/export">Export CSV</a>
+                </div>
+            </details>
         </div>
     </section>
     <form class="filter-bar wants-filter-bar" method="get" action="/wants">
+        <details class="responsive-filter-panel" data-responsive-filter data-filter-active="{'true' if want_filters_active else 'false'}" open>
+        <summary><span>Search and filters</span><span class="muted compact">Prioritize and refine wants</span></summary>
         <div class="filter-primary-row">
             <label class="search-field">Search
                 <input name="q" value="{e(filters["q"])}" placeholder="Card name, type, or set" list="want-search-suggestions">
@@ -1166,6 +1181,7 @@ def render_wants(
                 </label>
                 {render_sort_controls(WANT_SORT_OPTIONS, current_sort, current_dir)}
             </div>
+        </details>
         </details>
     </form>
     {render_saved_search_controls(user["id"], "wants", query)}

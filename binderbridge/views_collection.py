@@ -890,11 +890,16 @@ def render_collection(user, query, notice=None, status="info"):
     collection_group_empty = "Choose group" if collection_group_options else "Create a deck or binder first"
     if items:
         table = f"""
-        <form method="post" action="/collection/bulk-update">
+        <form class="bulk-selection-form" method="post" action="/collection/bulk-update" data-bulk-selection-form data-bulk-selection-name="item_id">
             <input type="hidden" name="redirect_to" value="{e(redirect_to)}">
-            <div class="bulk-action-bar">
+            <details class="bulk-tools-disclosure" data-bulk-tools>
+                <summary>
+                    <span>Bulk actions</span>
+                    <span class="bulk-selection-status" data-bulk-selection-status aria-live="polite">Select cards below or open for all matching</span>
+                </summary>
+                <div class="bulk-action-bar">
                 <div class="bulk-action-intro">
-                    <strong>Bulk edit collection</strong>
+                    <strong>Selected card changes</strong>
                     <span class="muted compact">Select rows below, then update quantities or sharing. Blank fields keep their current value.</span>
                 </div>
                 <div class="bulk-update-workflow">
@@ -940,7 +945,8 @@ def render_collection(user, query, notice=None, status="info"):
                         <button class="button danger small" type="submit" formaction="/collection/delete-all" data-confirm="Delete all {total_count} cards matching the current filters? This cannot be undone.">Delete all matching</button>
                     </div>
                 </details>
-            </div>
+                </div>
+            </details>
             {hidden_filters}
             <div class="table-wrap">
                 <table class="responsive-card-table collection-table">
@@ -995,13 +1001,20 @@ def render_collection(user, query, notice=None, status="info"):
             <h1>Your cards</h1>
         </div>
         <div class="actions">
-            {render_counted_action("/cleanup/audit", "Audit collection", audit_count, "issue")}
-            {render_counted_action("/cleanup", "Duplicate cleanup", duplicate_counts["collection_duplicate_groups"], "group")}
-            <a class="button secondary" href="{e(export_url)}">Export CSV</a>
             <a class="button primary" href="/collection/new">Add card</a>
+            <details class="header-action-menu">
+                <summary class="button secondary">More actions</summary>
+                <div class="header-action-menu-panel">
+                    {render_counted_action("/cleanup/audit", "Audit collection", audit_count, "issue")}
+                    {render_counted_action("/cleanup", "Duplicate cleanup", duplicate_counts["collection_duplicate_groups"], "group")}
+                    <a class="button secondary" href="{e(export_url)}">Export CSV</a>
+                </div>
+            </details>
         </div>
     </section>
     <form class="filter-bar collection-filter-bar" method="get" action="/collection">
+        <details class="responsive-filter-panel" data-responsive-filter data-filter-active="{'true' if collection_filters_active else 'false'}" open>
+        <summary><span>Search and filters</span><span class="muted compact">Find, sort, and refine cards</span></summary>
         <div class="filter-primary-row">
             <label class="search-field">Search
                 <input name="q" value="{e(q)}" placeholder="Card name or type" list="collection-search-suggestions">
@@ -1097,6 +1110,7 @@ def render_collection(user, query, notice=None, status="info"):
             </div>
         </details>
         {collection_datalists}
+        </details>
     </form>
     {render_saved_search_controls(user["id"], "collection", query)}
     {active_filter_chips}
@@ -1493,6 +1507,8 @@ def render_browse(user, query, notice=None, status="info"):
         </div>
     </section>
     <form class="filter-bar browse-filter-bar" method="get" action="/browse">
+        <details class="responsive-filter-panel" data-responsive-filter data-filter-active="{'true' if browse_filters_active else 'false'}" open>
+        <summary><span>Search and filters</span><span class="muted compact">Find, sort, and refine trade cards</span></summary>
         <div class="filter-primary-row">
             <label class="search-field">Card name
                 <input name="q" value="{e(q)}" placeholder="Card name or type" list="browse-search-suggestions">
@@ -1584,6 +1600,7 @@ def render_browse(user, query, notice=None, status="info"):
             </div>
         </details>
         {browse_datalists}
+        </details>
     </form>
     {render_saved_search_controls(user["id"], "browse", query)}
     {active_filter_chips}

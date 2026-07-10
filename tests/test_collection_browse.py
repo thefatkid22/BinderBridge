@@ -76,6 +76,9 @@ class CollectionBrowseTests(BinderBridgeTestCase):
 
         self.assertIn("Showing 1-10 of 12", html)
         self.assertIn('action="/collection/bulk-update"', html)
+        self.assertIn("data-bulk-selection-form", html)
+        self.assertIn('data-bulk-selection-name="item_id"', html)
+        self.assertIn("bulk-tools-disclosure", html)
         self.assertIn('name="item_id"', html)
         self.assertIn("select-all-control", html)
         self.assertIn("Update selected", html)
@@ -98,6 +101,8 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn('<datalist id="collection-search-suggestions">', html)
         self.assertIn('value="Card 00"', html)
         self.assertIn("Advanced filters", html)
+        self.assertIn("data-responsive-filter", html)
+        self.assertIn("More actions", html)
         self.assertIn('name="condition"', html)
         self.assertIn('name="finish"', html)
         self.assertIn('name="quantity_min"', html)
@@ -116,6 +121,9 @@ class CollectionBrowseTests(BinderBridgeTestCase):
 
         self.assertIn("Showing 1-10 of 12", html)
         self.assertIn('id="wants-bulk-form"', html)
+        self.assertIn("data-bulk-selection-form", html)
+        self.assertIn('data-bulk-selection-name="want_id"', html)
+        self.assertIn("bulk-tools-disclosure", html)
         self.assertIn('form="wants-bulk-form"', html)
         self.assertIn('name="want_id"', html)
         self.assertIn("Select page", html)
@@ -126,6 +134,8 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn('formaction="/wants/bulk-delete"', html)
         self.assertIn('formaction="/wants/delete-all"', html)
         self.assertIn("Bulk edit wishlist", html)
+        self.assertIn("data-responsive-filter", html)
+        self.assertIn("More actions", html)
         self.assertIn("Desired qty", html)
         self.assertIn("Wishlist: Bulk Wants", html)
         self.assertIn("<summary>Remove wants</summary>", html)
@@ -240,6 +250,21 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn("Showing 1-10 of 13", paged_html)
         self.assertIn('name="status"', paged_html)
         self.assertIn('name="direction"', paged_html)
+        self.assertIn("data-responsive-filter", paged_html)
+        self.assertIn("header-action-menu", paged_html)
+        self.assertIn("metric-zero", paged_html)
+
+    def test_dashboard_metrics_link_to_relevant_views(self):
+        user_id = factory.create_user("dashboard-links", display_name="Dashboard Links")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        factory.create_collection_item(user_id, "Sol Ring", quantity=2, quantity_for_trade=1)
+        factory.create_want_item(user_id, "Counterspell")
+
+        html = app.render_dashboard(user)
+
+        self.assertIn('class="metric metric-link" href="/collection"', html)
+        self.assertIn('class="metric metric-link" href="/collection?trade_only=1"', html)
+        self.assertIn('class="metric metric-link" href="/wants"', html)
 
     def test_wishlist_filters_trade_matches_and_paginates(self):
         user_id = factory.create_user("want-list-owner", display_name="Want List Owner")
