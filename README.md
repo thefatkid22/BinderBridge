@@ -49,7 +49,7 @@ License: **GNU AGPL-3.0**
 - Deck imports match against owned collection cards and can turn missing cards into grouped wishlist wants
 - Browse page for available trade cards with card, user, quality, game, and finish filters
 - Trade proposals, accept, decline, cancel, and completion flow
-- Trade comments and linked counter-offers
+- Trade comments and same-trade counter-offers
 - Trade matchmaking that highlights users with mutual want/trade overlap and preloads a balanced trade draft
 - Trade-builder recommendations for wishlist matches and Scryfall value-balance helpers
 - Trade issue reporting with evidence attachments, admin review queue, resolution notes, repeat-issue trend reporting, participant notifications, and audit logging
