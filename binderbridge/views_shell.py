@@ -23,10 +23,15 @@ def render_workspace_nav(items, label="On this page", compact=False, vertical=Fa
     if vertical:
         nav_classes.append("workspace-side-nav")
     nav_class = " ".join(nav_classes)
-    links = "".join(
-        f'<a class="workspace-nav-link" href="{e(href)}"><strong>{e(text)}</strong><span>{e(detail)}</span></a>'
-        for href, text, detail in items
-    )
+    links = []
+    for item in items:
+        href, text, detail, *rest = item
+        badge = str(rest[0] or "").strip() if rest else ""
+        badge_html = f'<em class="workspace-nav-badge">{e(badge)}</em>' if badge else ""
+        links.append(
+            f'<a class="workspace-nav-link" href="{e(href)}"><strong>{e(text)}{badge_html}</strong><span>{e(detail)}</span></a>'
+        )
+    links = "".join(links)
     return f'<nav class="{nav_class}" aria-label="{e(label)}">{links}</nav>'
 
 

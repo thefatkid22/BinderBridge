@@ -215,6 +215,40 @@ def duplicate_cleanup_summary(user_id):
     }
 
 
+def duplicate_cleanup_count_summary(user_id):
+    collection = duplicate_group_count_for_table("collection_items", COLLECTION_DUPLICATE_FIELDS, user_id)
+    want = duplicate_group_count_for_table("want_items", WANT_DUPLICATE_FIELDS, user_id)
+    return {
+        "collection_duplicate_groups": collection["groups"],
+        "collection_duplicate_rows": collection["extra_rows"],
+        "want_duplicate_groups": want["groups"],
+        "want_duplicate_rows": want["extra_rows"],
+    }
+
+
+def duplicate_group_count_for_table(table_name, fields, user_id):
+    if table_name not in ("collection_items", "want_items"):
+        raise ValueError("Unsupported duplicate count table.")
+    group_by = ", ".join(f"LOWER(TRIM(COALESCE({field}, '')))" for field in fields)
+    result = row(
+        f"""
+        SELECT COUNT(*) AS groups, COALESCE(SUM(row_count - 1), 0) AS extra_rows
+        FROM (
+            SELECT COUNT(*) AS row_count
+            FROM {table_name}
+            WHERE user_id = ?
+            GROUP BY {group_by}
+            HAVING COUNT(*) > 1
+        )
+        """,
+        (user_id,),
+    )
+    return {
+        "groups": int(row_value(result, "groups", 0) or 0),
+        "extra_rows": int(row_value(result, "extra_rows", 0) or 0),
+    }
+
+
 def selected_duplicate_groups(all_groups, selected_keys):
     selected = {str(key) for key in selected_keys if str(key).strip()}
     if not selected:
@@ -1122,6 +1156,8 @@ __all__ = [
     "collection_duplicate_groups",
     "want_duplicate_groups",
     "duplicate_cleanup_summary",
+    "duplicate_cleanup_count_summary",
+    "duplicate_group_count_for_table",
     "selected_duplicate_groups",
     "merge_collection_group_rows",
     "move_collection_unique_rows",

@@ -41,8 +41,16 @@ def audit_section_id(section_id, default=AUDIT_DEFAULT_SECTION):
     return normalize_workspace_section(section_id, AUDIT_SECTION_IDS, default=default)
 
 
-def audit_workspace_items():
-    return tuple((f'#{section["id"]}', section["label"], section["detail"]) for section in AUDIT_SECTION_DEFINITIONS)
+def audit_workspace_items(counts=None):
+    items = []
+    counts = counts or {}
+    for section in AUDIT_SECTION_DEFINITIONS:
+        item = (f'#{section["id"]}', section["label"], section["detail"])
+        count = int(counts.get(section["id"], 0) or 0)
+        if count > 0:
+            item = (*item, str(count))
+        items.append(item)
+    return tuple(items)
 
 
 def audit_section_path(section_id, base_path="/cleanup/audit"):
@@ -57,6 +65,49 @@ def audit_section_redirect_input(section_id, base_path="/cleanup/audit"):
 def render_audit_workspace_section(section_id, body):
     section = audit_section_id(section_id)
     return f'<section class="workspace-section" id="{e(section)}">{body}</section>'
+
+
+def count_badge_text(count, singular, plural=None):
+    try:
+        clean_count = int(count or 0)
+    except (TypeError, ValueError):
+        clean_count = 0
+    if clean_count <= 0:
+        return ""
+    label = singular if clean_count == 1 else (plural or f"{singular}s")
+    return f"{clean_count} {label}"
+
+
+def render_count_badge(count, singular, plural=None):
+    text = count_badge_text(count, singular, plural)
+    return f'<span class="button-count-badge">{e(text)}</span>' if text else ""
+
+
+def render_counted_action(href, label, count=0, singular="issue", plural=None, variant="secondary"):
+    return (
+        f'<a class="button {e(variant)} hygiene-action-link" href="{e(href)}">'
+        f'<span>{e(label)}</span>{render_count_badge(count, singular, plural)}</a>'
+    )
+
+
+def audit_hygiene_counts(user_id, condition_summary=None, collection_scryfall_summary=None, wishlist_scryfall_summary=None):
+    condition_summary = condition_summary or condition_finish_audit_summary(user_id)
+    collection_scryfall_summary = collection_scryfall_summary or scryfall_enhancement_audit_summary(user_id)
+    wishlist_scryfall_summary = wishlist_scryfall_summary or want_scryfall_enhancement_audit_summary(user_id)
+    condition_count = int(condition_summary.get("total", 0) or 0)
+    collection_scryfall_count = int(collection_scryfall_summary.get("missing", 0) or 0)
+    wishlist_scryfall_count = int(wishlist_scryfall_summary.get("missing", 0) or 0)
+    return {
+        AUDIT_SECTION_CONDITION_FINISH: condition_count,
+        AUDIT_SECTION_COLLECTION_SCRYFALL: collection_scryfall_count,
+        AUDIT_SECTION_WISHLIST_SCRYFALL: wishlist_scryfall_count,
+        AUDIT_SECTION_SUMMARY: condition_count + collection_scryfall_count + wishlist_scryfall_count,
+    }
+
+
+def collection_hygiene_count(user_id):
+    counts = audit_hygiene_counts(user_id)
+    return counts[AUDIT_SECTION_CONDITION_FINISH] + counts[AUDIT_SECTION_COLLECTION_SCRYFALL]
 
 
 def query_value(query, key):
@@ -296,6 +347,7 @@ def render_duplicate_cleanup_panel(title, groups, action, empty_text, quantity_k
 
 def render_cleanup(user, notice=None, status="info", active_section=""):
     summary = duplicate_cleanup_summary(user["id"])
+    audit_count = collection_hygiene_count(user["id"])
     collection_cleanup_panel = render_duplicate_cleanup_panel(
         "Collection duplicates",
         summary["collection_groups"],
@@ -321,10 +373,10 @@ def render_cleanup(user, notice=None, status="info", active_section=""):
         ),
     )
     workspace_items = [
-        ("#cleanup-collection", "Collection duplicates", "Merge duplicate owned cards"),
-        ("#cleanup-wants", "Wishlist duplicates", "Merge duplicate wanted cards"),
+        ("#cleanup-collection", "Collection duplicates", "Merge duplicate owned cards", str(len(summary["collection_groups"])) if summary["collection_groups"] else ""),
+        ("#cleanup-wants", "Wishlist duplicates", "Merge duplicate wanted cards", str(len(summary["want_groups"])) if summary["want_groups"] else ""),
     ]
-    active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])
+    active_attr = workspace_active_attr(active_section, [item[0].lstrip("#") for item in workspace_items])
     content = f"""
     <section class="section-heading">
         <div>
@@ -333,7 +385,7 @@ def render_cleanup(user, notice=None, status="info", active_section=""):
             <p class="lead">Merge exact duplicate collection and wishlist rows while preserving group links, trade references, notes, and price history.</p>
         </div>
         <div class="actions">
-            <a class="button secondary" href="/cleanup/audit">Audit collection</a>
+            {render_counted_action("/cleanup/audit", "Audit collection", audit_count, "issue")}
             <a class="button secondary" href="/collection">My cards</a>
             <a class="button secondary" href="/wants">Wishlist</a>
         </div>
@@ -431,8 +483,8 @@ def render_scryfall_enhancement_audit_row(item):
     """
 
 
-def render_collection_scryfall_audit_panel(user):
-    summary = scryfall_enhancement_audit_summary(user["id"])
+def render_collection_scryfall_audit_panel(user, summary=None):
+    summary = summary or scryfall_enhancement_audit_summary(user["id"])
     rows = scryfall_enhancement_audit_rows(user["id"], limit=50)
     row_html = "".join(render_scryfall_enhancement_audit_row(item) for item in rows)
     hidden_overflow = max(0, int(summary["missing"] or 0) - len(rows))
@@ -525,8 +577,8 @@ def render_wishlist_scryfall_audit_row(item):
     """
 
 
-def render_wishlist_scryfall_audit_panel(user):
-    summary = want_scryfall_enhancement_audit_summary(user["id"])
+def render_wishlist_scryfall_audit_panel(user, summary=None):
+    summary = summary or want_scryfall_enhancement_audit_summary(user["id"])
     rows = want_scryfall_enhancement_audit_rows(user["id"], limit=50)
     row_html = "".join(render_wishlist_scryfall_audit_row(item) for item in rows)
     hidden_overflow = max(0, int(summary["missing"] or 0) - len(rows))
@@ -600,6 +652,14 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
     page, per_page, page_count, offset = pagination_state(query, total_count)
     page_items = audited_rows[offset:offset + per_page]
     summary = condition_finish_audit_summary(user["id"])
+    collection_scryfall_summary = scryfall_enhancement_audit_summary(user["id"])
+    wishlist_scryfall_summary = want_scryfall_enhancement_audit_summary(user["id"])
+    audit_counts = audit_hygiene_counts(
+        user["id"],
+        condition_summary=summary,
+        collection_scryfall_summary=collection_scryfall_summary,
+        wishlist_scryfall_summary=wishlist_scryfall_summary,
+    )
     pagination = render_pagination("/cleanup/audit", query, total_count, page, per_page, page_count)
     redirect_to = page_url("/cleanup/audit", query, page, per_page)
     hidden_filters = condition_finish_audit_hidden_inputs(filters)
@@ -694,7 +754,7 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
         <article class="metric"><span>{e(summary["trade_needs_review"])}</span><p>trade cards to review</p></article>
     </section>
     """
-    workspace_items = audit_workspace_items()
+    workspace_items = audit_workspace_items(audit_counts)
     active_attr = workspace_active_attr(active_section, AUDIT_SECTION_IDS)
     content = f"""
     {render_cards_subnav("collection")}
@@ -764,8 +824,8 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
                 <section class="panel flush">{table}</section>
                 {pagination}
             </section>
-            {render_audit_workspace_section(AUDIT_SECTION_COLLECTION_SCRYFALL, render_collection_scryfall_audit_panel(user))}
-            {render_audit_workspace_section(AUDIT_SECTION_WISHLIST_SCRYFALL, render_wishlist_scryfall_audit_panel(user))}
+            {render_audit_workspace_section(AUDIT_SECTION_COLLECTION_SCRYFALL, render_collection_scryfall_audit_panel(user, summary=collection_scryfall_summary))}
+            {render_audit_workspace_section(AUDIT_SECTION_WISHLIST_SCRYFALL, render_wishlist_scryfall_audit_panel(user, summary=wishlist_scryfall_summary))}
             {render_audit_workspace_section(AUDIT_SECTION_SUMMARY, audit_summary)}
         </div>
     </section>
@@ -819,6 +879,8 @@ def render_collection(user, query, notice=None, status="info"):
             render_datalist("collection-type-line-suggestions", collection_field_suggestions(user["id"], "type_line")),
         ]
     )
+    audit_count = collection_hygiene_count(user["id"])
+    duplicate_counts = duplicate_cleanup_count_summary(user["id"])
     collection_groups = [group for group in group_summary_rows(user["id"]) if group["group_type"] != "wishlist"]
     collection_group_options = "".join(
         f'<option value="{e(group["id"])}">{e(group_type_label(group["group_type"]))}: {e(group["name"])}</option>'
@@ -933,8 +995,8 @@ def render_collection(user, query, notice=None, status="info"):
             <h1>Your cards</h1>
         </div>
         <div class="actions">
-            <a class="button secondary" href="/cleanup/audit">Audit collection</a>
-            <a class="button secondary" href="/cleanup">Cleanup duplicates</a>
+            {render_counted_action("/cleanup/audit", "Audit collection", audit_count, "issue")}
+            {render_counted_action("/cleanup", "Duplicate cleanup", duplicate_counts["collection_duplicate_groups"], "group")}
             <a class="button secondary" href="{e(export_url)}">Export CSV</a>
             <a class="button primary" href="/collection/new">Add card</a>
         </div>
@@ -2260,5 +2322,5 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
     return render_layout(user, "Import", content, active="cards", notice=notice, status=status)
 
 
-__all__ = ['AUDIT_SECTION_CONDITION_FINISH', 'AUDIT_SECTION_COLLECTION_SCRYFALL', 'AUDIT_SECTION_WISHLIST_SCRYFALL', 'AUDIT_SECTION_SUMMARY', 'AUDIT_DEFAULT_SECTION', 'AUDIT_SECTION_DEFINITIONS', 'AUDIT_SECTION_IDS', 'audit_section_id', 'audit_workspace_items', 'audit_section_path', 'audit_section_redirect_input', 'render_audit_workspace_section', 'query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_scryfall_enhancement_audit_row', 'render_collection_scryfall_audit_panel', 'render_wishlist_scryfall_audit_row', 'render_wishlist_scryfall_audit_panel', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_browse_photo_preview', 'render_collection_row', 'render_price_history_panel', 'card_photo_size_label', 'render_collection_photo_gallery', 'render_collection_photo_panel', 'render_collection_form', 'render_import']
+__all__ = ['AUDIT_SECTION_CONDITION_FINISH', 'AUDIT_SECTION_COLLECTION_SCRYFALL', 'AUDIT_SECTION_WISHLIST_SCRYFALL', 'AUDIT_SECTION_SUMMARY', 'AUDIT_DEFAULT_SECTION', 'AUDIT_SECTION_DEFINITIONS', 'AUDIT_SECTION_IDS', 'audit_section_id', 'audit_workspace_items', 'audit_section_path', 'audit_section_redirect_input', 'render_audit_workspace_section', 'count_badge_text', 'render_count_badge', 'render_counted_action', 'audit_hygiene_counts', 'collection_hygiene_count', 'query_value', 'query_nonnegative_int', 'collection_filters', 'collection_filter_values', 'collection_has_advanced_filters', 'collection_hidden_filter_inputs', 'CARD_SORT_OPTIONS', 'WANT_SORT_OPTIONS', 'GROUP_COLLECTION_SORT_SQL', 'GROUP_WANT_SORT_SQL', 'sort_state', 'sort_order_clause', 'render_sort_controls', 'render_sort_bar', 'collection_where', 'query_int', 'pagination_state', 'page_url', 'current_collection_url', 'render_pagination', 'pagination_hidden_inputs', 'render_cleanup_group_items', 'render_duplicate_cleanup_panel', 'render_cleanup', 'render_audit_issue_badges', 'render_audit_value', 'render_condition_finish_audit_row', 'render_scryfall_enhancement_audit_row', 'render_collection_scryfall_audit_panel', 'render_wishlist_scryfall_audit_row', 'render_wishlist_scryfall_audit_panel', 'render_condition_finish_audit', 'render_collection', 'stat_percent_text', 'render_stat_breakdown', 'render_collection_top_value', 'render_group_count_summary', 'render_collection_statistics', 'browse_filters', 'browse_filter_values', 'browse_has_advanced_filters', 'browse_where', 'browse_filter_users', 'TRADE_PICKER_FILTER_KEYS', 'trade_picker_filter_values', 'trade_picker_has_advanced_filters', 'trade_picker_where', 'trade_picker_pagination_state', 'trade_picker_url', 'trade_picker_preserved_inputs', 'trade_picker_datalists', 'render_trade_picker_pagination', 'render_browse', 'render_browse_row', 'render_browse_photo_preview', 'render_collection_row', 'render_price_history_panel', 'card_photo_size_label', 'render_collection_photo_gallery', 'render_collection_photo_panel', 'render_collection_form', 'render_import']
 __all__.extend(['render_collection_share_link_row', 'render_collection_share_panel', 'shared_collection_item_from_link', 'render_shared_collection_card'])
