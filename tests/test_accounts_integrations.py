@@ -845,6 +845,57 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(request.response[0]["data"]["items"][0]["quantity"], 2)
         self.assertEqual(request.response[0]["data"]["comments"][0]["body"], "Looks good.")
 
+    def test_api_can_create_trade_comment(self):
+        proposer_id = app.create_user("api-comment-proposer", "password123", "Comment Proposer")
+        recipient_id = app.create_user("api-comment-recipient", "password123", "Comment Recipient")
+        token = app.create_api_token(recipient_id, "Write token", ["read", "write"])["token"]
+        proposer_card = factory.collection_item_row(proposer_id, "Sol Ring", quantity=2, quantity_for_trade=1)
+        recipient_card = factory.collection_item_row(recipient_id, "Lightning Bolt", quantity=2, quantity_for_trade=1)
+        trade_id = app.create_trade_offer(
+            proposer_id,
+            recipient_id,
+            "Mobile comment test",
+            [(proposer_card, 1)],
+            [(recipient_card, 1)],
+        )
+
+        class DummyApiRequest:
+            _request_path = "/api/v1/trades"
+
+            def __init__(self, payload):
+                self.headers = {"Authorization": f"Bearer {token}"}
+                self.payload = payload
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "203.0.113.12"
+
+        request = DummyApiRequest({"body": "Can you ship this week?"})
+        app.api_dispatch(request, "POST", f"/api/v1/trades/{trade_id}/comments", {})
+
+        self.assertEqual(request.response[1], HTTPStatus.CREATED)
+        self.assertEqual(request.response[0]["data"]["comments"][0]["body"], "Can you ship this week?")
+        notification = app.row(
+            "SELECT * FROM user_notifications WHERE user_id = ? AND kind = 'trade_comment'",
+            (proposer_id,),
+        )
+        self.assertIsNotNone(notification)
+        self.assertEqual(notification["related_trade_id"], trade_id)
+
     def test_api_can_propose_trade_with_visible_trade_cards(self):
         proposer_id = app.create_user("api-mobile-proposer", "password123", "Mobile Proposer")
         recipient_id = app.create_user("api-mobile-recipient", "password123", "Mobile Recipient")
@@ -904,6 +955,67 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(create.response[0]["data"]["proposer"]["id"], proposer_id)
         self.assertEqual(create.response[0]["data"]["recipient"]["id"], recipient_id)
         self.assertEqual(len(create.response[0]["data"]["items"]), 2)
+
+    def test_api_can_create_counter_offer(self):
+        proposer_id = app.create_user("api-counter-proposer", "password123", "Counter Proposer")
+        recipient_id = app.create_user("api-counter-recipient", "password123", "Counter Recipient")
+        recipient_token = app.create_api_token(recipient_id, "Write token", ["read", "write"])["token"]
+        proposer_card = factory.collection_item_row(proposer_id, "Sol Ring", quantity=2, quantity_for_trade=1)
+        recipient_card = factory.collection_item_row(recipient_id, "Lightning Bolt", quantity=2, quantity_for_trade=1)
+        trade_id = app.create_trade_offer(
+            proposer_id,
+            recipient_id,
+            "Original mobile offer",
+            [(proposer_card, 1)],
+            [(recipient_card, 1)],
+        )
+
+        class DummyApiRequest:
+            _request_path = "/api/v1/trades"
+
+            def __init__(self, payload=None):
+                self.headers = {"Authorization": f"Bearer {recipient_token}"}
+                self.payload = payload or {}
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "203.0.113.12"
+
+        detail = DummyApiRequest()
+        app.api_dispatch(detail, "GET", f"/api/v1/trades/{trade_id}", {})
+        self.assertEqual(detail.response[1], HTTPStatus.OK)
+        self.assertTrue(detail.response[0]["data"]["viewer"]["can_counter"])
+
+        counter = DummyApiRequest({
+            "recipient_id": proposer_id,
+            "counter_trade_id": trade_id,
+            "proposer_note": "Could we do this instead?",
+            "offered": [{"collection_item_id": recipient_card["id"], "quantity": 1}],
+            "requested": [{"collection_item_id": proposer_card["id"], "quantity": 1}],
+        })
+        app.api_dispatch(counter, "POST", "/api/v1/trades", {})
+
+        self.assertEqual(counter.response[1], HTTPStatus.CREATED)
+        counter_trade = counter.response[0]["data"]
+        self.assertEqual(counter_trade["countered_from_trade_id"], trade_id)
+        self.assertEqual(counter_trade["viewer"]["role"], "proposer")
+        original = app.row("SELECT * FROM trades WHERE id = ?", (trade_id,))
+        self.assertEqual(original["status"], "countered")
+        self.assertEqual(original["counter_trade_id"], counter_trade["id"])
 
     def test_api_trade_actions_update_trade_statuses(self):
         proposer_id = app.create_user("api-action-proposer", "password123", "Action Proposer")

@@ -240,6 +240,7 @@ Initial API endpoints:
 - `POST /api/v1/trades/{id}/decline`
 - `POST /api/v1/trades/{id}/cancel`
 - `POST /api/v1/trades/{id}/complete`
+- `POST /api/v1/trades/{id}/comments`
 - `GET /api/v1/notifications`
 - `GET /api/v1/notifications/{id}`
 - `POST /api/v1/notifications/{id}/read`
