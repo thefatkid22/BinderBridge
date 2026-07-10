@@ -288,6 +288,11 @@ def render_group_collection_items(group, items, controls="", pagination="", tota
             <label>Quantity
                 <input name="quantity" type="number" min="1" value="1">
             </label>
+            <label class="checkbox">
+                <input type="checkbox" name="keep_trade_availability" value="1">
+                Keep available-for-trade unchanged
+            </label>
+            <p class="muted compact">Unchecked: BinderBridge lowers available-for-trade only if grouped copies would overlap trade copies.</p>
             <button class="button primary" type="submit">Add card</button>
         </form>
         """

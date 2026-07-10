@@ -224,6 +224,7 @@ Initial API endpoints:
 - `DELETE /api/v1/groups/{id}`
 - `POST /api/v1/groups/{id}/collection-items`
 - `PATCH /api/v1/groups/{id}/collection-items/{group_item_id}`
+- `POST /api/v1/groups/{id}/collection-items/{group_item_id}/transfer`
 - `DELETE /api/v1/groups/{id}/collection-items/{group_item_id}`
 - `GET /api/v1/wants`
 - `POST /api/v1/wants`
@@ -248,6 +249,8 @@ Initial API endpoints:
 - `DELETE /api/v1/notifications/{id}`
 
 Send API tokens with `Authorization: Bearer bbapi_...`.
+
+Adding a collection card to a deck or binder through the API leaves the collection quantity intact. By default, BinderBridge lowers `quantity_for_trade` when the grouped quantity would otherwise use copies marked available for trade; send `adjust_trade_availability: false` to keep trade availability unchanged.
 
 Webhook endpoints are also managed from `Account -> API access`. BinderBridge sends JSON `POST` requests with `X-BinderBridge-Event`, `X-BinderBridge-Delivery`, and `X-BinderBridge-Signature` headers. The signature is `sha256=` plus an HMAC-SHA256 of the raw JSON payload using the webhook signing secret. Deliveries are queued in SQLite and processed by the durable background runner so trade and notification actions are not blocked by remote webhook downtime.
 

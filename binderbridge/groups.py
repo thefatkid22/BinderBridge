@@ -180,7 +180,7 @@ def wishlist_group_items(group_id, order_clause=None, filters=None, limit=None, 
     )
 
 
-def add_collection_item_to_group(user_id, group_id, collection_item_id, quantity):
+def add_collection_item_to_group(user_id, group_id, collection_item_id, quantity, adjust_trade_availability=False):
     group = user_group(user_id, group_id)
     if not group or group["group_type"] == "wishlist":
         raise ValueError("Deck and binder groups can use collection cards.")
@@ -190,18 +190,145 @@ def add_collection_item_to_group(user_id, group_id, collection_item_id, quantity
     if not str(quantity or "").strip().lstrip("+-").isdigit():
         raise ValueError("Quantity must be a whole number.")
     quantity = clamp_quantity(quantity, 1)
-    quantity = min(max(1, quantity), max(1, int(item["quantity"] or 1)))
+    owned_quantity = max(1, int(item["quantity"] or 1))
+    quantity = min(max(1, quantity), owned_quantity)
+    previous_trade_quantity = max(0, int(row_value(item, "quantity_for_trade", 0) or 0))
+    adjusted_trade_quantity = previous_trade_quantity
+    if adjust_trade_availability:
+        adjusted_trade_quantity = min(previous_trade_quantity, max(0, owned_quantity - quantity))
     timestamp = now_iso()
-    execute(
-        """
-        INSERT INTO group_collection_items (group_id, collection_item_id, quantity, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(group_id, collection_item_id) DO UPDATE SET
-            quantity = excluded.quantity,
-            updated_at = excluded.updated_at
-        """,
-        (group_id, collection_item_id, quantity, timestamp, timestamp),
-    )
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO group_collection_items (group_id, collection_item_id, quantity, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(group_id, collection_item_id) DO UPDATE SET
+                quantity = excluded.quantity,
+                updated_at = excluded.updated_at
+            """,
+            (group_id, collection_item_id, quantity, timestamp, timestamp),
+        )
+        if adjusted_trade_quantity != previous_trade_quantity:
+            conn.execute(
+                "UPDATE collection_items SET quantity_for_trade = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (adjusted_trade_quantity, timestamp, collection_item_id, user_id),
+            )
+    return {
+        "quantity": quantity,
+        "adjust_trade_availability": bool(adjust_trade_availability),
+        "trade_availability_adjusted": adjusted_trade_quantity != previous_trade_quantity,
+        "previous_quantity_for_trade": previous_trade_quantity,
+        "quantity_for_trade": adjusted_trade_quantity,
+    }
+
+
+def transfer_group_collection_item(user_id, source_group_id, group_item_id, target_group_id, quantity=None, move=False):
+    try:
+        source_group_id = int(source_group_id)
+        group_item_id = int(group_item_id)
+        target_group_id = int(target_group_id)
+    except (TypeError, ValueError):
+        raise ValueError("Group ids must be numbers.")
+    if source_group_id <= 0 or group_item_id <= 0 or target_group_id <= 0:
+        raise ValueError("Group ids must be numbers.")
+    if source_group_id == target_group_id:
+        raise ValueError("Choose a different deck or binder.")
+
+    requested_quantity = None
+    if quantity is not None and str(quantity).strip():
+        requested_quantity = parse_group_item_quantity(quantity)
+    timestamp = now_iso()
+
+    with db() as conn:
+        source_group = conn.execute(
+            "SELECT * FROM card_groups WHERE id = ? AND user_id = ?",
+            (source_group_id, user_id),
+        ).fetchone()
+        target_group = conn.execute(
+            "SELECT * FROM card_groups WHERE id = ? AND user_id = ?",
+            (target_group_id, user_id),
+        ).fetchone()
+        if not source_group or source_group["group_type"] not in ("deck", "binder"):
+            raise ValueError("Source deck or binder not found.")
+        if not target_group or target_group["group_type"] not in ("deck", "binder"):
+            raise ValueError("Target deck or binder not found.")
+
+        source_item = conn.execute(
+            """
+            SELECT
+                group_collection_items.id AS group_item_id,
+                group_collection_items.collection_item_id,
+                group_collection_items.quantity AS group_quantity,
+                collection_items.quantity AS owned_quantity
+            FROM group_collection_items
+            JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+            WHERE group_collection_items.id = ?
+              AND group_collection_items.group_id = ?
+              AND collection_items.user_id = ?
+            """,
+            (group_item_id, source_group_id, user_id),
+        ).fetchone()
+        if not source_item:
+            return None
+
+        source_quantity = max(1, int(row_value(source_item, "group_quantity", 1) or 1))
+        owned_quantity = max(1, int(row_value(source_item, "owned_quantity", 1) or 1))
+        transfer_quantity = requested_quantity if requested_quantity is not None else source_quantity
+        transfer_quantity = min(max(1, transfer_quantity), source_quantity, owned_quantity)
+
+        conn.execute(
+            """
+            INSERT INTO group_collection_items (group_id, collection_item_id, quantity, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(group_id, collection_item_id) DO UPDATE SET
+                quantity = excluded.quantity,
+                updated_at = excluded.updated_at
+            """,
+            (target_group_id, source_item["collection_item_id"], transfer_quantity, timestamp, timestamp),
+        )
+
+        source_deleted = False
+        source_remaining = source_quantity
+        if move:
+            source_remaining = source_quantity - transfer_quantity
+            if source_remaining <= 0:
+                conn.execute(
+                    "DELETE FROM group_collection_items WHERE id = ? AND group_id = ?",
+                    (group_item_id, source_group_id),
+                )
+                source_deleted = True
+                source_remaining = 0
+            else:
+                conn.execute(
+                    "UPDATE group_collection_items SET quantity = ?, updated_at = ? WHERE id = ? AND group_id = ?",
+                    (source_remaining, timestamp, group_item_id, source_group_id),
+                )
+
+        target_item = conn.execute(
+            """
+            SELECT
+                group_collection_items.id AS group_item_id,
+                group_collection_items.quantity AS group_quantity,
+                collection_items.*
+            FROM group_collection_items
+            JOIN collection_items ON collection_items.id = group_collection_items.collection_item_id
+            WHERE group_collection_items.group_id = ?
+              AND group_collection_items.collection_item_id = ?
+              AND collection_items.user_id = ?
+            """,
+            (target_group_id, source_item["collection_item_id"], user_id),
+        ).fetchone()
+
+    return {
+        "target_item": target_item,
+        "source_group_id": source_group_id,
+        "source_group_item_id": group_item_id,
+        "source_deleted": source_deleted,
+        "source_quantity": source_remaining,
+        "target_group_id": target_group_id,
+        "quantity": transfer_quantity,
+        "mode": "move" if move else "copy",
+    }
 
 
 def add_want_item_to_group(user_id, group_id, want_item_id):
@@ -449,6 +576,7 @@ __all__ = [
     "wishlist_group_item_count",
     "wishlist_group_items",
     "add_collection_item_to_group",
+    "transfer_group_collection_item",
     "add_want_item_to_group",
     "remove_group_item",
     "parse_group_item_quantity",

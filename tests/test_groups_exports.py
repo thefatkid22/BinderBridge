@@ -51,6 +51,8 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertIn('<option value="members" selected>All members</option>', groups_html)
         self.assertIn("2 x Sol Ring", deck_html)
         self.assertIn("Add card", deck_html)
+        self.assertIn('name="keep_trade_availability"', deck_html)
+        self.assertIn("Keep available-for-trade unchanged", deck_html)
         self.assertIn("Sharing defaults", deck_html)
         self.assertIn("Private share links", deck_html)
         self.assertIn(f'/groups/{deck_id}/export', deck_html)
@@ -72,6 +74,67 @@ class GroupsExportsTests(BinderBridgeTestCase):
         self.assertEqual(app.collection_group_items(deck_id), [])
         self.assertEqual(app.delete_card_group(user_id, binder_id), 1)
         self.assertIsNone(app.user_group(user_id, binder_id))
+
+    def test_group_add_route_can_adjust_or_keep_trade_availability(self):
+        user_id = app.create_user("grouptrade", "password123", "Group Trade")
+        user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        group_id = app.create_card_group(user_id, "binder", "Trade binder")
+        default_card_id = factory.create_collection_item(
+            user_id,
+            "Default Adjust",
+            quantity=4,
+            quantity_for_trade=3,
+        )
+        override_card_id = factory.create_collection_item(
+            user_id,
+            "Keep Trade",
+            quantity=4,
+            quantity_for_trade=3,
+        )
+
+        class RouteHarness:
+            def __init__(self, form):
+                self.form = form
+
+            def read_form(self):
+                return self.form
+
+            def redirect(self, location):
+                return location
+
+            def html(self, content, status=200):
+                return content, status
+
+            def not_found(self, current_user):
+                raise AssertionError(f"Unexpected not found for {current_user['id']}")
+
+        redirect = app.group_action(
+            RouteHarness({
+                "collection_item_id": [str(default_card_id)],
+                "quantity": ["2"],
+            }),
+            "POST",
+            user,
+            f"/groups/{group_id}/add",
+        )
+        default_row = app.row("SELECT quantity, quantity_for_trade FROM collection_items WHERE id = ?", (default_card_id,))
+        self.assertEqual(redirect, f"/groups/{group_id}#group-cards")
+        self.assertEqual(default_row["quantity"], 4)
+        self.assertEqual(default_row["quantity_for_trade"], 2)
+
+        app.group_action(
+            RouteHarness({
+                "collection_item_id": [str(override_card_id)],
+                "quantity": ["2"],
+                "keep_trade_availability": ["1"],
+            }),
+            "POST",
+            user,
+            f"/groups/{group_id}/add",
+        )
+        override_row = app.row("SELECT quantity, quantity_for_trade FROM collection_items WHERE id = ?", (override_card_id,))
+        self.assertEqual(override_row["quantity"], 4)
+        self.assertEqual(override_row["quantity_for_trade"], 3)
 
     def test_group_visibility_controls_public_member_group_views(self):
         owner_id = app.create_user("groupowner", "password123", "Group Owner")
