@@ -786,6 +786,49 @@ summary:focus-visible,
     justify-content: flex-end;
 }
 
+.header-action-menu {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.header-action-menu > summary {
+    list-style: none;
+}
+
+.header-action-menu > summary::-webkit-details-marker {
+    display: none;
+}
+
+.header-action-menu > summary::after {
+    content: "+";
+    margin-left: 0.45rem;
+    color: var(--muted);
+}
+
+.header-action-menu[open] > summary::after {
+    content: "−";
+}
+
+.header-action-menu-panel {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    z-index: 8;
+    display: grid;
+    gap: 0.45rem;
+    width: min(280px, calc(100vw - 2rem));
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    padding: 0.6rem;
+}
+
+.header-action-menu-panel .button {
+    justify-content: space-between;
+    width: 100%;
+}
+
 .actions,
 .form-actions,
 .table-actions {
@@ -824,6 +867,20 @@ summary:focus-visible,
     margin: 0.45rem 0 0;
     color: var(--muted);
     font-weight: 750;
+}
+
+.metric-link {
+    color: inherit;
+    text-decoration: none;
+    transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.metric-link:hover,
+.metric-link:focus-visible {
+    border-color: var(--primary);
+    background: var(--surface-2);
+    text-decoration: none;
+    transform: translateY(-2px);
 }
 
 .content-grid {
@@ -1351,6 +1408,14 @@ summary:focus-visible,
     flex: 1 1 170px;
 }
 
+.responsive-filter-panel {
+    display: contents;
+}
+
+.responsive-filter-panel > summary {
+    display: none;
+}
+
 .collection-filter-bar,
 .browse-filter-bar {
     display: grid;
@@ -1656,6 +1721,50 @@ summary:focus-visible,
     border-bottom: 1px solid var(--line);
     background: var(--header-bg);
     padding: 0.95rem 1.1rem;
+}
+
+.bulk-tools-disclosure {
+    border-bottom: 1px solid var(--line);
+    background: var(--header-bg);
+}
+
+.bulk-tools-disclosure > summary {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 48px;
+    padding: 0.7rem 1.1rem;
+    cursor: pointer;
+    font-weight: 850;
+    list-style: none;
+}
+
+.bulk-tools-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.bulk-tools-disclosure > summary::after {
+    content: "+";
+    color: var(--primary-dark);
+    font-size: 1.1rem;
+}
+
+.bulk-tools-disclosure[open] > summary::after {
+    content: "−";
+}
+
+.bulk-selection-status {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.bulk-tools-disclosure .bulk-action-bar {
+    border-top: 1px solid var(--line);
+    border-bottom: 0;
 }
 
 .bulk-action-intro,
@@ -4697,7 +4806,7 @@ summary:focus-visible,
     }
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1380px) {
     .topbar {
         flex-wrap: wrap;
         gap: 0.7rem 0.9rem;
@@ -5107,12 +5216,89 @@ summary:focus-visible,
         flex-direction: column;
     }
 
+    .section-heading > div:first-child,
     .shared-want-heading > div:first-child {
         flex-basis: auto;
     }
 
     .section-heading .actions {
         justify-content: stretch;
+    }
+
+    .header-action-menu,
+    .header-action-menu > summary {
+        width: 100%;
+    }
+
+    .header-action-menu-panel {
+        position: static;
+        width: 100%;
+        margin-top: 0.5rem;
+        box-shadow: none;
+    }
+
+    .section-tabs {
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: thin;
+    }
+
+    .section-tab {
+        flex: 0 0 auto;
+        min-width: max-content;
+    }
+
+    .filter-bar:has(.responsive-filter-panel) {
+        display: block;
+        padding: 0;
+    }
+
+    .responsive-filter-panel {
+        display: block;
+        width: 100%;
+    }
+
+    .responsive-filter-panel > summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        min-height: 48px;
+        padding: 0.75rem 0.9rem;
+        cursor: pointer;
+        color: var(--ink);
+        font-weight: 850;
+        list-style: none;
+    }
+
+    .responsive-filter-panel > summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .responsive-filter-panel > summary::after {
+        content: "+";
+        color: var(--primary-dark);
+        font-size: 1.1rem;
+    }
+
+    .responsive-filter-panel[open] > summary::after {
+        content: "−";
+    }
+
+    .responsive-filter-panel > .filter-primary-row,
+    .responsive-filter-panel > .advanced-filter {
+        margin-right: 0.9rem;
+        margin-left: 0.9rem;
+    }
+
+    .responsive-filter-panel > .filter-primary-row {
+        padding-top: 0.9rem;
+    }
+
+    .responsive-filter-panel > .advanced-filter {
+        margin-bottom: 0.9rem;
     }
 
     .metric-grid,
@@ -5123,6 +5309,37 @@ summary:focus-visible,
     .notes-form,
     .trade-pricing-panel {
         grid-template-columns: 1fr;
+    }
+
+    .trade-list-metrics {
+        display: flex;
+        gap: 0.65rem;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: thin;
+    }
+
+    .trade-list-metrics .metric {
+        flex: 1 0 132px;
+        min-height: 0;
+        padding: 0.75rem;
+    }
+
+    .trade-list-metrics .metric-zero {
+        display: none;
+    }
+
+    .trade-list-metrics:not(:has(.metric:not(.metric-zero))) {
+        display: none;
+    }
+
+    .trade-list-metrics .metric span {
+        font-size: 1.45rem;
+    }
+
+    .trade-list-metrics .metric p {
+        margin-top: 0.25rem;
+        font-size: 0.78rem;
     }
 
     .span-2 {
@@ -5299,6 +5516,22 @@ summary:focus-visible,
     .pagination-bar,
     .bulk-action-bar {
         padding: 0.9rem;
+    }
+
+    .bulk-tools-disclosure > summary {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 0.75rem 0.9rem;
+    }
+
+    .bulk-tools-disclosure > summary::after {
+        position: absolute;
+        right: 0.9rem;
+    }
+
+    .bulk-selection-status {
+        margin-left: 0;
+        padding-right: 1.5rem;
     }
 
     .scryfall-result-grid {

@@ -271,6 +271,41 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             }});
         }})();
         (function () {{
+            if (!window.matchMedia || !window.matchMedia("(max-width: 560px)").matches) return;
+            document.querySelectorAll("[data-responsive-filter]").forEach(function (panel) {{
+                if (panel.getAttribute("data-filter-active") !== "true") panel.open = false;
+            }});
+        }})();
+        (function () {{
+            document.querySelectorAll("[data-bulk-selection-form]").forEach(function (form) {{
+                var inputName = form.getAttribute("data-bulk-selection-name");
+                var tools = form.querySelector("[data-bulk-tools]");
+                var status = form.querySelector("[data-bulk-selection-status]");
+                if (!inputName || !tools || !status) return;
+
+                function selectionInputs() {{
+                    return Array.prototype.slice.call(
+                        document.querySelectorAll('input[type="checkbox"][name="' + inputName + '"]')
+                    ).filter(function (box) {{ return box.form === form; }});
+                }}
+
+                function updateSelection() {{
+                    var count = selectionInputs().filter(function (box) {{ return box.checked; }}).length;
+                    form.classList.toggle("bulk-selection-active", count > 0);
+                    status.textContent = count
+                        ? count + " selected — actions expanded"
+                        : "Select cards below or open for all matching";
+                    if (count > 0) tools.open = true;
+                }}
+
+                document.addEventListener("change", function (event) {{
+                    var target = event.target;
+                    if (target && target.type === "checkbox" && target.form === form) updateSelection();
+                }});
+                updateSelection();
+            }});
+        }})();
+        (function () {{
             var workspaces = Array.prototype.slice.call(document.querySelectorAll("[data-workspace-tabs]"));
             if (!workspaces.length) return;
 

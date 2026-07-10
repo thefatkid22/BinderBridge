@@ -78,10 +78,10 @@ def render_dashboard(user, notice=None, status="info"):
     </section>
 
     <section class="metric-grid">
-        <article class="metric"><span>{summary["total_cards"]}</span><p>Total cards</p></article>
-        <article class="metric"><span>{summary["unique_cards"]}</span><p>Unique entries</p></article>
-        <article class="metric"><span>{summary["trade_cards"]}</span><p>For trade</p></article>
-        <article class="metric"><span>{summary["wants_count"]}</span><p>Wanted cards</p></article>
+        <a class="metric metric-link" href="/collection"><span>{summary["total_cards"]}</span><p>Total cards</p></a>
+        <a class="metric metric-link" href="/collection"><span>{summary["unique_cards"]}</span><p>Unique entries</p></a>
+        <a class="metric metric-link" href="/collection?trade_only=1"><span>{summary["trade_cards"]}</span><p>For trade</p></a>
+        <a class="metric metric-link" href="/wants"><span>{summary["wants_count"]}</span><p>Wanted cards</p></a>
     </section>
 
     <section class="content-grid">

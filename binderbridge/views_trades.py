@@ -65,17 +65,24 @@ def render_trades(user, query=None, notice=None, status="info"):
             <p class="lead">Review active offers, follow conversations, and find past trades without digging through one long list.</p>
         </div>
         <div class="actions">
-            {f'<a class="button secondary trade-inbox-button" href="/notifications">{e(unread_trade_count)} unread trade update{"s" if unread_trade_count != 1 else ""}</a>' if unread_trade_count else ''}
             <a class="button primary" href="/trades/matches">Find matches</a>
-            <a class="button secondary" href="/browse">Browse cards</a>
+            <details class="header-action-menu">
+                <summary class="button secondary">More actions</summary>
+                <div class="header-action-menu-panel">
+                    {f'<a class="button secondary trade-inbox-button" href="/notifications">{e(unread_trade_count)} unread trade update{"s" if unread_trade_count != 1 else ""}</a>' if unread_trade_count else ''}
+                    <a class="button secondary" href="/browse">Browse cards</a>
+                </div>
+            </details>
         </div>
     </section>
     <section class="metric-grid compact-metrics trade-list-metrics">
-        <article class="metric"><span>{e(total_count)}</span><p>matching offers</p></article>
-        <article class="metric"><span>{e(needs_action_count)}</span><p>need your response</p></article>
-        <article class="metric"><span>{e(unread_trade_count)}</span><p>unread updates</p></article>
+        <article class="metric{' metric-zero' if total_count == 0 else ''}"><span>{e(total_count)}</span><p>matching offers</p></article>
+        <article class="metric{' metric-zero' if needs_action_count == 0 else ''}"><span>{e(needs_action_count)}</span><p>need your response</p></article>
+        <article class="metric{' metric-zero' if unread_trade_count == 0 else ''}"><span>{e(unread_trade_count)}</span><p>unread updates</p></article>
     </section>
     <form class="filter-bar trade-list-filter-bar" method="get" action="/trades">
+        <details class="responsive-filter-panel" data-responsive-filter data-filter-active="{'true' if trade_filters_active else 'false'}" open>
+        <summary><span>Search and filters</span><span class="muted compact">Find offers by member or status</span></summary>
         <div class="filter-primary-row">
             <label class="search-field">Search
                 <input name="q" value="{e(filters["q"])}" placeholder="Trade number or member">
@@ -91,6 +98,7 @@ def render_trades(user, query=None, notice=None, status="info"):
                 <a class="button ghost" href="/trades">Reset</a>
             </div>
         </div>
+        </details>
     </form>
     {active_filters}
     <section class="panel flush">{table}</section>
