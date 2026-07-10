@@ -25,6 +25,7 @@ from binderbridge.groups import (
     group_type_label,
     normalize_group_type,
     remove_group_item,
+    transfer_group_collection_item,
     update_card_group,
     update_group_collection_item_quantities,
     user_group,
@@ -1269,7 +1270,16 @@ def api_collection_import(self, user):
             }
             if group_id:
                 try:
-                    add_collection_item_to_group(user["id"], group_id, item_id, item_payload.get("group_quantity", item_payload.get("quantity", 1)))
+                    group_add_result = add_collection_item_to_group(
+                        user["id"],
+                        group_id,
+                        item_id,
+                        item_payload.get("group_quantity", item_payload.get("quantity", 1)),
+                        adjust_trade_availability=api_bool_value(
+                            item_payload.get("adjust_trade_availability"),
+                            default=True,
+                        ),
+                    )
                     group_item = row(
                         """
                         SELECT
@@ -1284,6 +1294,7 @@ def api_collection_import(self, user):
                     )
                     row_result["group_status"] = "added"
                     row_result["group"] = api_group_collection_item_dict(group_item)
+                    row_result["group_trade_availability"] = group_add_result
                     summary["grouped"] += 1
                 except ValueError as exc:
                     row_result["group_status"] = "failed"
@@ -1486,7 +1497,13 @@ def api_group_add_collection_item(self, user, group_id):
     except (TypeError, ValueError):
         return self.api_error("Collection item id must be a number.", HTTPStatus.BAD_REQUEST)
     quantity = payload.get("quantity", 1)
-    add_collection_item_to_group(user["id"], group_id, collection_item_id, quantity)
+    group_add_result = add_collection_item_to_group(
+        user["id"],
+        group_id,
+        collection_item_id,
+        quantity,
+        adjust_trade_availability=api_bool_value(payload.get("adjust_trade_availability"), default=True),
+    )
     group_item = row(
         """
         SELECT
@@ -1509,7 +1526,10 @@ def api_group_add_collection_item(self, user, group_id):
         f"Added collection item #{collection_item_id} to group via API.",
         "api",
     )
-    return self.api_json({"data": api_group_collection_item_dict(group_item)}, HTTPStatus.CREATED)
+    return self.api_json({
+        "data": api_group_collection_item_dict(group_item),
+        "trade_availability": group_add_result,
+    }, HTTPStatus.CREATED)
 
 
 def api_group_update_collection_item(self, user, group_id, group_item_id):
@@ -1530,6 +1550,51 @@ def api_group_update_collection_item(self, user, group_id, group_item_id):
         (group_id, group_item_id, user["id"]),
     )
     return self.api_json({"data": api_group_collection_item_dict(group_item)})
+
+
+def api_group_transfer_collection_item(self, user, group_id, group_item_id):
+    payload = self.api_read_json()
+    try:
+        target_group_id = int(payload.get("target_group_id", 0))
+    except (TypeError, ValueError):
+        return self.api_error("Target group id must be a number.", HTTPStatus.BAD_REQUEST)
+    mode = sanitize_text_input(payload.get("mode", "copy"), max_length=20).strip().lower()
+    if mode not in ("copy", "move"):
+        return self.api_error("Mode must be copy or move.", HTTPStatus.BAD_REQUEST)
+    result = transfer_group_collection_item(
+        user["id"],
+        group_id,
+        group_item_id,
+        target_group_id,
+        quantity=payload.get("quantity"),
+        move=mode == "move",
+    )
+    if not result:
+        return self.api_error("Group card not found.", HTTPStatus.NOT_FOUND)
+    target_item = result.get("target_item")
+    log_integration_action(
+        self,
+        user["id"],
+        "api_write",
+        f"Group #{group_id}",
+        f"{'Moved' if mode == 'move' else 'Copied'} group item #{group_item_id} to group #{target_group_id} via API.",
+        "api",
+    )
+    return self.api_json({
+        "data": api_group_collection_item_dict(target_item),
+        "mode": result["mode"],
+        "quantity": result["quantity"],
+        "source": {
+            "group_id": result["source_group_id"],
+            "group_item_id": result["source_group_item_id"],
+            "deleted": result["source_deleted"],
+            "group_quantity": result["source_quantity"],
+        },
+        "target": {
+            "group_id": result["target_group_id"],
+            "group_item_id": int(row_value(target_item, "group_item_id", 0) or 0),
+        },
+    })
 
 
 def api_group_remove_collection_item(self, user, group_id, group_item_id):
@@ -2030,7 +2095,7 @@ def api_dispatch(self, method, path, query):
             except (ValueError, IndexError):
                 return self.api_error("Group id must be a number.", HTTPStatus.NOT_FOUND)
             action = parts[4] if len(parts) > 4 else ""
-            if len(parts) > 6:
+            if len(parts) > 7:
                 return self.api_error("API endpoint not found.", HTTPStatus.NOT_FOUND)
             if not action:
                 if method == "GET":
@@ -2046,6 +2111,11 @@ def api_dispatch(self, method, path, query):
                     group_item_id = int(parts[5])
                 except (ValueError, IndexError):
                     return self.api_error("Group item id must be a number.", HTTPStatus.NOT_FOUND)
+                subaction = parts[6] if len(parts) > 6 else ""
+                if subaction == "transfer" and method == "POST":
+                    return self.api_group_transfer_collection_item(user, group_id, group_item_id)
+                if subaction:
+                    return self.api_error("API endpoint not found.", HTTPStatus.NOT_FOUND)
                 if method in ("POST", "PUT", "PATCH"):
                     return self.api_group_update_collection_item(user, group_id, group_item_id)
                 if method == "DELETE":
@@ -2132,6 +2202,7 @@ API_ROUTE_METHODS = (
     "api_group_delete",
     "api_group_add_collection_item",
     "api_group_update_collection_item",
+    "api_group_transfer_collection_item",
     "api_group_remove_collection_item",
     "api_wants_list",
     "api_want_create",

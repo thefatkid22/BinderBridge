@@ -103,6 +103,7 @@ def group_action(self, method, user, path, query=None):
                     group_id,
                     int(form.get("collection_item_id", ["0"])[0] or 0),
                     form.get("quantity", ["1"])[0],
+                    adjust_trade_availability="keep_trade_availability" not in form,
                 )
         except (ValueError, TypeError) as exc:
             return self.html(render_group_detail(user, group_id, notice=str(exc), status="error", active_section="group-cards"), HTTPStatus.BAD_REQUEST)

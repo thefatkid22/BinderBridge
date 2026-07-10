@@ -595,6 +595,7 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
             set_code="CMR",
             collector_number="312",
             quantity=4,
+            quantity_for_trade=3,
             image_url="https://img.example/arcane-signet.jpg",
         )
 
@@ -646,18 +647,68 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(group_item["card_name"], "Arcane Signet")
         self.assertEqual(group_item["group_quantity"], 3)
         self.assertEqual(group_item["quantity"], 4)
+        self.assertEqual(group_item["quantity_for_trade"], 1)
+        self.assertTrue(add_item.response[0]["trade_availability"]["trade_availability_adjusted"])
+        self.assertEqual(add_item.response[0]["trade_availability"]["previous_quantity_for_trade"], 3)
+        self.assertEqual(add_item.response[0]["trade_availability"]["quantity_for_trade"], 1)
+        collection_row = app.row("SELECT quantity, quantity_for_trade FROM collection_items WHERE id = ?", (collection_id,))
+        self.assertEqual(collection_row["quantity"], 4)
+        self.assertEqual(collection_row["quantity_for_trade"], 1)
+
+        override_collection_id = factory.create_collection_item(
+            user_id,
+            "Chromatic Lantern",
+            quantity=4,
+            quantity_for_trade=3,
+        )
+        add_override_item = DummyApiRequest({
+            "collection_item_id": override_collection_id,
+            "quantity": 3,
+            "adjust_trade_availability": False,
+        })
+        app.api_dispatch(add_override_item, "POST", f"/api/v1/groups/{group_id}/collection-items", {})
+        self.assertEqual(add_override_item.response[1], HTTPStatus.CREATED)
+        self.assertFalse(add_override_item.response[0]["trade_availability"]["trade_availability_adjusted"])
+        override_row = app.row("SELECT quantity, quantity_for_trade FROM collection_items WHERE id = ?", (override_collection_id,))
+        self.assertEqual(override_row["quantity"], 4)
+        self.assertEqual(override_row["quantity_for_trade"], 3)
 
         detail = DummyApiRequest()
         app.api_dispatch(detail, "GET", f"/api/v1/groups/{group_id}", {"per_page": ["10"]})
         self.assertEqual(detail.response[1], HTTPStatus.OK)
-        self.assertEqual(detail.response[0]["data"]["collection_quantity"], 3)
-        self.assertEqual(detail.response[0]["pagination"]["total"], 1)
+        self.assertEqual(detail.response[0]["data"]["collection_quantity"], 6)
+        self.assertEqual(detail.response[0]["pagination"]["total"], 2)
         self.assertEqual(detail.response[0]["items"][0]["group_item_id"], group_item["group_item_id"])
 
         update_item = DummyApiRequest({"quantity": 2})
         app.api_dispatch(update_item, "PATCH", f"/api/v1/groups/{group_id}/collection-items/{group_item['group_item_id']}", {})
         self.assertEqual(update_item.response[1], HTTPStatus.OK)
         self.assertEqual(update_item.response[0]["data"]["group_quantity"], 2)
+
+        copy_group_id = app.create_card_group(user_id, "binder", "Trade Binder")
+        copy_item = DummyApiRequest({"target_group_id": copy_group_id, "quantity": 1, "mode": "copy"})
+        app.api_dispatch(copy_item, "POST", f"/api/v1/groups/{group_id}/collection-items/{group_item['group_item_id']}/transfer", {})
+        self.assertEqual(copy_item.response[1], HTTPStatus.OK)
+        self.assertEqual(copy_item.response[0]["mode"], "copy")
+        self.assertEqual(copy_item.response[0]["data"]["group_quantity"], 1)
+        self.assertFalse(copy_item.response[0]["source"]["deleted"])
+        self.assertEqual(copy_item.response[0]["source"]["group_quantity"], 2)
+        self.assertEqual(app.row("SELECT quantity FROM group_collection_items WHERE id = ?", (group_item["group_item_id"],))["quantity"], 2)
+
+        move_group_id = app.create_card_group(user_id, "deck", "Maybe Deck")
+        move_item = DummyApiRequest({"target_group_id": move_group_id, "quantity": 1, "mode": "move"})
+        app.api_dispatch(move_item, "POST", f"/api/v1/groups/{group_id}/collection-items/{group_item['group_item_id']}/transfer", {})
+        self.assertEqual(move_item.response[1], HTTPStatus.OK)
+        self.assertEqual(move_item.response[0]["mode"], "move")
+        self.assertEqual(move_item.response[0]["source"]["group_quantity"], 1)
+        self.assertEqual(app.row("SELECT quantity FROM group_collection_items WHERE id = ?", (group_item["group_item_id"],))["quantity"], 1)
+        self.assertEqual(
+            app.row(
+                "SELECT quantity FROM group_collection_items WHERE group_id = ? AND collection_item_id = ?",
+                (move_group_id, collection_id),
+            )["quantity"],
+            1,
+        )
 
         update_group = DummyApiRequest({"name": "Landfall Maybeboard", "description": "Updated notes", "is_public": True})
         app.api_dispatch(update_group, "PATCH", f"/api/v1/groups/{group_id}", {})
