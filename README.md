@@ -211,6 +211,7 @@ Initial API endpoints:
 
 - `GET /api/v1/health`
 - `GET /api/v1/me`
+- `GET /api/v1/dashboard`
 - `GET /api/v1/collection`
 - `POST /api/v1/collection`
 - `POST /api/v1/collection/import`
