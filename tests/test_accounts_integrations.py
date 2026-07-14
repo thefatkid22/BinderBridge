@@ -803,6 +803,74 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM collection_items WHERE user_id = ?", (user_id,))["count"], 2)
         self.assertEqual(app.row("SELECT COUNT(*) AS count FROM group_collection_items WHERE group_id = ?", (group_id,))["count"], 2)
 
+    def test_api_dashboard_matches_web_home_summary_and_activity(self):
+        user_id = app.create_user("api-dashboard", "password123", "API Dashboard")
+        partner_id = app.create_user("api-dashboard-partner", "password123", "Dashboard Partner")
+        token = app.create_api_token(user_id, "Read token", ["read"])["token"]
+        factory.create_collection_item(
+            user_id,
+            "Recently Tradeable",
+            quantity=3,
+            quantity_for_trade=2,
+            condition="LP",
+            updated_at="2026-07-14T12:00:00+00:00",
+        )
+        factory.create_collection_item(user_id, "Not Tradeable", quantity=4, quantity_for_trade=0)
+        factory.create_want_item(user_id, "Wanted Card")
+        trade_id = factory.create_trade(
+            user_id,
+            partner_id,
+            status="pending",
+            updated_at="2026-07-14T13:00:00+00:00",
+        )
+        factory.create_trade_item(trade_id, user_id, "Recently Tradeable", side="offered")
+        app.create_notification(
+            user_id,
+            "trade_offer",
+            "Dashboard trade update",
+            "A pending trade changed.",
+            f"/trades/{trade_id}",
+            trade_id,
+        )
+
+        class DummyApiRequest:
+            command = "GET"
+            _request_path = "/api/v1/dashboard"
+
+            def __init__(self):
+                self.headers = {"Authorization": f"Bearer {token}"}
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "203.0.113.13"
+
+        request = DummyApiRequest()
+        app.api_dispatch(request, "GET", "/api/v1/dashboard", {})
+
+        self.assertEqual(request.response[1], HTTPStatus.OK)
+        data = request.response[0]["data"]
+        self.assertEqual(data["summary"], {
+            "total_cards": 7,
+            "trade_cards": 2,
+            "unique_cards": 2,
+            "wants_count": 1,
+        })
+        self.assertEqual(data["pending_trades"][0]["id"], trade_id)
+        self.assertEqual(data["pending_trades"][0]["unread_trade_notifications"], 1)
+        self.assertEqual(data["recent_tradeable"][0]["card_name"], "Recently Tradeable")
+        self.assertEqual(data["notifications"][0]["title"], "Dashboard trade update")
+
     def test_api_notification_detail_read_and_delete(self):
         user_id = app.create_user("api-notifications", "password123", "API Notifications")
         token = app.create_api_token(user_id, "Write token", ["read", "write"])["token"]

@@ -1985,6 +1985,49 @@ def api_notification_dict(item):
     }
 
 
+def api_dashboard(self, user):
+    summary = get_collection_summary(user["id"])
+    pending_trades = rows(
+        """
+        SELECT trades.*, proposer.display_name AS proposer_name, recipient.display_name AS recipient_name,
+            (
+                SELECT COUNT(*)
+                FROM user_notifications
+                WHERE user_notifications.user_id = ?
+                    AND user_notifications.related_trade_id = trades.id
+                    AND user_notifications.is_read = 0
+                    AND user_notifications.kind IN ('trade_offer', 'trade_counter', 'trade_comment', 'trade_status', 'trade_reminder', 'trade_dispute', 'trade_feedback')
+            ) AS unread_trade_notifications
+        FROM trades
+        JOIN users proposer ON proposer.id = trades.proposer_id
+        JOIN users recipient ON recipient.id = trades.recipient_id
+        WHERE (trades.proposer_id = ? OR trades.recipient_id = ?) AND trades.status = 'pending'
+        ORDER BY trades.updated_at DESC, trades.id DESC
+        LIMIT 5
+        """,
+        (user["id"], user["id"], user["id"]),
+    )
+    recent_tradeable = rows(
+        """
+        SELECT *
+        FROM collection_items
+        WHERE user_id = ? AND quantity_for_trade > 0
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 5
+        """,
+        (user["id"],),
+    )
+    notifications = notification_rows(user["id"], limit=4)
+    return self.api_json({
+        "data": {
+            "summary": {key: int(value or 0) for key, value in summary.items()},
+            "pending_trades": [api_trade_dict(trade, viewer_id=user["id"]) for trade in pending_trades],
+            "recent_tradeable": [api_collection_item_dict(item) for item in recent_tradeable],
+            "notifications": [api_notification_dict(item) for item in notifications],
+        }
+    })
+
+
 def api_notifications_list(self, user, query):
     page, per_page, offset = api_pagination(query)
     total = row("SELECT COUNT(*) AS count FROM user_notifications WHERE user_id = ?", (user["id"],))["count"]
@@ -2065,6 +2108,8 @@ def api_dispatch(self, method, path, query):
                     },
                 }
             })
+        if path == "/api/v1/dashboard" and method == "GET":
+            return self.api_dashboard(user)
         if path == "/api/v1/collection":
             if method == "GET":
                 return self.api_collection_list(user, query)
@@ -2222,6 +2267,7 @@ API_ROUTE_METHODS = (
     "api_trade_action",
     "api_trade_comment_create",
     "api_notification_dict",
+    "api_dashboard",
     "api_notifications_list",
     "api_notification_detail",
     "api_notification_mark_read",
