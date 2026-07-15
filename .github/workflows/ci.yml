@@ -34,7 +34,7 @@ jobs:
         run: python scripts/release_smoke.py
       - name: Published release upgrade smoke check
         if: matrix.python-version == '3.12'
-        run: python scripts/release_upgrade_smoke.py v0.1.0-alpha.1
+        run: python scripts/release_upgrade_smoke.py v0.2.0-alpha.3
 
   docker:
     name: Docker startup smoke test

@@ -2,7 +2,7 @@
 
 BinderBridge is a self-hostable trading card collection app for small communities. The current app is focused on Magic: The Gathering while keeping each card entry tagged by game so Pokemon, Lorcana, and other TCG support can be expanded later.
 
-Current release: **v0.2.0-alpha.3**
+Current release: **v0.2.0-alpha.4**
 
 License: **GNU AGPL-3.0**
 
@@ -85,7 +85,7 @@ Requires Python 3.10 or newer.
 ```powershell
 git clone https://github.com/thefatkid22/BinderBridge.git
 cd BinderBridge
-git checkout v0.2.0-alpha.3
+git checkout v0.2.0-alpha.4
 python app.py
 ```
 
@@ -398,7 +398,7 @@ demo = false
 source_url = https://github.com/thefatkid22/BinderBridge
 
 [scryfall]
-user_agent = BinderBridge/0.2.0-alpha.3 self-hosted collection manager
+user_agent = BinderBridge/0.2.0-alpha.4 self-hosted collection manager
 delay_seconds = 0.12
 search_limit = 24
 bulk_type = default_cards
@@ -567,7 +567,7 @@ Run the full automated suite and release-critical smoke checks:
 ```powershell
 python -m unittest discover -s tests
 python scripts/release_smoke.py
-python scripts/release_upgrade_smoke.py v0.1.0-alpha.1
+python scripts/release_upgrade_smoke.py v0.2.0-alpha.3
 python scripts/browser_smoke.py
 ```
 

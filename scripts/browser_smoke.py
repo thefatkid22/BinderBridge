@@ -71,14 +71,23 @@ def wait_for_server(base_url: str, process: subprocess.Popen, timeout: float = 2
     raise RuntimeError(f"BinderBridge did not start at {base_url}: {last_error}")
 
 
-def terminate_server(process: subprocess.Popen) -> tuple[str, str]:
+def terminate_server(process: subprocess.Popen, stdout_stream, stderr_stream) -> tuple[str, str]:
     if process.poll() is None:
         process.terminate()
         try:
-            return process.communicate(timeout=8)
+            process.wait(timeout=8)
         except subprocess.TimeoutExpired:
             process.kill()
-    return process.communicate(timeout=8)
+            process.wait(timeout=8)
+    stdout_stream.flush()
+    stderr_stream.flush()
+    stdout_stream.seek(0)
+    stderr_stream.seek(0)
+    stdout = stdout_stream.read()
+    stderr = stderr_stream.read()
+    stdout_stream.close()
+    stderr_stream.close()
+    return stdout, stderr
 
 
 def configure_app_for_fixture(data_dir: Path):
@@ -548,12 +557,18 @@ def run_smoke() -> None:
                 "BINDERBRIDGE_PORT": str(port),
             }
         )
+        stdout_stream = (Path(tmp) / "binderbridge.stdout.log").open(
+            "w+", encoding="utf-8", errors="backslashreplace"
+        )
+        stderr_stream = (Path(tmp) / "binderbridge.stderr.log").open(
+            "w+", encoding="utf-8", errors="backslashreplace"
+        )
         process = subprocess.Popen(
             [sys.executable, str(APP_PATH)],
             cwd=str(ROOT),
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=stdout_stream,
+            stderr=stderr_stream,
             text=True,
             encoding="utf-8",
             errors="backslashreplace",
@@ -580,7 +595,7 @@ def run_smoke() -> None:
                     context.close()
                     browser.close()
         except (AssertionError, PlaywrightError, RuntimeError) as exc:
-            stdout, stderr = terminate_server(process)
+            stdout, stderr = terminate_server(process, stdout_stream, stderr_stream)
             print(f"Browser smoke failed: {exc}", file=sys.stderr)
             if stdout:
                 print("\n--- BinderBridge stdout ---", file=sys.stderr)
@@ -590,7 +605,7 @@ def run_smoke() -> None:
                 print(stderr[-4000:], file=sys.stderr)
             raise SystemExit(1) from exc
         else:
-            stdout, stderr = terminate_server(process)
+            stdout, stderr = terminate_server(process, stdout_stream, stderr_stream)
             if stderr.strip():
                 print("--- BinderBridge stderr ---", file=sys.stderr)
                 print(stderr[-4000:], file=sys.stderr)
