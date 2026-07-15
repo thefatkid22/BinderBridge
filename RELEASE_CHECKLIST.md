@@ -14,7 +14,7 @@ Use this checklist after feature work is frozen and before creating a release ta
 python -m compileall -q app.py binderbridge tests scripts
 python -m unittest discover -s tests
 python scripts/release_smoke.py
-python scripts/release_upgrade_smoke.py v0.1.0-alpha.1
+python scripts/release_upgrade_smoke.py v0.2.0-alpha.3
 python scripts/browser_smoke.py
 ```
 

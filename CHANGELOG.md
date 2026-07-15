@@ -6,10 +6,24 @@ The project uses semantic versioning while releases are published. During the al
 
 ## [Unreleased]
 
+## [0.2.0-alpha.4] - 2026-07-15
+
 ### Added
 
-- Playwright browser smoke test covering first-run setup, CSV import preview/apply, collection and wishlist flows, browse-to-trade proposal, and recipient notifications
+- Expanded scoped API support for Android, including the home dashboard, collection detail and batch imports, wanted cards, groups, trade proposals and conversations, notifications, and trade alerts
+- Native-client dashboard data for collection metrics, pending trades, recently tradeable cards, recent notifications, and offline cache refreshes
+- Deck and binder management APIs for creating and editing groups, changing grouped quantities, moving or copying cards, and importing cards directly into a group
+- Collection and wishlist Scryfall audit tools with hygiene counts and targeted cleanup actions
+- Playwright browser smoke coverage for first-run setup, CSV import preview/apply, collection and wishlist flows, browse-to-trade proposals, recipient notifications, and responsive layouts
 - Rich demo data seeding for local evaluation, including sample users, collections, wants, groups, trades, feedback, disputes, notifications, price history, condition photos, and a reusable seed script
+
+### Changed
+
+- Polished responsive collection, group, trade, wishlist, dashboard, admin, and application-shell workflows with clearer navigation, cards, filters, and action feedback
+- Kept counteroffers within the existing trade conversation and expanded trade comments, decisions, and participant-safe API responses
+- Improved bulk collection, wishlist, and group actions with clearer completion feedback and preserved workspace state
+- Hardened collection imports and group operations for batch Android workflows while preserving privacy, ownership, quantity, and trade-availability rules
+- Prevented long browser-smoke runs from blocking when temporary-server access logs exceed the subprocess pipe buffer
 
 ## [0.2.0-alpha.3] - 2026-06-18
 
@@ -96,7 +110,8 @@ The project uses semantic versioning while releases are published. During the al
 - Broader non-MTG metadata and pricing support is not yet implemented
 - Confirmed large collection imports can take several minutes while the applied rows are written
 
-[Unreleased]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.3...HEAD
+[Unreleased]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.4...HEAD
+[0.2.0-alpha.4]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.3...v0.2.0-alpha.4
 [0.2.0-alpha.3]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.2...v0.2.0-alpha.3
 [0.2.0-alpha.2]: https://github.com/thefatkid22/BinderBridge/compare/v0.2.0-alpha.1...v0.2.0-alpha.2
 [0.2.0-alpha.1]: https://github.com/thefatkid22/BinderBridge/compare/v0.1.0-alpha.1...v0.2.0-alpha.1
