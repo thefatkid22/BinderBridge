@@ -6,9 +6,10 @@ import io
 import ipaddress
 import json
 import re
+import socket
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 DECK_IMPORT_MAIN_SECTION = "main"
@@ -509,24 +510,48 @@ def deck_text_from_html(html_text):
     return html.unescape(text)
 
 
-def deck_import_host_is_blocked(host):
+def deck_import_host_is_blocked(host, resolve=False):
     host = str(host or "").strip().strip("[]").lower()
-    if not host or host in {"localhost", "0.0.0.0"} or host.endswith(".local"):
+    if not host or host in {"localhost", "0.0.0.0"} or host.endswith((".localhost", ".local")):
         return True
+    addresses = []
     try:
-        address = ipaddress.ip_address(host)
+        addresses.append(ipaddress.ip_address(host.split("%", 1)[0]))
     except ValueError:
-        return False
-    return address.is_loopback or address.is_private or address.is_link_local or address.is_reserved or address.is_multicast
+        if not resolve:
+            return False
+        try:
+            resolved = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ValueError("Deck URL host could not be resolved.") from exc
+        for item in resolved:
+            address_text = str(item[4][0]).split("%", 1)[0]
+            try:
+                addresses.append(ipaddress.ip_address(address_text))
+            except ValueError:
+                continue
+        if not addresses:
+            raise ValueError("Deck URL host did not resolve to an IP address.")
+    return any(not address.is_global for address in addresses)
 
 
-def validate_deck_import_url(source_url):
+def validate_deck_import_url(source_url, resolve=False):
     parsed = urlparse(str(source_url or "").strip())
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Enter a public http or https deck-list URL.")
-    if deck_import_host_is_blocked(parsed.hostname):
+    if parsed.username or parsed.password:
+        raise ValueError("Deck URL cannot include embedded credentials.")
+    if parsed.fragment:
+        raise ValueError("Deck URL cannot include a fragment.")
+    if deck_import_host_is_blocked(parsed.hostname, resolve=resolve):
         raise ValueError("Deck URL imports only allow public deck-building sites.")
     return parsed
+
+
+class SafeDeckImportRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_deck_import_url(newurl, resolve=True)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def deck_import_candidate_urls(source_url):
@@ -557,13 +582,14 @@ def deck_import_candidate_urls(source_url):
 
 
 def fetch_deck_import_url(source_url):
-    validate_deck_import_url(source_url)
+    validate_deck_import_url(source_url, resolve=True)
     request = Request(
         source_url,
         headers={"User-Agent": SCRYFALL_USER_AGENT, "Accept": DECK_IMPORT_ACCEPT},
     )
     try:
-        with urlopen(request, timeout=15) as response:
+        opener = build_opener(SafeDeckImportRedirectHandler())
+        with opener.open(request, timeout=15) as response:
             content = response.read(DECK_IMPORT_MAX_BYTES + 1)
             content_type = response.headers.get("Content-Type", "")
     except HTTPError as exc:
@@ -652,6 +678,7 @@ __all__ = [
     "deck_text_from_html",
     "deck_import_host_is_blocked",
     "validate_deck_import_url",
+    "SafeDeckImportRedirectHandler",
     "deck_import_candidate_urls",
     "fetch_deck_import_url",
     "deck_sections_from_url_content",

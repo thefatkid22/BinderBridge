@@ -2,14 +2,16 @@
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import secrets
+import socket
 import threading
 import time
 from http import HTTPStatus
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from binderbridge.collection_queries import browse_filter_users, trade_picker_count, trade_picker_rows, trade_picker_where
 from binderbridge.collection_service import collection_item_photo_count
@@ -51,6 +53,18 @@ from binderbridge.trade_service import (
 
 API_TOKEN_PREFIX = "bbapi_"
 API_TOKEN_SCOPES = ("read", "write")
+API_MAJOR_VERSION = 1
+API_CAPABILITIES = (
+    "collection",
+    "collection.import",
+    "dashboard",
+    "groups",
+    "notifications",
+    "trade.alerts",
+    "trade.conversations",
+    "trade.proposals",
+    "wants",
+)
 API_PAGE_SIZE_MAX = max(1, config_int("BINDERBRIDGE_API_PAGE_SIZE_MAX", default=250, section="api", key="page_size_max"))
 API_ACCESS_POLICY_KEY = "api_access_policy"
 WEBHOOK_ACCESS_POLICY_KEY = "webhook_access_policy"
@@ -65,6 +79,12 @@ WEBHOOK_TIMEOUT_SECONDS = max(1.0, config_float("BINDERBRIDGE_WEBHOOK_TIMEOUT_SE
 WEBHOOK_DELIVERY_INTERVAL_SECONDS = max(5.0, config_float("BINDERBRIDGE_WEBHOOK_DELIVERY_INTERVAL_SECONDS", default=30.0, section="webhooks", key="delivery_interval_seconds"))
 WEBHOOK_DELIVERY_BATCH_SIZE = max(1, config_int("BINDERBRIDGE_WEBHOOK_DELIVERY_BATCH_SIZE", default=20, section="webhooks", key="delivery_batch_size"))
 WEBHOOK_DELIVERY_WORKER_ENABLED = config_bool("BINDERBRIDGE_WEBHOOK_WORKER_ENABLED", default=True, section="webhooks", key="worker_enabled")
+ALLOW_PRIVATE_WEBHOOKS = config_bool(
+    "BINDERBRIDGE_ALLOW_PRIVATE_WEBHOOKS",
+    default=False,
+    section="webhooks",
+    key="allow_private_destinations",
+)
 WEBHOOK_EVENT_OPTIONS = (
     ("notification.created", "All in-app notifications"),
     ("trade.offer", "Trade offers and counter offers"),
@@ -304,14 +324,51 @@ def normalize_webhook_events(values):
     return events or ["notification.created"]
 
 
-def validate_webhook_url(url):
+def webhook_host_is_blocked(host, resolve=False):
+    if ALLOW_PRIVATE_WEBHOOKS:
+        return False
+    clean_host = str(host or "").strip().strip("[]").lower()
+    if not clean_host or clean_host == "localhost" or clean_host.endswith((".localhost", ".local")):
+        return True
+    addresses = []
+    try:
+        addresses.append(ipaddress.ip_address(clean_host.split("%", 1)[0]))
+    except ValueError:
+        if not resolve:
+            return False
+        try:
+            resolved = socket.getaddrinfo(clean_host, None, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ValueError("Webhook host could not be resolved.") from exc
+        for item in resolved:
+            address_text = str(item[4][0]).split("%", 1)[0]
+            try:
+                addresses.append(ipaddress.ip_address(address_text))
+            except ValueError:
+                continue
+        if not addresses:
+            raise ValueError("Webhook host did not resolve to an IP address.")
+    return any(not address.is_global for address in addresses)
+
+
+def validate_webhook_url(url, resolve=False):
     clean_url = sanitize_text_input(url, max_length=500).strip()
     parsed = urlparse(clean_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Webhook URL must be an http or https URL.")
     if parsed.username or parsed.password:
         raise ValueError("Webhook URL cannot include embedded credentials.")
+    if parsed.fragment:
+        raise ValueError("Webhook URL cannot include a fragment.")
+    if webhook_host_is_blocked(parsed.hostname, resolve=resolve):
+        raise ValueError("Webhook URL must use a public destination unless private webhooks are explicitly enabled.")
     return clean_url
+
+
+class SafeWebhookRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_webhook_url(newurl, resolve=True)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def create_webhook_endpoint(user_id, name, url, event_types=None, secret=""):
@@ -439,8 +496,9 @@ def queue_notification_webhooks(user_id, notification_id, kind, title, body="", 
 def send_webhook_http_request(endpoint, delivery):
     payload = row_value(delivery, "payload_json", "{}").encode("utf-8")
     signature = hmac.new(str(row_value(endpoint, "secret", "")).encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    endpoint_url = validate_webhook_url(row_value(endpoint, "url", ""), resolve=True)
     request = Request(
-        row_value(endpoint, "url", ""),
+        endpoint_url,
         data=payload,
         headers={
             "Content-Type": "application/json",
@@ -451,7 +509,8 @@ def send_webhook_http_request(endpoint, delivery):
         },
         method="POST",
     )
-    with urlopen(request, timeout=WEBHOOK_TIMEOUT_SECONDS) as response:
+    opener = build_opener(SafeWebhookRedirectHandler())
+    with opener.open(request, timeout=WEBHOOK_TIMEOUT_SECONDS) as response:
         response_body = response.read(500).decode("utf-8", errors="replace")
         return response.status, response_body
 
@@ -2079,7 +2138,15 @@ def api_dispatch(self, method, path, query):
     if path == "/api/v1/health" and method == "GET":
         if not rate_limit_allowed("api_health", integration_request_ip(self)):
             return self.api_error("Too many API health requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
-        return self.api_json({"ok": True, "app": APP_NAME, "version": APP_VERSION})
+        return self.api_json({
+            "ok": True,
+            "app": APP_NAME,
+            "version": APP_VERSION,
+            "api": {
+                "major": API_MAJOR_VERSION,
+                "capabilities": list(API_CAPABILITIES),
+            },
+        })
     required_scope = "write" if method in ("POST", "PUT", "PATCH", "DELETE") else "read"
     user, token_row, error = self.api_authenticate(required_scope)
     if error:
@@ -2286,6 +2353,9 @@ API_ROUTE_METHODS = (
 __all__ = [
     "API_TOKEN_PREFIX",
     "API_TOKEN_SCOPES",
+    "API_MAJOR_VERSION",
+    "API_CAPABILITIES",
+    "ALLOW_PRIVATE_WEBHOOKS",
     "API_ACCESS_POLICY_KEY",
     "WEBHOOK_ACCESS_POLICY_KEY",
     "DEFAULT_INTEGRATION_ACCESS_POLICY",
@@ -2312,7 +2382,9 @@ __all__ = [
     "api_token_rows",
     "get_user_by_api_token",
     "normalize_webhook_events",
+    "webhook_host_is_blocked",
     "validate_webhook_url",
+    "SafeWebhookRedirectHandler",
     "create_webhook_endpoint",
     "delete_webhook_endpoint",
     "webhook_endpoint_rows",

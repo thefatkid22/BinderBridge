@@ -338,6 +338,27 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(delivery["status"], "failed")
         self.assertIn("Webhook access", delivery["error"])
 
+    def test_webhook_urls_block_private_destinations_unless_explicitly_enabled(self):
+        original = app.ALLOW_PRIVATE_WEBHOOKS
+        try:
+            app.ALLOW_PRIVATE_WEBHOOKS = False
+            with self.assertRaisesRegex(ValueError, "public destination"):
+                app.validate_webhook_url("http://127.0.0.1:9000/hook")
+            with self.assertRaisesRegex(ValueError, "public destination"):
+                app.validate_webhook_url("http://service.local/hook")
+            self.assertEqual(
+                app.validate_webhook_url("https://93.184.216.34/hook"),
+                "https://93.184.216.34/hook",
+            )
+
+            app.ALLOW_PRIVATE_WEBHOOKS = True
+            self.assertEqual(
+                app.validate_webhook_url("http://127.0.0.1:9000/hook"),
+                "http://127.0.0.1:9000/hook",
+            )
+        finally:
+            app.ALLOW_PRIVATE_WEBHOOKS = original
+
     def test_api_authenticate_reports_invalid_token_as_handled_error(self):
         class DummyApiRequest:
             headers = {"Authorization": "Bearer bbapi_missing"}
@@ -405,6 +426,10 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
             health = DummyApiRequest()
             app.api_dispatch(health, "GET", "/api/v1/health", {})
             self.assertEqual(health.response[1], HTTPStatus.OK)
+            self.assertEqual(health.response[0]["api"]["major"], app.API_MAJOR_VERSION)
+            self.assertEqual(health.response[0]["api"]["capabilities"], list(app.API_CAPABILITIES))
+            self.assertIn("dashboard", health.response[0]["api"]["capabilities"])
+            self.assertIn("trade.proposals", health.response[0]["api"]["capabilities"])
 
             health_limited = DummyApiRequest()
             app.api_dispatch(health_limited, "GET", "/api/v1/health", {})

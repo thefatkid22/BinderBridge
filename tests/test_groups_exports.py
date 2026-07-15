@@ -746,6 +746,15 @@ Maybeboard
         self.assertEqual(tappedout[-1], "https://tappedout.net/mtg-decks/example-deck/")
         self.assertEqual(deckstats[-1], "https://deckstats.net/decks/12/34-example")
 
+    def test_deck_url_validation_blocks_private_hosts_and_embedded_credentials(self):
+        with self.assertRaisesRegex(ValueError, "public deck-building sites"):
+            app.validate_deck_import_url("http://127.0.0.1:8000/private-deck")
+        with self.assertRaisesRegex(ValueError, "embedded credentials"):
+            app.validate_deck_import_url("https://user:secret@example.com/deck")
+
+        parsed = app.validate_deck_import_url("https://93.184.216.34/deck")
+        self.assertEqual(parsed.hostname, "93.184.216.34")
+
     def test_deck_import_review_detects_optional_sections(self):
         user_id = app.create_user("sectionreview", "password123", "Section Review")
         user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))

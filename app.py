@@ -37,6 +37,13 @@ DB_PATH = DATA_DIR / "binderbridge.sqlite3"
 STATIC_DIR = BASE_DIR / "static"
 HOST = config_str("BINDERBRIDGE_HOST", "HOST", default="127.0.0.1", section="server", key="host")
 PORT = config_int("BINDERBRIDGE_PORT", "PORT", default=8000, section="server", key="port")
+TRUST_PROXY_HEADERS = config_bool(
+    "BINDERBRIDGE_TRUST_PROXY_HEADERS",
+    "TRUST_PROXY_HEADERS",
+    default=False,
+    section="server",
+    key="trust_proxy_headers",
+)
 SOURCE_URL = config_str("BINDERBRIDGE_SOURCE_URL", default=DEFAULT_SOURCE_URL, section="app", key="source_url")
 SESSION_COOKIE = "binderbridge_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
@@ -818,9 +825,10 @@ class App(BaseHTTPRequestHandler):
         return consume_session_flash(self.current_session_token())
 
     def client_ip(self):
-        forwarded = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
-        if forwarded:
-            return forwarded
+        if TRUST_PROXY_HEADERS:
+            forwarded = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
+            if forwarded:
+                return forwarded
         try:
             return self.client_address[0]
         except (AttributeError, TypeError, IndexError):
