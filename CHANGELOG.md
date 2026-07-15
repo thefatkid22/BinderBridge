@@ -6,6 +6,19 @@ The project uses semantic versioning while releases are published. During the al
 
 ## [Unreleased]
 
+### Added
+
+- Published API major-version and capability metadata from the health endpoint so native clients can reject incompatible servers before saving credentials
+
+### Changed
+
+- Made the test harness isolate local INI and environment configuration so developer settings cannot change test expectations
+
+### Security
+
+- Ignored client-supplied forwarding headers unless trusted-proxy mode is explicitly enabled
+- Blocked webhook and deck-import requests to private, loopback, link-local, reserved, and LAN-only targets, including redirects and delivery-time DNS results; trusted installations can explicitly allow private webhook destinations
+
 ## [0.2.0-alpha.4] - 2026-07-15
 
 ### Added

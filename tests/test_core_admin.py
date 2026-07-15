@@ -61,6 +61,21 @@ class CoreAdminTests(BinderBridgeTestCase):
 
         self.assertEqual(output.rstrip("\r\n"), "request \\x9c path \\U0001f600\\x0anext")
 
+    def test_client_ip_only_trusts_forwarded_header_when_proxy_trust_is_enabled(self):
+        class DummyRequest:
+            headers = {"X-Forwarded-For": "203.0.113.9, 10.0.0.2"}
+            client_address = ("192.0.2.44", 12345)
+
+        original = app.TRUST_PROXY_HEADERS
+        try:
+            app.TRUST_PROXY_HEADERS = False
+            self.assertEqual(app.App.client_ip(DummyRequest()), "192.0.2.44")
+
+            app.TRUST_PROXY_HEADERS = True
+            self.assertEqual(app.App.client_ip(DummyRequest()), "203.0.113.9")
+        finally:
+            app.TRUST_PROXY_HEADERS = original
+
     def test_schema_migrations_record_version_and_create_hot_path_indexes(self):
         app.init_db()
 

@@ -36,6 +36,14 @@ python scripts/browser_smoke.py
 - Review Admin health for setup warnings, failed jobs, backup status, and database status.
 - Check one desktop and one narrow mobile viewport.
 
+## Security Gate
+
+- Keep `BINDERBRIDGE_TRUST_PROXY_HEADERS=false` unless direct access to BinderBridge is blocked and a trusted proxy replaces forwarding headers.
+- Confirm private webhook destinations are rejected unless the installation intentionally enables `BINDERBRIDGE_ALLOW_PRIVATE_WEBHOOKS`.
+- Confirm deck-list URL imports reject loopback/private targets and redirects to them.
+- Confirm a least-privilege read token cannot write and a write token cannot access another user's private collection, wants, groups, trades, or notifications.
+- Confirm the public health response exposes the expected API major and capability identifiers without requiring a token.
+
 ## Android Client
 
 - Use the separate `BinderBridge-Android` repository for Android release work.

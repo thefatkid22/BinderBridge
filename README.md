@@ -251,9 +251,13 @@ Initial API endpoints:
 
 Send API tokens with `Authorization: Bearer bbapi_...`.
 
+The public health response includes an `api` compatibility object with a numeric `major` version and stable capability identifiers. Native clients should require the API major they support and check capabilities for the workflows they expose instead of inferring compatibility from the BinderBridge release string.
+
 Adding a collection card to a deck or binder through the API leaves the collection quantity intact. By default, BinderBridge lowers `quantity_for_trade` when the grouped quantity would otherwise use copies marked available for trade; send `adjust_trade_availability: false` to keep trade availability unchanged.
 
 Webhook endpoints are also managed from `Account -> API access`. BinderBridge sends JSON `POST` requests with `X-BinderBridge-Event`, `X-BinderBridge-Delivery`, and `X-BinderBridge-Signature` headers. The signature is `sha256=` plus an HMAC-SHA256 of the raw JSON payload using the webhook signing secret. Deliveries are queued in SQLite and processed by the durable background runner so trade and notification actions are not blocked by remote webhook downtime.
+
+Webhook delivery blocks loopback, private, link-local, reserved, and LAN-only destinations by default, including redirects and DNS results checked at delivery time. Trusted local installations can opt into LAN webhook targets with `BINDERBRIDGE_ALLOW_PRIVATE_WEBHOOKS=true`.
 
 ## Test
 
@@ -507,6 +511,7 @@ Supported environment variables:
 - `BINDERBRIDGE_RATE_LIMIT_PERSISTENT`: store rate-limit events in SQLite so limits survive restarts and are shared by app processes using the same database, default enabled
 - `BINDERBRIDGE_API_AUTH_FAILED_LIMIT` / `BINDERBRIDGE_API_AUTH_FAILED_WINDOW_SECONDS`: failed bearer-token authentication attempts per IP, default `30` per `300` seconds
 - `BINDERBRIDGE_API_HEALTH_LIMIT` / `BINDERBRIDGE_API_HEALTH_WINDOW_SECONDS`: public `/api/v1/health` requests per IP, default `120` per `60` seconds
+- `BINDERBRIDGE_TRUST_PROXY_HEADERS`: trust the first `X-Forwarded-For` address for rate limits and moderation signals, default `false`. Enable this only when BinderBridge cannot be reached directly and a trusted reverse proxy replaces client-supplied forwarding headers.
 - `BINDERBRIDGE_API_READ_LIMIT` / `BINDERBRIDGE_API_READ_WINDOW_SECONDS`: authenticated API read requests per user, default `600` per `60` seconds
 - `BINDERBRIDGE_API_WRITE_LIMIT` / `BINDERBRIDGE_API_WRITE_WINDOW_SECONDS`: authenticated API write requests per user, default `120` per `60` seconds
 - `BINDERBRIDGE_SCRYFALL_LOOKUP_LIMIT` / `BINDERBRIDGE_SCRYFALL_LOOKUP_WINDOW_SECONDS`: live Scryfall lookup requests, default `30` per `300` seconds
