@@ -326,7 +326,7 @@ def render_group_collection_items(group, items, controls="", pagination="", tota
                     <button class="button danger small" type="submit" formaction="/groups/{group["id"]}/items/delete-all"{matching_disabled} data-confirm="Remove all {e(total_count)} cards matching the current filters from this group? Source collection cards will remain.">Remove all matching</button>
                 </div>
             </div>
-            <ul class="group-item-list selectable-group-list">{rendered}</ul>
+            <ul class="group-item-list selectable-group-list" id="group-items">{rendered}</ul>
         </form>
         {pagination}
         {add_form}
@@ -407,7 +407,7 @@ def render_group_want_items(group, wants, controls="", pagination="", total_coun
                     <button class="button danger small" type="submit" formaction="/groups/{group["id"]}/items/delete-all"{matching_disabled} data-confirm="Remove all {e(total_count)} wanted cards matching the current filters from this group? Your source wishlist will remain.">Remove all matching</button>
                 </div>
             </div>
-            <ul class="group-item-list selectable-group-list">{rendered}</ul>
+            <ul class="group-item-list selectable-group-list" id="group-items">{rendered}</ul>
         </form>
         {pagination}
         {add_form}
@@ -850,7 +850,7 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         page, per_page, page_count, offset = pagination_state(query, filtered_count)
         group_items = wishlist_group_items(group_id, order_clause, filters, per_page, offset)
         controls = render_group_item_controls(group, query, filters, current_sort, current_dir)
-        pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count)
+        pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count, "group-items")
         redirect_to = page_url(f"/groups/{group_id}", query, page, per_page) + "#group-cards"
         items_html = render_group_want_items(group, group_items, controls, pagination, filtered_count, redirect_to, filters)
         group_item_count = wishlist_group_item_count(group_id)
@@ -871,7 +871,7 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         page, per_page, page_count, offset = pagination_state(query, filtered_count)
         group_items = collection_group_items(group_id, order_clause, filters, per_page, offset)
         controls = render_group_item_controls(group, query, filters, current_sort, current_dir)
-        pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count)
+        pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count, "group-items")
         redirect_to = page_url(f"/groups/{group_id}", query, page, per_page) + "#group-cards"
         items_html = render_group_collection_items(group, group_items, controls, pagination, filtered_count, redirect_to, filters)
         group_item_count = collection_group_quantity(group_id)

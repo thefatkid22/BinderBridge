@@ -250,6 +250,113 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
             }});
         }})();
         (function () {{
+            var sentinels = Array.prototype.slice.call(document.querySelectorAll("[data-infinite-scroll]"));
+            if (!sentinels.length || !window.fetch || !window.DOMParser) return;
+
+            var observer = "IntersectionObserver" in window
+                ? new IntersectionObserver(function (entries) {{
+                    entries.forEach(function (entry) {{
+                        if (entry.isIntersecting) loadNext(entry.target);
+                    }});
+                }}, {{ rootMargin: "600px 0px" }})
+                : null;
+
+            function matchingSentinel(documentRoot, key) {{
+                var candidates = documentRoot.querySelectorAll("[data-infinite-scroll]");
+                for (var index = 0; index < candidates.length; index += 1) {{
+                    if (candidates[index].dataset.infiniteScrollKey === key) return candidates[index];
+                }}
+                return null;
+            }}
+
+            function updateStatus(sentinel, loaded) {{
+                var status = sentinel.querySelector(".infinite-scroll-status");
+                var total = Number(sentinel.dataset.infiniteScrollTotal || 0);
+                if (status && total) status.textContent = Math.min(loaded, total) + " of " + total + " loaded";
+            }}
+
+            function setComplete(sentinel, loaded) {{
+                sentinel.classList.add("complete");
+                sentinel.classList.remove("loading", "load-error");
+                updateStatus(sentinel, loaded);
+                var link = sentinel.querySelector(".infinite-scroll-link");
+                if (link) link.remove();
+                if (observer) observer.unobserve(sentinel);
+            }}
+
+            async function loadNext(sentinel) {{
+                if (sentinel.dataset.infiniteScrollLoading === "true") return;
+                var link = sentinel.querySelector(".infinite-scroll-link");
+                var targetId = sentinel.dataset.infiniteScrollTarget;
+                var target = targetId ? document.getElementById(targetId) : null;
+                if (!link || !target) return;
+
+                sentinel.dataset.infiniteScrollLoading = "true";
+                sentinel.classList.add("loading");
+                sentinel.classList.remove("load-error");
+                link.setAttribute("aria-disabled", "true");
+                var originalLabel = link.textContent;
+                link.textContent = "Loading...";
+
+                try {{
+                    var response = await fetch(link.href, {{
+                        credentials: "same-origin",
+                        headers: {{ "X-Requested-With": "BinderBridge-Infinite-Scroll" }},
+                    }});
+                    if (!response.ok) throw new Error("Unable to load more items.");
+                    var parsed = new DOMParser().parseFromString(await response.text(), "text/html");
+                    var sourceTarget = parsed.getElementById(targetId);
+                    var sourceSentinel = matchingSentinel(parsed, sentinel.dataset.infiniteScrollKey);
+                    if (!sourceTarget || !sourceSentinel) throw new Error("The next batch was incomplete.");
+
+                    var fragment = document.createDocumentFragment();
+                    var appended = sourceTarget.children.length;
+                    Array.prototype.slice.call(sourceTarget.children).forEach(function (child) {{
+                        fragment.appendChild(document.importNode(child, true));
+                    }});
+                    target.appendChild(fragment);
+                    document.dispatchEvent(new CustomEvent("binderbridge:content-appended", {{
+                        detail: {{ target: target, count: appended }},
+                    }}));
+
+                    var nextLink = sourceSentinel.querySelector(".infinite-scroll-link");
+                    if (nextLink) {{
+                        link.href = nextLink.href;
+                        link.textContent = originalLabel;
+                        link.removeAttribute("aria-disabled");
+                        sentinel.classList.remove("loading");
+                        updateStatus(sentinel, target.children.length);
+                    }} else {{
+                        setComplete(sentinel, target.children.length);
+                    }}
+                }} catch (error) {{
+                    sentinel.classList.remove("loading");
+                    sentinel.classList.add("load-error");
+                    link.textContent = "Retry loading";
+                    link.removeAttribute("aria-disabled");
+                    var status = sentinel.querySelector(".infinite-scroll-status");
+                    if (status) status.textContent = "More items could not be loaded. Try again.";
+                }} finally {{
+                    delete sentinel.dataset.infiniteScrollLoading;
+                }}
+            }}
+
+            sentinels.forEach(function (sentinel) {{
+                var target = document.getElementById(sentinel.dataset.infiniteScrollTarget || "");
+                if (target) updateStatus(sentinel, target.children.length);
+                var link = sentinel.querySelector(".infinite-scroll-link");
+                if (!link) {{
+                    setComplete(sentinel, target ? target.children.length : 0);
+                    return;
+                }}
+                link.addEventListener("click", function (event) {{
+                    event.preventDefault();
+                    loadNext(sentinel);
+                }});
+                if (observer) observer.observe(sentinel);
+            }});
+        }})();
+        (function () {{
             var topbar = document.querySelector(".topbar");
             var button = document.getElementById("mobile-nav-toggle");
             var nav = document.getElementById("primary-navigation");

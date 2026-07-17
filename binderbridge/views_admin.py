@@ -2179,7 +2179,7 @@ def render_admin_trade_disputes(user, query, notice=None, status="info"):
     total_count = trade_dispute_admin_count(filters)
     page, per_page, page_count, offset = pagination_state(query, total_count)
     dispute_rows = trade_dispute_admin_rows(filters, per_page, offset)
-    pagination = render_pagination("/admin/disputes", query, total_count, page, per_page, page_count)
+    pagination = render_pagination("/admin/disputes", query, total_count, page, per_page, page_count, "admin-dispute-items")
     status_options = '<option value="">All statuses</option>' + option_tags(TRADE_DISPUTE_STATUS_OPTIONS, filters["status"])
     category_options = '<option value="">All issue types</option>' + option_tags(TRADE_DISPUTE_CATEGORY_OPTIONS, filters["category"])
     table_rows = "".join(render_trade_dispute_admin_row(item) for item in dispute_rows)
@@ -2222,7 +2222,7 @@ def render_admin_trade_disputes(user, query, notice=None, status="info"):
                         <th>Admin review</th>
                     </tr>
                 </thead>
-                <tbody>{table_rows}</tbody>
+                <tbody id="admin-dispute-items">{table_rows}</tbody>
             </table>
         </div>
         {pagination}
@@ -2239,7 +2239,7 @@ def render_admin_logs(user, query, notice=None, status="info"):
     total_count = admin_audit_log_count(filters)
     page, per_page, page_count, offset = pagination_state(query, total_count)
     log_rows = admin_audit_log_rows(filters, per_page, offset)
-    pagination = render_pagination("/admin/logs", query, total_count, page, per_page, page_count)
+    pagination = render_pagination("/admin/logs", query, total_count, page, per_page, page_count, "admin-log-items")
     action_options = '<option value="">All actions</option>' + "".join(
         f'<option value="{e(action)}"{selected(filters["action"], action)}>{e(label)}</option>'
         for action, label in ADMIN_AUDIT_ACTION_OPTIONS
@@ -2279,7 +2279,7 @@ def render_admin_logs(user, query, notice=None, status="info"):
                         <th>Details</th>
                     </tr>
                 </thead>
-                <tbody>{table_rows}</tbody>
+                <tbody id="admin-log-items">{table_rows}</tbody>
             </table>
         </div>
         {pagination}

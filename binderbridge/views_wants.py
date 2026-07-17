@@ -468,7 +468,7 @@ def render_trade_matchmaking(user, query=None, notice=None, status="info"):
             No mutual trade matches yet. Add wanted cards and mark collection cards for trade to improve matchmaking.
         </div>
         """
-    pagination = render_pagination("/trades/matches", query, total_count, page, per_page, page_count)
+    pagination = render_pagination("/trades/matches", query, total_count, page, per_page, page_count, "trade-match-items")
     content = f"""
     {render_trades_subnav("matches")}
     <section class="section-heading">
@@ -482,7 +482,7 @@ def render_trade_matchmaking(user, query=None, notice=None, status="info"):
             <a class="button secondary" href="/browse">Browse all cards</a>
         </div>
     </section>
-    <section class="matchmaking-grid">{match_cards}</section>
+    <section class="matchmaking-grid" id="trade-match-items">{match_cards}</section>
     {pagination}
     """
     return render_layout(user, "Trade matchmaking", content, active="trades", notice=notice, status=status)
@@ -968,7 +968,7 @@ def render_wants(
         pagination = ""
     else:
         wants = want_page_rows(user["id"], filters, order_clause, per_page, offset)
-        pagination = render_pagination("/wants", query, total_count, page, per_page, page_count)
+        pagination = render_pagination("/wants", query, total_count, page, per_page, page_count, "want-items")
     bulk_form_id = "wants-bulk-form"
     want_cards = "".join(
         render_want_card(
@@ -1070,7 +1070,7 @@ def render_wants(
             </details>
         </form>
         """
-        want_list = f'{bulk_controls}<div class="want-list">{want_cards}</div>'
+        want_list = f'{bulk_controls}<div class="want-list" id="want-items">{want_cards}</div>'
     elif want_filters_active:
         want_list = render_empty_action_state(
             "No wanted cards match these filters.",

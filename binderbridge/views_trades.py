@@ -29,7 +29,7 @@ def render_trades(user, query=None, notice=None, status="info"):
     unread_trade_count = unread_trade_notification_count(user["id"])
     trade_filters_active = any(value not in ("", None, False) for value in filters.values())
     if trades:
-        table = render_trade_table(user, trades)
+        table = render_trade_table(user, trades, target_id="trade-list-items")
     elif trade_filters_active:
         table = render_empty_action_state(
             "No trades match these filters.",
@@ -55,7 +55,7 @@ def render_trades(user, query=None, notice=None, status="info"):
         )
     )
     active_filters = render_active_filter_chips("/trades", query, filters, trade_list_filter_chip_specs())
-    pagination = render_pagination("/trades", query, total_count, page, per_page, page_count)
+    pagination = render_pagination("/trades", query, total_count, page, per_page, page_count, "trade-list-items")
     content = f"""
     {render_trades_subnav("offers")}
     <section class="section-heading">
@@ -107,7 +107,7 @@ def render_trades(user, query=None, notice=None, status="info"):
     return render_layout(user, "Trades", content, active="trades", notice=notice, status=status)
 
 
-def render_trade_table(user, trades, compact=False):
+def render_trade_table(user, trades, compact=False, target_id=""):
     body = "".join(
         f"""
         <tr class="{'trade-needs-attention' if trade['status'] == 'pending' and trade['recipient_id'] == user['id'] else ''}">
@@ -123,13 +123,14 @@ def render_trade_table(user, trades, compact=False):
         """
         for trade in trades
     )
+    target_attr = f' id="{e(target_id)}"' if target_id else ""
     return f"""
     <div class="table-wrap">
         <table class="responsive-card-table trades-table">
             <thead>
                 <tr><th>Trade</th><th>From</th><th>To</th><th>Status</th><th>Updated</th></tr>
             </thead>
-            <tbody>{body}</tbody>
+            <tbody{target_attr}>{body}</tbody>
         </table>
     </div>
     """
@@ -588,7 +589,8 @@ def render_trade_picker_section(title, owner_id, recipient_id, query, prefix, in
         for item in items
     )
     hidden_selected = render_trade_selected_hidden_inputs(owner_id, selected_quantities, input_name, visible_ids, price_basis, viewer_id=viewer_id)
-    pagination = render_trade_picker_pagination(recipient_id, query, prefix, total_count, page, per_page, page_count)
+    target_id = f"trade-{prefix}-items"
+    pagination = render_trade_picker_pagination(recipient_id, query, prefix, total_count, page, per_page, page_count, target_id)
     condition_options = simple_option_tags(CONDITION_OPTIONS, filters["condition"])
     finish_options = simple_option_tags(FINISH_OPTIONS, filters["finish"])
     language_options = simple_option_tags(LANGUAGE_OPTIONS, filters["language"])
@@ -602,7 +604,7 @@ def render_trade_picker_section(title, owner_id, recipient_id, query, prefix, in
     datalist_prefix = f"trade-{prefix}"
     reset_url = trade_picker_url(recipient_id, query, reset_prefix=prefix)
     if items:
-        table = trade_picker_table(item_rows)
+        table = trade_picker_table(item_rows, target_id=target_id)
     elif picker_filters_active:
         table = render_empty_action_state(
             "No cards match these filters.",
@@ -1198,12 +1200,13 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
     return render_layout(user, "New trade", content, active="trades", notice=notice, status=status)
 
 
-def trade_picker_table(body):
+def trade_picker_table(body, target_id=""):
+    target_attr = f' id="{e(target_id)}"' if target_id else ""
     return f"""
     <div class="table-wrap">
         <table class="responsive-card-table trade-picker-table">
             <thead><tr><th>Card</th><th>Game</th><th>Set</th><th>Code</th><th>Owned</th><th>Trade</th><th>Details</th><th>Pick</th></tr></thead>
-            <tbody>{body}</tbody>
+            <tbody{target_attr}>{body}</tbody>
         </table>
     </div>
     """

@@ -1849,6 +1849,30 @@ summary:focus-visible,
     padding: 0.8rem 1rem;
 }
 
+.infinite-scroll {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    min-height: 3rem;
+    margin-top: 1rem;
+    padding: 0.65rem 1rem;
+    text-align: center;
+}
+
+.infinite-scroll.loading .infinite-scroll-link {
+    cursor: progress;
+    opacity: 0.7;
+}
+
+.infinite-scroll.load-error .infinite-scroll-status {
+    color: var(--danger);
+}
+
+.infinite-scroll.complete {
+    min-height: auto;
+}
+
 .pagination-links {
     display: flex;
     align-items: center;

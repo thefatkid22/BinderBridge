@@ -293,8 +293,8 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
     )
     public_groups = public_member_group_rows(member_id, user)
     collection_rows = "".join(render_public_trade_card(user, member, item) for item in collection)
-    collection_list = f'<div class="public-card-list">{collection_rows}</div>' if collection else '<div class="empty-state">This member has no trade cards listed.</div>'
-    pagination = render_pagination(f"/members/{member_id}", query, total_count, page, per_page, page_count)
+    collection_list = f'<div class="public-card-list" id="member-trade-items">{collection_rows}</div>' if collection else '<div class="empty-state">This member has no trade cards listed.</div>'
+    pagination = render_pagination(f"/members/{member_id}", query, total_count, page, per_page, page_count, "member-trade-items")
     want_list = "".join(render_public_want_profile_item(user, member, want) for want in wants) or '<li class="muted">No shared wants listed.</li>'
     group_list = "".join(render_public_group_profile_card(member, group) for group in public_groups) or '<div class="empty-state compact-empty">No public groups listed.</div>'
     profile_details = []

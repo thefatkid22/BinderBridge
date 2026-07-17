@@ -75,6 +75,14 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         html = app.render_collection(user, {"per_page": ["10"], "page": ["1"]})
 
         self.assertIn("Showing 1-10 of 12", html)
+        self.assertIn('id="collection-items"', html)
+        self.assertIn('data-infinite-scroll-target="collection-items"', html)
+        self.assertIn('class="button secondary small infinite-scroll-link"', html)
+        self.assertIn("Load more", html)
+        self.assertIn("page=2&amp;per_page=10", html)
+        self.assertIn("IntersectionObserver", html)
+        self.assertNotIn('class="page-link', html)
+        self.assertNotIn("Per page", html)
         self.assertIn('action="/collection/bulk-update"', html)
         self.assertIn("data-bulk-selection-form", html)
         self.assertIn('data-bulk-selection-name="item_id"', html)
@@ -109,6 +117,20 @@ class CollectionBrowseTests(BinderBridgeTestCase):
         self.assertIn("page=2", html)
         self.assertIn('name="sort"', html)
         self.assertIn('name="dir"', html)
+
+    def test_api_pagination_metadata_supports_incremental_loading(self):
+        first = app.api_pagination_meta(1, 25, 26)
+        last = app.api_pagination_meta(2, 25, 26)
+
+        self.assertEqual(first, {
+            "page": 1,
+            "per_page": 25,
+            "total": 26,
+            "has_more": True,
+            "next_page": 2,
+        })
+        self.assertFalse(last["has_more"])
+        self.assertIsNone(last["next_page"])
 
     def test_wishlist_page_paginates_and_renders_bulk_controls(self):
         user_id = app.create_user("wantpager", "password123", "Want Pager")
