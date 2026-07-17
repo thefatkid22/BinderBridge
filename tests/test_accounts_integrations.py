@@ -429,6 +429,7 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
             self.assertEqual(health.response[0]["api"]["major"], app.API_MAJOR_VERSION)
             self.assertEqual(health.response[0]["api"]["capabilities"], list(app.API_CAPABILITIES))
             self.assertIn("dashboard", health.response[0]["api"]["capabilities"])
+            self.assertIn("trade.matches", health.response[0]["api"]["capabilities"])
             self.assertIn("trade.proposals", health.response[0]["api"]["capabilities"])
 
             health_limited = DummyApiRequest()
@@ -609,6 +610,68 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(delete.response[1], HTTPStatus.OK)
         self.assertEqual(delete.response[0]["deleted"], 1)
         self.assertIsNone(app.row("SELECT * FROM want_items WHERE id = ?", (want_id,)))
+
+    def test_api_want_create_can_enrich_with_scryfall(self):
+        user_id = app.create_user("api-want-enrich", "password123", "API Want Enrich")
+        token = app.create_api_token(user_id, "Write token", ["read", "write"])["token"]
+        original_lookup = app.lookup_scryfall_card
+
+        class DummyApiRequest:
+            command = "POST"
+            _request_path = "/api/v1/wants"
+
+            def __init__(self):
+                self.headers = {"Authorization": f"Bearer {token}"}
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def api_read_json(self):
+                return {
+                    "game": "mtg",
+                    "card_name": "Rhystic Study",
+                    "desired_quantity": 1,
+                    "lookup_on_save": True,
+                }
+
+            def client_ip(self):
+                return "203.0.113.15"
+
+        def fake_lookup(card_name, set_code="", collector_number="", scryfall_id=""):
+            self.assertEqual(card_name, "Rhystic Study")
+            return {
+                "card_name": "Rhystic Study",
+                "set_name": "Wilds of Eldraine: Enchanting Tales",
+                "set_code": "WOT",
+                "collector_number": "25",
+                "scryfall_id": "study-id",
+                "image_url": "https://img.example/rhystic-study.jpg",
+                "type_line": "Enchantment",
+                "rarity": "rare",
+                "price_usd": "42.00",
+            }
+
+        app.lookup_scryfall_card = fake_lookup
+        try:
+            request = DummyApiRequest()
+            app.api_dispatch(request, "POST", "/api/v1/wants", {})
+        finally:
+            app.lookup_scryfall_card = original_lookup
+
+        self.assertEqual(request.response[1], HTTPStatus.CREATED)
+        item = request.response[0]["data"]
+        self.assertEqual(item["scryfall_id"], "study-id")
+        self.assertEqual(item["image_url"], "https://img.example/rhystic-study.jpg")
+        self.assertEqual(item["set_code"], "WOT")
 
     def test_api_group_crud_and_collection_items(self):
         user_id = app.create_user("api-groups", "password123", "API Groups")
@@ -893,8 +956,75 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         })
         self.assertEqual(data["pending_trades"][0]["id"], trade_id)
         self.assertEqual(data["pending_trades"][0]["unread_trade_notifications"], 1)
+        self.assertEqual(data["trade_matches"], [])
         self.assertEqual(data["recent_tradeable"][0]["card_name"], "Recently Tradeable")
         self.assertEqual(data["notifications"][0]["title"], "Dashboard trade update")
+
+    def test_api_trade_matches_returns_privacy_safe_prefill_cards(self):
+        alice_id = app.create_user("api-match-alice", "password123", "Alice")
+        bob_id = app.create_user("api-match-bob", "password123", "Bob")
+        carol_id = app.create_user("api-match-carol", "password123", "Carol")
+        token = app.create_api_token(alice_id, "Read token", ["read"])["token"]
+
+        factory.create_want_item(alice_id, "Sol Ring", desired_quantity=2)
+        bob_sol_id = factory.create_collection_item(
+            bob_id,
+            "Sol Ring",
+            quantity=3,
+            quantity_for_trade=2,
+            price_usd="1.50",
+            is_public=1,
+        )
+        alice_counter_id = factory.create_collection_item(
+            alice_id,
+            "Counterspell",
+            quantity=2,
+            quantity_for_trade=1,
+            price_usd="2.00",
+        )
+        factory.create_want_item(bob_id, "Counterspell", is_public=1)
+        factory.create_collection_item(
+            carol_id,
+            "Sol Ring",
+            quantity=1,
+            quantity_for_trade=1,
+            is_public=1,
+        )
+
+        class DummyApiRequest:
+            command = "GET"
+            _request_path = "/api/v1/trade-matches"
+
+            def __init__(self):
+                self.headers = {"Authorization": f"Bearer {token}"}
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "203.0.113.14"
+
+        request = DummyApiRequest()
+        app.api_dispatch(request, "GET", "/api/v1/trade-matches", {"per_page": ["20"]})
+
+        self.assertEqual(request.response[1], HTTPStatus.OK)
+        self.assertEqual(request.response[0]["pagination"]["total"], 1)
+        match = request.response[0]["data"][0]
+        self.assertEqual(match["member_id"], bob_id)
+        self.assertEqual(match["mutual_quantity"], 1)
+        self.assertEqual(match["they_have_cards"][0]["collection_item_id"], bob_sol_id)
+        self.assertEqual(match["they_have_cards"][0]["quantity"], 2)
+        self.assertEqual(match["they_want_cards"][0]["collection_item_id"], alice_counter_id)
+        self.assertNotIn("Carol", json.dumps(request.response[0]))
 
     def test_api_notification_detail_read_and_delete(self):
         user_id = app.create_user("api-notifications", "password123", "API Notifications")

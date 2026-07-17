@@ -62,6 +62,7 @@ API_CAPABILITIES = (
     "notifications",
     "trade.alerts",
     "trade.conversations",
+    "trade.matches",
     "trade.proposals",
     "wants",
 )
@@ -1698,7 +1699,16 @@ def api_wants_list(self, user, query):
 
 def api_want_create(self, user):
     payload = self.api_read_json()
-    data = validate_want_form(api_payload_to_form(payload))
+    form = api_payload_to_form(payload)
+    data = validate_want_form(form)
+    if data["game"] == "mtg" and form.get("lookup_on_save", [""])[0] == "1":
+        if not rate_limit_allowed("scryfall_lookup", f"api:user:{user['id']}"):
+            return self.api_error("Too many Scryfall lookup requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
+        try:
+            data = enrich_collection_data_from_scryfall(data)
+            ensure_scryfall_finish_allowed(data, finish_values=data.get("finish", ""))
+        except (ValueError, ScryfallError) as exc:
+            return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
     want_id = insert_want_item(user["id"], data)
     item = row("SELECT * FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
     log_integration_action(
@@ -1726,7 +1736,16 @@ def api_want_update(self, user, want_id):
     payload = self.api_read_json()
     merged = dict(existing)
     merged.update(payload)
-    data = validate_want_form(api_payload_to_form(merged))
+    form = api_payload_to_form(merged)
+    data = validate_want_form(form)
+    if data["game"] == "mtg" and form.get("lookup_on_save", [""])[0] == "1":
+        if not rate_limit_allowed("scryfall_lookup", f"api:user:{user['id']}"):
+            return self.api_error("Too many Scryfall lookup requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
+        try:
+            data = enrich_collection_data_from_scryfall(data)
+            ensure_scryfall_finish_allowed(data, finish_values=data.get("finish", ""))
+        except (ValueError, ScryfallError) as exc:
+            return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
     updated = update_want_item(user["id"], want_id, data)
     if not updated:
         return self.api_error("Want item not found.", HTTPStatus.NOT_FOUND)
@@ -1871,6 +1890,26 @@ def api_trade_partners_list(self, user, query):
     page_items = partners[offset:offset + per_page]
     return self.api_json({
         "data": [api_trade_partner_dict(user, partner) for partner in page_items],
+        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+    })
+
+
+def api_trade_matches_list(self, user, query):
+    q = sanitize_text_input(str(query.get("q", [""])[0] or ""), max_length=120).strip().lower()
+    page, per_page, offset = api_pagination(query)
+    matches = trade_matchmaking_results(user["id"])
+    if q:
+        matches = [
+            match
+            for match in matches
+            if q in str(match.get("display_name", "")).lower()
+            or q in str(match.get("username", "")).lower()
+            or any(q in str(item.get("card_name", "")).lower() for item in match.get("they_have_cards", ()))
+            or any(q in str(item.get("card_name", "")).lower() for item in match.get("they_want_cards", ()))
+        ]
+    total = len(matches)
+    return self.api_json({
+        "data": matches[offset:offset + per_page],
         "pagination": {"page": page, "per_page": per_page, "total": int(total)},
     })
 
@@ -2077,10 +2116,12 @@ def api_dashboard(self, user):
         (user["id"],),
     )
     notifications = notification_rows(user["id"], limit=4)
+    trade_matches = trade_matchmaking_results(user["id"])
     return self.api_json({
         "data": {
             "summary": {key: int(value or 0) for key, value in summary.items()},
             "pending_trades": [api_trade_dict(trade, viewer_id=user["id"]) for trade in pending_trades],
+            "trade_matches": trade_matches[:3],
             "recent_tradeable": [api_collection_item_dict(item) for item in recent_tradeable],
             "notifications": [api_notification_dict(item) for item in notifications],
         }
@@ -2252,6 +2293,8 @@ def api_dispatch(self, method, path, query):
             return self.api_card_search(user, query)
         if path == "/api/v1/trade-partners" and method == "GET":
             return self.api_trade_partners_list(user, query)
+        if path == "/api/v1/trade-matches" and method == "GET":
+            return self.api_trade_matches_list(user, query)
         if path == "/api/v1/trade-cards" and method == "GET":
             return self.api_trade_cards_list(user, query)
         if path == "/api/v1/trades":
@@ -2325,6 +2368,7 @@ API_ROUTE_METHODS = (
     "api_trade_dict",
     "api_trade_partner_dict",
     "api_trade_partners_list",
+    "api_trade_matches_list",
     "api_trade_card_dict",
     "api_trade_cards_list",
     "api_trade_selection_form",
