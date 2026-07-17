@@ -51,6 +51,8 @@ License: **GNU AGPL-3.0**
 - Trade proposals, accept, decline, cancel, and completion flow
 - Trade comments and same-trade counter-offers
 - Trade matchmaking that highlights users with mutual want/trade overlap and preloads a balanced trade draft
+- Native API trade matches with privacy-filtered card selections for dashboard summaries and prefilled Android proposals
+- Scryfall-enriched wanted-card API writes for consistent artwork and printing metadata in native clients
 - Trade-builder recommendations for wishlist matches and Scryfall value-balance helpers
 - Trade issue reporting with evidence attachments, admin review queue, resolution notes, repeat-issue trend reporting, participant notifications, and audit logging
 - Per-user reputation summaries and feedback after completed trades
@@ -234,6 +236,7 @@ Initial API endpoints:
 - `DELETE /api/v1/wants/{id}`
 - `GET /api/v1/cards/search`
 - `GET /api/v1/trade-partners`
+- `GET /api/v1/trade-matches`
 - `GET /api/v1/trade-cards`
 - `GET /api/v1/trades`
 - `POST /api/v1/trades`

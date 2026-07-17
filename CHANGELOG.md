@@ -9,8 +9,11 @@ The project uses semantic versioning while releases are published. During the al
 ### Added
 
 - Published API major-version and capability metadata from the health endpoint so native clients can reject incompatible servers before saving credentials
+- Added privacy-aware mutual trade matches to the JSON API and native dashboard, including balanced card selections that clients can preload into a proposal
 
 ### Changed
+
+- Made wanted-card API writes honor Scryfall enrichment requests so native clients can populate artwork and print metadata consistently with collection cards
 
 - Made the test harness isolate local INI and environment configuration so developer settings cannot change test expectations
 
