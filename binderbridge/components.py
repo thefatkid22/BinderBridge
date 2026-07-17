@@ -299,47 +299,22 @@ def current_collection_url(path, query, page, per_page):
     return page_url(path, query, page, per_page)
 
 
-def render_pagination(path, query, total_count, page, per_page, page_count):
+def render_pagination(path, query, total_count, page, per_page, page_count, target_id=""):
     if total_count == 0:
         return ""
     first_item = (page - 1) * per_page + 1
     last_item = min(total_count, page * per_page)
-    page_links = []
-    start = max(1, page - 2)
-    end = min(page_count, page + 2)
-    for number in range(start, end + 1):
-        if number == page:
-            page_links.append(f'<span class="page-link active">{number}</span>')
-        else:
-            page_links.append(f'<a class="page-link" href="{e(page_url(path, query, number, per_page))}">{number}</a>')
-    prev_link = (
-        f'<a class="button secondary small" href="{e(page_url(path, query, page - 1, per_page))}">Previous</a>'
-        if page > 1
-        else '<span class="button secondary small disabled">Previous</span>'
-    )
-    next_link = (
-        f'<a class="button secondary small" href="{e(page_url(path, query, page + 1, per_page))}">Next</a>'
-        if page < page_count
-        else '<span class="button secondary small disabled">Next</span>'
-    )
-    per_page_options = "".join(
-        f'<option value="{size}"{selected(str(per_page), str(size))}>{size}</option>'
-        for size in PAGE_SIZE_OPTIONS
-    )
+    next_link = ""
+    if page < page_count:
+        next_link = (
+            f'<a class="button secondary small infinite-scroll-link" rel="next" '
+            f'href="{e(page_url(path, query, page + 1, per_page))}">Load more</a>'
+        )
+    target_attr = f' data-infinite-scroll-target="{e(target_id)}"' if target_id else ""
     return f"""
-    <div class="pagination-bar">
-        <p class="muted compact">Showing {first_item}-{last_item} of {total_count}</p>
-        <nav class="pagination-links" aria-label="Pagination">
-            {prev_link}
-            {''.join(page_links)}
-            {next_link}
-        </nav>
-        <form class="per-page-form" method="get" action="{e(path)}">
-            {pagination_hidden_inputs(query)}
-            <label>Per page
-                <select name="per_page" onchange="this.form.submit()">{per_page_options}</select>
-            </label>
-        </form>
+    <div class="infinite-scroll" data-infinite-scroll data-infinite-scroll-key="{e(path)}"{target_attr} data-infinite-scroll-total="{total_count}">
+        <p class="muted compact infinite-scroll-status" role="status" aria-live="polite">Showing {first_item}-{last_item} of {total_count}</p>
+        {next_link}
     </div>
     """
 
@@ -400,50 +375,24 @@ def trade_picker_preserved_inputs(recipient_id, query, active_prefix):
     return "".join(hidden)
 
 
-def render_trade_picker_pagination(recipient_id, query, prefix, total_count, page, per_page, page_count):
+def render_trade_picker_pagination(recipient_id, query, prefix, total_count, page, per_page, page_count, target_id=""):
     if total_count == 0:
         return ""
     first_item = (page - 1) * per_page + 1
     last_item = min(total_count, page * per_page)
-    page_links = []
-    start = max(1, page - 2)
-    end = min(page_count, page + 2)
-    for number in range(start, end + 1):
-        if number == page:
-            page_links.append(f'<span class="page-link active">{number}</span>')
-        else:
-            page_links.append(
-                f'<a class="page-link" href="{e(trade_picker_url(recipient_id, query, {f"{prefix}_page": number, f"{prefix}_per_page": per_page}))}">{number}</a>'
-            )
-    prev_link = (
-        f'<a class="button secondary small" href="{e(trade_picker_url(recipient_id, query, {f"{prefix}_page": page - 1, f"{prefix}_per_page": per_page}))}">Previous</a>'
-        if page > 1
-        else '<span class="button secondary small disabled">Previous</span>'
-    )
-    next_link = (
-        f'<a class="button secondary small" href="{e(trade_picker_url(recipient_id, query, {f"{prefix}_page": page + 1, f"{prefix}_per_page": per_page}))}">Next</a>'
-        if page < page_count
-        else '<span class="button secondary small disabled">Next</span>'
-    )
-    per_page_options = "".join(
-        f'<option value="{size}"{selected(str(per_page), str(size))}>{size}</option>'
-        for size in PAGE_SIZE_OPTIONS
-    )
+    next_link = ""
+    if page < page_count:
+        next_url = trade_picker_url(
+            recipient_id,
+            query,
+            {f"{prefix}_page": page + 1, f"{prefix}_per_page": per_page},
+        )
+        next_link = f'<a class="button secondary small infinite-scroll-link" rel="next" href="{e(next_url)}">Load more</a>'
+    target_attr = f' data-infinite-scroll-target="{e(target_id)}"' if target_id else ""
     return f"""
-    <div class="pagination-bar trade-picker-pagination">
-        <p class="muted compact">Showing {first_item}-{last_item} of {total_count}</p>
-        <nav class="pagination-links" aria-label="Pagination">
-            {prev_link}
-            {''.join(page_links)}
-            {next_link}
-        </nav>
-        <form class="per-page-form" method="get" action="/trades/new">
-            {trade_picker_preserved_inputs(recipient_id, query, prefix)}
-            <input type="hidden" name="{e(prefix)}_page" value="1">
-            <label>Per page
-                <select name="{e(prefix)}_per_page" onchange="this.form.submit()">{per_page_options}</select>
-            </label>
-        </form>
+    <div class="infinite-scroll trade-picker-pagination" data-infinite-scroll data-infinite-scroll-key="trade-{e(prefix)}"{target_attr} data-infinite-scroll-total="{total_count}">
+        <p class="muted compact infinite-scroll-status" role="status" aria-live="polite">Showing {first_item}-{last_item} of {total_count}</p>
+        {next_link}
     </div>
     """
 

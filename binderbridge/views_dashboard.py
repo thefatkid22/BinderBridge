@@ -280,7 +280,7 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
         for value, label in (("unread", "Unread"), ("read", "Read"))
     )
     active_filters = render_active_filter_chips("/notifications", query, filters, notification_filter_chip_specs())
-    pagination = render_pagination("/notifications", query, total_count, page, per_page, page_count)
+    pagination = render_pagination("/notifications", query, total_count, page, per_page, page_count, "notification-items")
     workspace_items = [
         ("#notification-inbox", "Inbox", "Search and review activity"),
         ("#notification-values", "Value changes", "Recent Scryfall price movement"),
@@ -326,7 +326,7 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
                         <h2>Inbox</h2>
                         <span class="pill">{e(total_count)} matching - {e(unread_count)} unread</span>
                     </div>
-                    <ol class="notification-list">{notification_items}</ol>
+                    <ol class="notification-list" id="notification-items">{notification_items}</ol>
                     {pagination}
                 </article>
             </section>

@@ -660,7 +660,7 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
         collection_scryfall_summary=collection_scryfall_summary,
         wishlist_scryfall_summary=wishlist_scryfall_summary,
     )
-    pagination = render_pagination("/cleanup/audit", query, total_count, page, per_page, page_count)
+    pagination = render_pagination("/cleanup/audit", query, total_count, page, per_page, page_count, "audit-items")
     redirect_to = page_url("/cleanup/audit", query, page, per_page)
     hidden_filters = condition_finish_audit_hidden_inputs(filters)
     row_html = "".join(render_condition_finish_audit_row(item) for item in page_items)
@@ -727,7 +727,7 @@ def render_condition_finish_audit(user, query, notice=None, status="info", activ
                             <th></th>
                         </tr>
                     </thead>
-                    <tbody>{row_html}</tbody>
+                    <tbody id="audit-items">{row_html}</tbody>
                 </table>
             </div>
         </form>
@@ -856,7 +856,7 @@ def render_collection(user, query, notice=None, status="info"):
     page, per_page, page_count, offset = pagination_state(query, total_count)
     items = collection_page_rows(where, params, order_clause, per_page, offset)
     item_rows = "".join(render_collection_row(item, owner_view=True, bulk_select=True) for item in items)
-    pagination = render_pagination("/collection", query, total_count, page, per_page, page_count)
+    pagination = render_pagination("/collection", query, total_count, page, per_page, page_count, "collection-items")
     redirect_to = current_collection_url("/collection", query, page, per_page)
     hidden_filters = collection_hidden_filter_inputs(filters)
     collection_filters_active = any(value not in ("", None, False) for value in filters.values())
@@ -968,7 +968,7 @@ def render_collection(user, query, notice=None, status="info"):
                             <th></th>
                         </tr>
                     </thead>
-                    <tbody>{item_rows}</tbody>
+                    <tbody id="collection-items">{item_rows}</tbody>
                 </table>
             </div>
         </form>
@@ -1475,7 +1475,7 @@ def render_browse(user, query, notice=None, status="info"):
                         <th></th>
                     </tr>
                 </thead>
-                <tbody>{rows_html}</tbody>
+                <tbody id="browse-items">{rows_html}</tbody>
             </table>
         </div>
         """
@@ -1491,7 +1491,7 @@ def render_browse(user, query, notice=None, status="info"):
             "When members mark cards available for trade, they will appear here.",
             actions=(("/trades/matches", "Find matches", "secondary"), ("/collection", "Review collection", "ghost")),
         )
-    pagination = render_pagination("/browse", query, total_count, page, per_page, page_count)
+    pagination = render_pagination("/browse", query, total_count, page, per_page, page_count, "browse-items")
     active_filter_chips = render_active_filter_chips(
         "/browse",
         query,
@@ -1608,16 +1608,15 @@ def render_browse(user, query, notice=None, status="info"):
     {pagination}
     <script>
         (function () {{
-            document.querySelectorAll("[data-photo-dialog]").forEach(function (button) {{
-                button.addEventListener("click", function () {{
+            document.addEventListener("click", function (event) {{
+                var button = event.target.closest("[data-photo-dialog]");
+                if (button) {{
                     var dialog = document.getElementById(button.dataset.photoDialog);
                     if (dialog && typeof dialog.showModal === "function") dialog.showModal();
-                }});
-            }});
-            document.querySelectorAll(".condition-photo-dialog").forEach(function (dialog) {{
-                dialog.addEventListener("click", function (event) {{
-                    if (event.target === dialog) dialog.close();
-                }});
+                    return;
+                }}
+                var dialog = event.target.closest(".condition-photo-dialog");
+                if (dialog && event.target === dialog) dialog.close();
             }});
         }})();
     </script>

@@ -859,6 +859,18 @@ def api_pagination(query):
     return page, per_page, (page - 1) * per_page
 
 
+def api_pagination_meta(page, per_page, total):
+    total = max(0, int(total or 0))
+    has_more = page * per_page < total
+    return {
+        "page": int(page),
+        "per_page": int(per_page),
+        "total": total,
+        "has_more": has_more,
+        "next_page": int(page) + 1 if has_more else None,
+    }
+
+
 def api_row_dict(item, fields):
     return {field: row_value(item, field, "") for field in fields}
 
@@ -1248,7 +1260,7 @@ def api_collection_list(self, user, query):
     )
     return self.api_json({
         "data": [api_collection_item_dict(item) for item in items],
-        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -1437,7 +1449,7 @@ def api_groups_list(self, user, query):
     paged = group_rows[offset:offset + per_page]
     return self.api_json({
         "data": [api_group_dict(group) for group in paged],
-        "pagination": {"page": page, "per_page": per_page, "total": total},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -1481,7 +1493,7 @@ def api_group_detail(self, user, group_id, query=None):
         return self.api_json({
             "data": data,
             "items": [],
-            "pagination": {"page": page, "per_page": per_page, "total": 0},
+            "pagination": api_pagination_meta(page, per_page, 0),
         })
     filters = api_group_item_filters(query or {})
     total = collection_group_item_count(group_id, filters)
@@ -1499,7 +1511,7 @@ def api_group_detail(self, user, group_id, query=None):
     return self.api_json({
         "data": data,
         "items": [api_group_collection_item_dict(item) for item in items],
-        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -1693,7 +1705,7 @@ def api_wants_list(self, user, query):
     )
     return self.api_json({
         "data": [api_want_item_dict(item) for item in items],
-        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -1890,7 +1902,7 @@ def api_trade_partners_list(self, user, query):
     page_items = partners[offset:offset + per_page]
     return self.api_json({
         "data": [api_trade_partner_dict(user, partner) for partner in page_items],
-        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -1910,7 +1922,7 @@ def api_trade_matches_list(self, user, query):
     total = len(matches)
     return self.api_json({
         "data": matches[offset:offset + per_page],
-        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -1949,7 +1961,7 @@ def api_trade_cards_list(self, user, query):
     return self.api_json({
         "data": [api_trade_card_dict(user, owner, item) for item in items],
         "owner": {"id": int(owner["id"]), "username": owner["username"], "display_name": owner["display_name"]},
-        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -2026,7 +2038,7 @@ def api_trades_list(self, user, query):
         "metrics": {
             "needs_action": int(trade_count_for_user(user["id"], {"direction": "needs_action"})),
         },
-        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -2143,7 +2155,7 @@ def api_notifications_list(self, user, query):
     )
     return self.api_json({
         "data": [api_notification_dict(item) for item in items],
-        "pagination": {"page": page, "per_page": per_page, "total": int(total)},
+        "pagination": api_pagination_meta(page, per_page, total),
     })
 
 
@@ -2446,6 +2458,7 @@ __all__ = [
     "render_webhook_endpoint_row",
     "render_webhook_delivery_row",
     "api_pagination",
+    "api_pagination_meta",
     "api_row_dict",
     "api_collection_item_dict",
     "api_want_item_dict",
