@@ -8,6 +8,7 @@ The project uses semantic versioning while releases are published. During the al
 
 ### Added
 
+- Added rate-limited Android username/password sign-in with authenticator and recovery-code support, issuing revocable, expiring bearer sessions without requiring users to create API tokens manually
 - Published API major-version and capability metadata from the health endpoint so native clients can reject incompatible servers before saving credentials
 - Added privacy-aware mutual trade matches to the JSON API and native dashboard, including balanced card selections that clients can preload into a proposal
 
@@ -19,6 +20,7 @@ The project uses semantic versioning while releases are published. During the al
 
 ### Security
 
+- Kept Android account passwords out of issued-session storage and returned authentication responses with `Cache-Control: no-store`
 - Ignored client-supplied forwarding headers unless trusted-proxy mode is explicitly enabled
 - Blocked webhook and deck-import requests to private, loopback, link-local, reserved, and LAN-only targets, including redirects and delivery-time DNS results; trusted installations can explicitly allow private webhook destinations
 

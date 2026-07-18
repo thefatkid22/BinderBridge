@@ -241,6 +241,85 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertIsNone(revoked_user)
         self.assertIsNone(revoked_token)
 
+    def test_android_password_login_issues_expiring_token_and_supports_two_factor(self):
+        app.create_user("android-owner", "password123", "Android Owner")
+        user_id = app.create_user("android-user", "password123", "Android User")
+
+        class DummyApiRequest:
+            command = "POST"
+
+            def __init__(self, path, payload=None):
+                self._request_path = path
+                self.payload = payload or {}
+                self.headers = {"User-Agent": "BinderBridgeAndroid/test"}
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "198.51.100.15"
+
+        invalid = DummyApiRequest("/api/v1/auth/login", {
+            "username": "android-user",
+            "password": "wrong-password",
+            "device_name": "Test phone",
+        })
+        app.api_dispatch(invalid, "POST", invalid._request_path, {})
+        self.assertEqual(invalid.response[1], HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(invalid.response[0]["error"], "That username and password did not match.")
+
+        login = DummyApiRequest("/api/v1/auth/login", {
+            "username": "android-user",
+            "password": "password123",
+            "device_name": "Test phone",
+        })
+        app.api_dispatch(login, "POST", login._request_path, {})
+        self.assertEqual(login.response[1], HTTPStatus.OK)
+        login_data = login.response[0]["data"]
+        self.assertTrue(login_data["access_token"].startswith(app.API_TOKEN_PREFIX))
+        self.assertEqual(login_data["scopes"], ["read", "write"])
+        self.assertEqual(login_data["user"]["id"], user_id)
+        self.assertGreater(login_data["expires_at"], app.now_iso())
+        authenticated, token_row = app.get_user_by_api_token(login_data["access_token"])
+        self.assertEqual(authenticated["id"], user_id)
+        self.assertEqual(token_row["name"], "BinderBridge Android - Test phone")
+        self.assertNotIn("password123", json.dumps(login.response[0]))
+
+        two_factor_id = app.create_user("android-2fa", "password123", "Android 2FA")
+        setup = app.start_user_totp_setup(two_factor_id)
+        app.enable_user_totp(two_factor_id, app.totp_code(setup["secret"]))
+        challenge = DummyApiRequest("/api/v1/auth/login", {
+            "username": "android-2fa",
+            "password": "password123",
+            "device_name": "2FA phone",
+        })
+        app.api_dispatch(challenge, "POST", challenge._request_path, {})
+        self.assertEqual(challenge.response[1], HTTPStatus.ACCEPTED)
+        challenge_data = challenge.response[0]["data"]
+        self.assertTrue(challenge_data["requires_two_factor"])
+
+        verify = DummyApiRequest("/api/v1/auth/login/2fa", {
+            "challenge_token": challenge_data["challenge_token"],
+            "two_factor_code": app.totp_code(setup["secret"]),
+            "device_name": "2FA phone",
+        })
+        app.api_dispatch(verify, "POST", verify._request_path, {})
+        self.assertEqual(verify.response[1], HTTPStatus.OK)
+        self.assertTrue(verify.response[0]["data"]["access_token"].startswith(app.API_TOKEN_PREFIX))
+        self.assertEqual(verify.response[0]["data"]["user"]["id"], two_factor_id)
+
     def test_api_token_post_handlers_keep_integrations_section_active(self):
         class FakeRequest:
             headers = {}
