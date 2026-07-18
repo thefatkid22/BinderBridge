@@ -10,6 +10,7 @@ License: **GNU AGPL-3.0**
 
 - Username and password accounts
 - TOTP two-factor authentication with one-time recovery codes
+- Android username/password sign-in that exchanges credentials for a revocable, expiring app session without storing the password on the device
 - Passkey/WebAuthn login as an optional passwordless sign-in method
 - CSRF protection for authenticated browser form actions
 - SQLite-backed rate limiting for sign-in, registration, API auth/read/write actions, API health checks, Scryfall lookups, and integration management
@@ -209,9 +210,15 @@ Users can also choose how many days a pending trade offer may wait before Binder
 
 Users can create scoped API bearer tokens from `Account -> API access`. Tokens are shown once, stored hashed, and can be revoked from the account page. Read tokens can list account data, while write tokens can create, update, or delete supported records.
 
+The Android app can instead submit the user's normal account credentials to `POST /api/v1/auth/login`. Accounts with two-factor authentication receive a short-lived challenge completed through `POST /api/v1/auth/login/2fa` with either an authenticator or recovery code. A successful sign-in returns a revocable bearer session with read/write scope according to the account role; read-only accounts remain read-only. The password is used only for verification and is never stored in the bearer-session record.
+
+Android bearer sessions expire after 90 days by default. Set `[api] android_token_ttl_days` or `BINDERBRIDGE_ANDROID_TOKEN_TTL_DAYS` from 1 to 365 days to change that lifetime. Password and two-factor attempts use the existing persistent login rate-limit bucket.
+
 Initial API endpoints:
 
 - `GET /api/v1/health`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/login/2fa`
 - `GET /api/v1/me`
 - `GET /api/v1/dashboard`
 - `GET /api/v1/collection`
@@ -447,6 +454,7 @@ webhook_days = 90
 
 [api]
 page_size_max = 250
+android_token_ttl_days = 90
 
 [rate_limits]
 persistent = true
@@ -477,6 +485,7 @@ Supported environment variables:
 - `BINDERBRIDGE_CONFIG`: path to an INI config file
 - `BINDERBRIDGE_DATA`: database directory, default `./data`
 - `BINDERBRIDGE_DEMO`: seed sample data when set to `1`, `true`, or `yes`
+- `BINDERBRIDGE_ANDROID_TOKEN_TTL_DAYS`: Android bearer-session lifetime from 1 to 365 days, default `90`
 - `BINDERBRIDGE_SOURCE_URL`: source repository shown in the app footer; modified public deployments should point this to their corresponding source
 - `SCRYFALL_USER_AGENT`: custom User-Agent header for Scryfall requests
 - `SCRYFALL_DELAY_SECONDS`: delay between live Scryfall requests, default `0.12`

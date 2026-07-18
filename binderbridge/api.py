@@ -8,6 +8,7 @@ import secrets
 import socket
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -55,6 +56,7 @@ API_TOKEN_PREFIX = "bbapi_"
 API_TOKEN_SCOPES = ("read", "write")
 API_MAJOR_VERSION = 1
 API_CAPABILITIES = (
+    "auth.password",
     "collection",
     "collection.import",
     "dashboard",
@@ -67,6 +69,10 @@ API_CAPABILITIES = (
     "wants",
 )
 API_PAGE_SIZE_MAX = max(1, config_int("BINDERBRIDGE_API_PAGE_SIZE_MAX", default=250, section="api", key="page_size_max"))
+ANDROID_LOGIN_TOKEN_TTL_DAYS = max(
+    1,
+    min(365, config_int("BINDERBRIDGE_ANDROID_TOKEN_TTL_DAYS", default=90, section="api", key="android_token_ttl_days")),
+)
 API_ACCESS_POLICY_KEY = "api_access_policy"
 WEBHOOK_ACCESS_POLICY_KEY = "webhook_access_policy"
 DEFAULT_INTEGRATION_ACCESS_POLICY = "all"
@@ -1194,6 +1200,7 @@ def api_json(self, payload, status=HTTPStatus.OK):
     self.send_response(status)
     self.send_header("Content-Type", "application/json; charset=utf-8")
     self.send_header("Content-Length", str(len(data)))
+    self.send_header("Cache-Control", "no-store")
     self.send_security_headers()
     self.end_headers()
     self.wfile.write(data)
@@ -1241,6 +1248,101 @@ def api_authenticate(self, required_scope="read"):
         self.api_error(f"This token does not include the {required_scope} scope.", HTTPStatus.FORBIDDEN)
         return None, None, True
     return user, token_row, None
+
+
+def android_login_token_expiry():
+    return (datetime.now(timezone.utc) + timedelta(days=ANDROID_LOGIN_TOKEN_TTL_DAYS)).replace(microsecond=0).isoformat()
+
+
+def api_android_login_token(self, user, device_name="", two_factor_method=""):
+    if not user_can_use_api(user):
+        return self.api_error(integration_access_error("Android app"), HTTPStatus.FORBIDDEN)
+    clean_device_name = sanitize_text_input(device_name, max_length=60).strip()
+    token_name = "BinderBridge Android"
+    if clean_device_name:
+        token_name += f" - {clean_device_name}"
+    token = create_api_token(
+        user["id"],
+        token_name,
+        ["read", "write"],
+        android_login_token_expiry(),
+    )
+    log_integration_action(
+        self,
+        user["id"],
+        "android_login",
+        token["name"],
+        "Android app sign-in issued a new expiring access token."
+        + (f" Two-factor method: {two_factor_method}." if two_factor_method else ""),
+        "api_token",
+    )
+    return self.api_json({
+        "data": {
+            "access_token": token["token"],
+            "token_type": "Bearer",
+            "expires_at": token["expires_at"],
+            "scopes": token["scopes"],
+            "user": {
+                "id": int(user["id"]),
+                "username": user["username"],
+                "display_name": user["display_name"],
+                "role": user_role(user),
+                "is_admin": bool(user["is_admin"]),
+            },
+        }
+    })
+
+
+def api_android_password_login(self):
+    payload = self.api_read_json()
+    username = sanitize_text_input(payload.get("username", ""), max_length=80).strip()
+    password = str(payload.get("password", "") or "")
+    rate_key = f"{integration_request_ip(self)}:{username.lower()}"
+    if not rate_limit_allowed("login", rate_key):
+        return self.api_error("Too many sign-in attempts. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
+    found = get_user_by_username(username)
+    if not found or not verify_password(password, found["password_hash"]):
+        log_admin_action(
+            None,
+            "android_login_failed",
+            None,
+            "user",
+            username or "unknown",
+            "Android username/password sign-in failed.",
+            integration_request_ip(self),
+            integration_user_agent(self),
+        )
+        return self.api_error("That username and password did not match.", HTTPStatus.UNAUTHORIZED)
+    if found["is_banned"]:
+        return self.api_error("This account has been banned. Contact an administrator.", HTTPStatus.FORBIDDEN)
+    registration_status = row_value(found, "registration_status", "active")
+    if registration_status == REGISTRATION_STATUS_PENDING:
+        return self.api_error("This account is waiting for administrator approval.", HTTPStatus.FORBIDDEN)
+    if registration_status == REGISTRATION_STATUS_DENIED:
+        return self.api_error("This account registration was not approved.", HTTPStatus.FORBIDDEN)
+    if two_factor_enabled(found):
+        challenge_token, expires_at = create_two_factor_challenge(found["id"])
+        return self.api_json({
+            "data": {
+                "requires_two_factor": True,
+                "challenge_token": challenge_token,
+                "challenge_expires_at": expires_at,
+            }
+        }, HTTPStatus.ACCEPTED)
+    return self.api_android_login_token(found, payload.get("device_name", ""))
+
+
+def api_android_two_factor_login(self):
+    payload = self.api_read_json()
+    challenge_token = sanitize_text_input(payload.get("challenge_token", ""), max_length=200).strip()
+    rate_key = f"{integration_request_ip(self)}:2fa:{challenge_token[-12:]}"
+    if not rate_limit_allowed("login", rate_key):
+        return self.api_error("Too many sign-in attempts. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
+    try:
+        user, method_used = complete_two_factor_login(challenge_token, payload.get("two_factor_code", ""))
+    except ValueError as exc:
+        return self.api_error(str(exc), HTTPStatus.UNAUTHORIZED)
+    return self.api_android_login_token(user, payload.get("device_name", ""), method_used)
 
 
 def api_collection_list(self, user, query):
@@ -2200,6 +2302,14 @@ def api_dispatch(self, method, path, query):
                 "capabilities": list(API_CAPABILITIES),
             },
         })
+    if path == "/api/v1/auth/login":
+        if method != "POST":
+            return self.api_error("Android sign-in must be submitted with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
+        return self.api_android_password_login()
+    if path == "/api/v1/auth/login/2fa":
+        if method != "POST":
+            return self.api_error("Two-factor sign-in must be submitted with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
+        return self.api_android_two_factor_login()
     required_scope = "write" if method in ("POST", "PUT", "PATCH", "DELETE") else "read"
     user, token_row, error = self.api_authenticate(required_scope)
     if error:
@@ -2356,6 +2466,9 @@ API_ROUTE_METHODS = (
     "api_read_json",
     "api_error",
     "api_authenticate",
+    "api_android_login_token",
+    "api_android_password_login",
+    "api_android_two_factor_login",
     "api_collection_list",
     "api_collection_create",
     "api_collection_import",
@@ -2411,6 +2524,7 @@ __all__ = [
     "API_TOKEN_SCOPES",
     "API_MAJOR_VERSION",
     "API_CAPABILITIES",
+    "ANDROID_LOGIN_TOKEN_TTL_DAYS",
     "ALLOW_PRIVATE_WEBHOOKS",
     "API_ACCESS_POLICY_KEY",
     "WEBHOOK_ACCESS_POLICY_KEY",
@@ -2472,6 +2586,7 @@ __all__ = [
     "integration_request_ip",
     "integration_user_agent",
     "log_integration_action",
+    "android_login_token_expiry",
     "api_trade_dict",
     "API_ROUTE_METHODS",
     *API_ROUTE_METHODS,
