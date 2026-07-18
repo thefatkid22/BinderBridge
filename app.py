@@ -806,6 +806,14 @@ class App(BaseHTTPRequestHandler):
             """
             return self.html(render_layout(user, "Rate limited", content), HTTPStatus.TOO_MANY_REQUESTS)
         except Exception as exc:
+            if path.startswith("/api/"):
+                write_log_message(
+                    f"API request failed for {method} {path}: {type(exc).__name__}: {exc}"
+                )
+                return self.api_error(
+                    "BinderBridge could not complete the API request.",
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
             return self.error_page(user, exc)
 
     def current_user(self):

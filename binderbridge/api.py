@@ -53,9 +53,12 @@ from binderbridge.trade_service import (
 
 
 API_TOKEN_PREFIX = "bbapi_"
-API_TOKEN_SCOPES = ("read", "write")
+API_TOKEN_SCOPES = ("read", "write", "account")
+API_CREDENTIAL_KINDS = ("api_token", "android_session")
 API_MAJOR_VERSION = 1
 API_CAPABILITIES = (
+    "account.sessions",
+    "account.summary",
     "auth.password",
     "collection",
     "collection.import",
@@ -214,22 +217,34 @@ def api_token_has_scope(token_row, scope):
     return scope in scopes
 
 
-def create_api_token(user_id, name, scopes=None, expires_at=""):
+def normalize_api_credential_kind(value):
+    credential_kind = sanitize_text_input(value, max_length=40).strip().lower()
+    return credential_kind if credential_kind in API_CREDENTIAL_KINDS else "api_token"
+
+
+def create_api_token(user_id, name, scopes=None, expires_at="", credential_kind="api_token"):
     user = row("SELECT * FROM users WHERE id = ?", (user_id,))
     if not user_can_use_api(user):
         raise ValueError(integration_access_error("API"))
     clean_name = sanitize_text_input(name, max_length=80).strip() or "API token"
     clean_scopes = normalize_api_token_scopes(scopes or ["read"])
+    clean_credential_kind = normalize_api_credential_kind(credential_kind)
+    if clean_credential_kind == "android_session" and "account" not in clean_scopes:
+        clean_scopes.append("account")
+    if clean_credential_kind != "android_session":
+        clean_scopes = [scope for scope in clean_scopes if scope != "account"] or ["read"]
     if not user_can_write_content(user):
-        clean_scopes = ["read"]
+        clean_scopes = [scope for scope in clean_scopes if scope != "write"]
+        if "read" not in clean_scopes:
+            clean_scopes.insert(0, "read")
     expires_at = sanitize_text_input(expires_at, max_length=40).strip()
     token = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
     timestamp = now_iso()
     token_id = execute(
         """
         INSERT INTO api_tokens
-            (user_id, name, token_hash, token_hint, scopes, expires_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (user_id, name, token_hash, token_hint, scopes, credential_kind, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -237,11 +252,19 @@ def create_api_token(user_id, name, scopes=None, expires_at=""):
             api_token_hash(token),
             token[-8:],
             ",".join(clean_scopes),
+            clean_credential_kind,
             expires_at,
             timestamp,
         ),
     )
-    return {"id": token_id, "token": token, "name": clean_name, "scopes": clean_scopes, "expires_at": expires_at}
+    return {
+        "id": token_id,
+        "token": token,
+        "name": clean_name,
+        "scopes": clean_scopes,
+        "credential_kind": clean_credential_kind,
+        "expires_at": expires_at,
+    }
 
 
 def revoke_api_token(user_id, token_id):
@@ -283,6 +306,21 @@ def api_token_rows(user_id):
         ORDER BY revoked_at = '' DESC, created_at DESC, id DESC
         """,
         (user_id,),
+    )
+
+
+def android_session_rows(user_id):
+    return rows(
+        """
+        SELECT *
+        FROM api_tokens
+        WHERE user_id = ?
+          AND credential_kind = 'android_session'
+          AND revoked_at = ''
+          AND (expires_at = '' OR expires_at > ?)
+        ORDER BY last_used_at DESC, created_at DESC, id DESC
+        """,
+        (user_id, now_iso()),
     )
 
 
@@ -1266,6 +1304,7 @@ def api_android_login_token(self, user, device_name="", two_factor_method=""):
         token_name,
         ["read", "write"],
         android_login_token_expiry(),
+        credential_kind="android_session",
     )
     log_integration_action(
         self,
@@ -1343,6 +1382,108 @@ def api_android_two_factor_login(self):
     except ValueError as exc:
         return self.api_error(str(exc), HTTPStatus.UNAUTHORIZED)
     return self.api_android_login_token(user, payload.get("device_name", ""), method_used)
+
+
+def android_session_device_name(token_row):
+    name = row_value(token_row, "name", "BinderBridge Android")
+    prefix = "BinderBridge Android - "
+    return name[len(prefix):].strip() if name.startswith(prefix) else "Android device"
+
+
+def api_android_session_dict(token_row, current_token_id=0):
+    token_id = int(row_value(token_row, "id", 0) or 0)
+    return {
+        "id": token_id,
+        "name": row_value(token_row, "name", "BinderBridge Android"),
+        "device_name": android_session_device_name(token_row),
+        "current": bool(token_id and token_id == int(current_token_id or 0)),
+        "created_at": row_value(token_row, "created_at", ""),
+        "last_used_at": row_value(token_row, "last_used_at", ""),
+        "expires_at": row_value(token_row, "expires_at", ""),
+    }
+
+
+def api_account_summary(self, user, token_row):
+    sessions = android_session_rows(user["id"])
+    current_token_id = int(row_value(token_row, "id", 0) or 0)
+    current_session = next(
+        (api_android_session_dict(session, current_token_id) for session in sessions if int(session["id"]) == current_token_id),
+        None,
+    )
+    return self.api_json({
+        "data": {
+            "profile": {
+                "id": int(user["id"]),
+                "username": user["username"],
+                "display_name": user["display_name"],
+                "email": row_value(user, "email", ""),
+                "bio": row_value(user, "bio", ""),
+                "public_email": bool(row_value(user, "public_email", 0)),
+                "collection_value_visibility": row_value(user, "collection_value_visibility", "members"),
+                "role": user_role(user),
+                "is_admin": bool(row_value(user, "is_admin", 0)),
+            },
+            "security": {
+                "two_factor_enabled": two_factor_enabled(user),
+                "passkey_count": passkey_credential_count(user["id"]),
+                "active_android_session_count": len(sessions),
+            },
+            "current_session": current_session,
+        }
+    })
+
+
+def api_android_sessions_list(self, user, token_row):
+    current_token_id = int(row_value(token_row, "id", 0) or 0)
+    sessions = android_session_rows(user["id"])
+    return self.api_json({
+        "data": [api_android_session_dict(session, current_token_id) for session in sessions],
+        "total": len(sessions),
+    })
+
+
+def api_android_session_revoke(self, user, token_row, session_id):
+    session = row(
+        """
+        SELECT * FROM api_tokens
+        WHERE id = ? AND user_id = ? AND credential_kind = 'android_session' AND revoked_at = ''
+        """,
+        (session_id, user["id"]),
+    )
+    if not session or not revoke_api_token(user["id"], session_id):
+        return self.api_error("Android app session not found.", HTTPStatus.NOT_FOUND)
+    is_current = int(row_value(token_row, "id", 0) or 0) == int(session_id)
+    log_integration_action(
+        self,
+        user["id"],
+        "android_session_revoked",
+        row_value(session, "name", "BinderBridge Android"),
+        "Revoked an Android app session from account session management.",
+        "api_token",
+    )
+    return self.api_json({"data": {"id": int(session_id), "revoked": True, "current": is_current}})
+
+
+def api_android_logout(self, user, token_row):
+    credential_kind = normalize_api_credential_kind(row_value(token_row, "credential_kind", "api_token"))
+    revoked = False
+    if credential_kind == "android_session":
+        revoked = bool(revoke_api_token(user["id"], token_row["id"]))
+        if revoked:
+            log_integration_action(
+                self,
+                user["id"],
+                "android_logout",
+                row_value(token_row, "name", "BinderBridge Android"),
+                "Android signed out and revoked its current app session.",
+                "api_token",
+            )
+    return self.api_json({
+        "data": {
+            "revoked": revoked,
+            "credential_kind": credential_kind,
+        }
+    })
 
 
 def api_collection_list(self, user, query):
@@ -2310,6 +2451,44 @@ def api_dispatch(self, method, path, query):
         if method != "POST":
             return self.api_error("Two-factor sign-in must be submitted with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
         return self.api_android_two_factor_login()
+    if path == "/api/v1/auth/logout":
+        if method != "POST":
+            return self.api_error("Android sign-out must be submitted with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
+        user, token_row, error = self.api_authenticate("read")
+        if error:
+            return None
+        if not rate_limit_allowed("api_write", f"user:{user['id']}"):
+            return self.api_error("Too many API write requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
+        return self.api_android_logout(user, token_row)
+    if path == "/api/v1/account" or path.startswith("/api/v1/account/"):
+        user, token_row, error = self.api_authenticate("account")
+        if error:
+            return None
+        rate_bucket = "api_read" if method == "GET" else "api_write"
+        if not rate_limit_allowed(rate_bucket, f"user:{user['id']}"):
+            return self.api_error(
+                "Too many API read requests. Try again shortly."
+                if rate_bucket == "api_read"
+                else "Too many API write requests. Try again shortly.",
+                HTTPStatus.TOO_MANY_REQUESTS,
+            )
+        if path == "/api/v1/account":
+            if method != "GET":
+                return self.api_error("Account summary is read-only.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_account_summary(user, token_row)
+        if path == "/api/v1/account/sessions":
+            if method != "GET":
+                return self.api_error("Android sessions are listed with GET.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_android_sessions_list(user, token_row)
+        if path.startswith("/api/v1/account/sessions/"):
+            if method != "DELETE":
+                return self.api_error("Android sessions are revoked with DELETE.", HTTPStatus.METHOD_NOT_ALLOWED)
+            try:
+                session_id = int(path.rsplit("/", 1)[1])
+            except ValueError:
+                return self.api_error("Android app session id must be a number.", HTTPStatus.NOT_FOUND)
+            return self.api_android_session_revoke(user, token_row, session_id)
+        return self.api_error("API endpoint not found.", HTTPStatus.NOT_FOUND)
     required_scope = "write" if method in ("POST", "PUT", "PATCH", "DELETE") else "read"
     user, token_row, error = self.api_authenticate(required_scope)
     if error:
@@ -2469,6 +2648,10 @@ API_ROUTE_METHODS = (
     "api_android_login_token",
     "api_android_password_login",
     "api_android_two_factor_login",
+    "api_account_summary",
+    "api_android_sessions_list",
+    "api_android_session_revoke",
+    "api_android_logout",
     "api_collection_list",
     "api_collection_create",
     "api_collection_import",
@@ -2522,6 +2705,7 @@ API_ROUTE_METHODS = (
 __all__ = [
     "API_TOKEN_PREFIX",
     "API_TOKEN_SCOPES",
+    "API_CREDENTIAL_KINDS",
     "API_MAJOR_VERSION",
     "API_CAPABILITIES",
     "ANDROID_LOGIN_TOKEN_TTL_DAYS",
@@ -2546,10 +2730,12 @@ __all__ = [
     "api_token_hash",
     "normalize_api_token_scopes",
     "api_token_has_scope",
+    "normalize_api_credential_kind",
     "create_api_token",
     "revoke_api_token",
     "delete_revoked_api_token",
     "api_token_rows",
+    "android_session_rows",
     "get_user_by_api_token",
     "normalize_webhook_events",
     "webhook_host_is_blocked",
