@@ -27,6 +27,7 @@ from binderbridge.migrations import (
     SCHEMA_VERSION_KEY,
     db_schema_version,
     migrate_hot_path_indexes,
+    migrate_api_session_credentials,
     run_schema_migrations,
     set_db_schema_version,
 )
@@ -525,6 +526,7 @@ def init_db():
                 token_hash TEXT NOT NULL UNIQUE,
                 token_hint TEXT NOT NULL DEFAULT '',
                 scopes TEXT NOT NULL DEFAULT 'read',
+                credential_kind TEXT NOT NULL DEFAULT 'api_token',
                 last_used_at TEXT NOT NULL DEFAULT '',
                 expires_at TEXT NOT NULL DEFAULT '',
                 revoked_at TEXT NOT NULL DEFAULT '',
@@ -1392,6 +1394,7 @@ def migrate_db(conn):
         (timestamp,),
     )
     conn.execute("DELETE FROM card_price_sources WHERE provider != 'scryfall'")
+    migrate_api_session_credentials(conn)
     run_schema_migrations(conn)
     conn.execute("PRAGMA optimize")
 

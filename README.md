@@ -11,6 +11,7 @@ License: **GNU AGPL-3.0**
 - Username and password accounts
 - TOTP two-factor authentication with one-time recovery codes
 - Android username/password sign-in that exchanges credentials for a revocable, expiring app session without storing the password on the device
+- Account-scoped Android session inventory, current-device logout, and remote device-session revocation without affecting manually created integration tokens
 - Passkey/WebAuthn login as an optional passwordless sign-in method
 - CSRF protection for authenticated browser form actions
 - SQLite-backed rate limiting for sign-in, registration, API auth/read/write actions, API health checks, Scryfall lookups, and integration management
@@ -214,11 +215,17 @@ The Android app can instead submit the user's normal account credentials to `POS
 
 Android bearer sessions expire after 90 days by default. Set `[api] android_token_ttl_days` or `BINDERBRIDGE_ANDROID_TOKEN_TTL_DAYS` from 1 to 365 days to change that lifetime. Password and two-factor attempts use the existing persistent login rate-limit bucket.
 
+Password-created Android sessions are classified separately from manually created API tokens and receive an internal `account` scope. The Android app can read its account/security summary, list active Android devices, revoke another device, or revoke its current session during sign-out. These operations never revoke a manually supplied integration token.
+
 Initial API endpoints:
 
 - `GET /api/v1/health`
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/login/2fa`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/account`
+- `GET /api/v1/account/sessions`
+- `DELETE /api/v1/account/sessions/{id}`
 - `GET /api/v1/me`
 - `GET /api/v1/dashboard`
 - `GET /api/v1/collection`

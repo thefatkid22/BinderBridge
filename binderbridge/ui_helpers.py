@@ -125,6 +125,8 @@ ADMIN_AUDIT_ACTION_LABELS = {
     "api_token_deleted": "API token deleted",
     "api_auth_failed": "API authentication failed",
     "api_write": "API write action",
+    "android_logout": "Android app signed out",
+    "android_session_revoked": "Android app session revoked",
     "integration_policy_updated": "Integration policy updated",
     "webhook_created": "Webhook created",
     "webhook_deleted": "Webhook deleted",

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 
 def db_schema_version(conn):
@@ -548,6 +548,34 @@ def migrate_registration_moderation(conn):
     )
 
 
+def migrate_api_session_credentials(conn):
+    token_columns = {column["name"] for column in conn.execute("PRAGMA table_info(api_tokens)").fetchall()}
+    if "credential_kind" not in token_columns:
+        conn.execute("ALTER TABLE api_tokens ADD COLUMN credential_kind TEXT NOT NULL DEFAULT 'api_token'")
+    conn.execute(
+        """
+        UPDATE api_tokens
+        SET credential_kind = 'android_session'
+        WHERE credential_kind = 'api_token'
+          AND (name = 'BinderBridge Android' OR name LIKE 'BinderBridge Android - %')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE api_tokens
+        SET scopes = scopes || ',account'
+        WHERE credential_kind = 'android_session'
+          AND instr(',' || scopes || ',', ',account,') = 0
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_api_tokens_user_kind
+        ON api_tokens(user_id, credential_kind, revoked_at, expires_at, created_at)
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
@@ -562,6 +590,7 @@ SCHEMA_MIGRATIONS = (
     (11, "saved searches and filter presets", migrate_saved_searches),
     (12, "persistent API rate limiting", migrate_rate_limit_events),
     (13, "registration moderation and ban-evasion signals", migrate_registration_moderation),
+    (14, "typed Android app sessions and account scope", migrate_api_session_credentials),
 )
 
 
@@ -614,6 +643,7 @@ __all__ = [
     "migrate_saved_searches",
     "migrate_rate_limit_events",
     "migrate_registration_moderation",
+    "migrate_api_session_credentials",
     "SCHEMA_MIGRATIONS",
     "migration_timestamp",
     "record_schema_migration_history",

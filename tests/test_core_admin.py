@@ -61,6 +61,27 @@ class CoreAdminTests(BinderBridgeTestCase):
 
         self.assertEqual(output.rstrip("\r\n"), "request \\x9c path \\U0001f600\\x0anext")
 
+    def test_api_dispatch_exceptions_return_json_instead_of_html(self):
+        class BrokenApiRequest:
+            path = "/api/v1/broken"
+            headers = {}
+            response = None
+
+            def current_user(self):
+                return None
+
+            def api_dispatch(self, method, path, query):
+                raise RuntimeError("database unavailable")
+
+            def api_error(self, message, status):
+                self.response = ({"error": message}, status)
+
+        request = BrokenApiRequest()
+        app.App.dispatch(request, "POST")
+
+        self.assertEqual(request.response[1], app.HTTPStatus.INTERNAL_SERVER_ERROR)
+        self.assertEqual(request.response[0]["error"], "BinderBridge could not complete the API request.")
+
     def test_client_ip_only_trusts_forwarded_header_when_proxy_trust_is_enabled(self):
         class DummyRequest:
             headers = {"X-Forwarded-For": "203.0.113.9, 10.0.0.2"}
@@ -93,6 +114,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         password_request_indexes = {item["name"] for item in app.rows("PRAGMA index_list(password_recovery_requests)")}
         password_token_indexes = {item["name"] for item in app.rows("PRAGMA index_list(password_reset_tokens)")}
         rate_limit_indexes = {item["name"] for item in app.rows("PRAGMA index_list(rate_limit_events)")}
+        api_token_indexes = {item["name"] for item in app.rows("PRAGMA index_list(api_tokens)")}
+        api_token_columns = {item["name"] for item in app.rows("PRAGMA table_info(api_tokens)")}
         saved_search_indexes = {item["name"] for item in app.rows("PRAGMA index_list(saved_searches)")}
         user_indexes = {item["name"] for item in app.rows("PRAGMA index_list(users)")}
         dispute_columns = {item["name"] for item in app.rows("PRAGMA table_info(trade_disputes)")}
@@ -124,6 +147,8 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn("idx_password_recovery_requests_status", password_request_indexes)
         self.assertIn("idx_password_reset_tokens_active", password_token_indexes)
         self.assertIn("idx_rate_limit_events_bucket_key_time", rate_limit_indexes)
+        self.assertIn("idx_api_tokens_user_kind", api_token_indexes)
+        self.assertIn("credential_kind", api_token_columns)
         self.assertIn("idx_saved_searches_user_context", saved_search_indexes)
         self.assertIn("idx_users_role_status", user_indexes)
         self.assertIn("trg_collection_privacy_legacy_update", triggers)
@@ -146,6 +171,65 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertEqual(app.import_deck_group_csv.__module__, "binderbridge.deck_import_service")
         self.assertEqual(app.undo_import_batch.__module__, "binderbridge.import_batches")
         self.assertEqual(app.SCRYFALL_COLLECTION_FIELDS[0], "scryfall_id")
+
+    def test_api_session_migration_classifies_existing_android_login_tokens(self):
+        user_id = app.create_user("legacy-android", "password123", "Legacy Android")
+        android_token = app.create_api_token(user_id, "BinderBridge Android - Existing phone", ["read", "write"])
+        manual_token = app.create_api_token(user_id, "Manual mobile export", ["read"])
+
+        with app.db() as conn:
+            app.set_db_schema_version(conn, 13)
+            app.run_schema_migrations(conn)
+
+        migrated_android = app.row("SELECT * FROM api_tokens WHERE id = ?", (android_token["id"],))
+        migrated_manual = app.row("SELECT * FROM api_tokens WHERE id = ?", (manual_token["id"],))
+        self.assertEqual(migrated_android["credential_kind"], "android_session")
+        self.assertIn("account", migrated_android["scopes"].split(","))
+        self.assertEqual(migrated_manual["credential_kind"], "api_token")
+        self.assertNotIn("account", migrated_manual["scopes"].split(","))
+
+    def test_init_db_repairs_legacy_api_token_table_when_schema_version_is_current(self):
+        user_id = app.create_user("legacy-schema", "password123", "Legacy Schema")
+        with app.db() as conn:
+            conn.execute("DROP INDEX IF EXISTS idx_api_tokens_user_kind")
+            conn.execute("DROP INDEX IF EXISTS idx_api_tokens_user")
+            conn.execute("DROP TABLE api_tokens")
+            conn.executescript(
+                """
+                CREATE TABLE api_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    token_hint TEXT NOT NULL DEFAULT '',
+                    scopes TEXT NOT NULL DEFAULT 'read',
+                    last_used_at TEXT NOT NULL DEFAULT '',
+                    expires_at TEXT NOT NULL DEFAULT '',
+                    revoked_at TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_api_tokens_user
+                    ON api_tokens(user_id, revoked_at, created_at);
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO api_tokens
+                    (user_id, name, token_hash, token_hint, scopes, created_at)
+                VALUES (?, 'BinderBridge Android - Legacy phone', 'legacy-hash', 'acy-hash', 'read,write', ?)
+                """,
+                (user_id, app.now_iso()),
+            )
+            app.set_db_schema_version(conn, app.CURRENT_SCHEMA_VERSION)
+
+        app.init_db()
+
+        token = app.row("SELECT * FROM api_tokens WHERE token_hash = 'legacy-hash'")
+        indexes = {item["name"] for item in app.rows("PRAGMA index_list(api_tokens)")}
+        self.assertEqual(token["credential_kind"], "android_session")
+        self.assertIn("account", token["scopes"].split(","))
+        self.assertIn("idx_api_tokens_user_kind", indexes)
+        self.assertEqual(app.get_setting(app.SCHEMA_VERSION_KEY), str(app.CURRENT_SCHEMA_VERSION))
 
     def test_password_hash_round_trip(self):
         stored = app.hash_password("correct horse battery staple")

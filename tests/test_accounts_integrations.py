@@ -289,12 +289,13 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(login.response[1], HTTPStatus.OK)
         login_data = login.response[0]["data"]
         self.assertTrue(login_data["access_token"].startswith(app.API_TOKEN_PREFIX))
-        self.assertEqual(login_data["scopes"], ["read", "write"])
+        self.assertEqual(login_data["scopes"], ["read", "write", "account"])
         self.assertEqual(login_data["user"]["id"], user_id)
         self.assertGreater(login_data["expires_at"], app.now_iso())
         authenticated, token_row = app.get_user_by_api_token(login_data["access_token"])
         self.assertEqual(authenticated["id"], user_id)
         self.assertEqual(token_row["name"], "BinderBridge Android - Test phone")
+        self.assertEqual(token_row["credential_kind"], "android_session")
         self.assertNotIn("password123", json.dumps(login.response[0]))
 
         two_factor_id = app.create_user("android-2fa", "password123", "Android 2FA")
@@ -319,6 +320,111 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(verify.response[1], HTTPStatus.OK)
         self.assertTrue(verify.response[0]["data"]["access_token"].startswith(app.API_TOKEN_PREFIX))
         self.assertEqual(verify.response[0]["data"]["user"]["id"], two_factor_id)
+
+    def test_android_account_summary_lists_and_revokes_only_app_sessions(self):
+        app.create_user("session-owner", "password123", "Session Owner")
+        user_id = app.create_user("session-user", "password123", "Session User")
+
+        class DummyApiRequest:
+            def __init__(self, method, path, payload=None, token=""):
+                self.command = method
+                self._request_path = path
+                self.payload = payload or {}
+                self.headers = {"User-Agent": "BinderBridgeAndroid/test"}
+                if token:
+                    self.headers["Authorization"] = "Bearer " + token
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "198.51.100.18"
+
+        def dispatch(method, path, payload=None, token=""):
+            request = DummyApiRequest(method, path, payload, token)
+            app.api_dispatch(request, method, path, {})
+            return request.response
+
+        first_login, first_status = dispatch("POST", "/api/v1/auth/login", {
+            "username": "session-user",
+            "password": "password123",
+            "device_name": "First phone",
+        })
+        second_login, second_status = dispatch("POST", "/api/v1/auth/login", {
+            "username": "session-user",
+            "password": "password123",
+            "device_name": "Tablet",
+        })
+        self.assertEqual(first_status, HTTPStatus.OK)
+        self.assertEqual(second_status, HTTPStatus.OK)
+        first_token = first_login["data"]["access_token"]
+        second_token = second_login["data"]["access_token"]
+        manual = app.create_api_token(user_id, "Collection export", ["read"])
+
+        summary, summary_status = dispatch("GET", "/api/v1/account", token=first_token)
+        self.assertEqual(summary_status, HTTPStatus.OK)
+        self.assertEqual(summary["data"]["profile"]["username"], "session-user")
+        self.assertFalse(summary["data"]["security"]["two_factor_enabled"])
+        self.assertEqual(summary["data"]["security"]["passkey_count"], 0)
+        self.assertEqual(summary["data"]["security"]["active_android_session_count"], 2)
+        self.assertTrue(summary["data"]["current_session"]["current"])
+        self.assertEqual(summary["data"]["current_session"]["device_name"], "First phone")
+
+        sessions, sessions_status = dispatch("GET", "/api/v1/account/sessions", token=first_token)
+        self.assertEqual(sessions_status, HTTPStatus.OK)
+        self.assertEqual(sessions["total"], 2)
+        self.assertEqual({item["device_name"] for item in sessions["data"]}, {"First phone", "Tablet"})
+        self.assertEqual(sum(1 for item in sessions["data"] if item["current"]), 1)
+        second_session_id = next(item["id"] for item in sessions["data"] if item["device_name"] == "Tablet")
+
+        revoked, revoked_status = dispatch(
+            "DELETE",
+            f"/api/v1/account/sessions/{second_session_id}",
+            token=first_token,
+        )
+        self.assertEqual(revoked_status, HTTPStatus.OK)
+        self.assertTrue(revoked["data"]["revoked"])
+        rejected = dispatch("GET", "/api/v1/me", token=second_token)
+        self.assertEqual(rejected[1], HTTPStatus.UNAUTHORIZED)
+
+        manual_summary = dispatch("GET", "/api/v1/account", token=manual["token"])
+        self.assertEqual(manual_summary[1], HTTPStatus.FORBIDDEN)
+        manual_logout, manual_logout_status = dispatch("POST", "/api/v1/auth/logout", token=manual["token"])
+        self.assertEqual(manual_logout_status, HTTPStatus.OK)
+        self.assertFalse(manual_logout["data"]["revoked"])
+        self.assertEqual(manual_logout["data"]["credential_kind"], "api_token")
+        self.assertIsNotNone(app.get_user_by_api_token(manual["token"])[0])
+
+        logout, logout_status = dispatch("POST", "/api/v1/auth/logout", token=first_token)
+        self.assertEqual(logout_status, HTTPStatus.OK)
+        self.assertTrue(logout["data"]["revoked"])
+        self.assertEqual(logout["data"]["credential_kind"], "android_session")
+        self.assertEqual(dispatch("GET", "/api/v1/me", token=first_token)[1], HTTPStatus.UNAUTHORIZED)
+
+        read_only_id = app.create_user("session-reader", "password123", "Session Reader")
+        app.execute("UPDATE users SET role = 'read_only', is_admin = 0 WHERE id = ?", (read_only_id,))
+        reader_login, reader_status = dispatch("POST", "/api/v1/auth/login", {
+            "username": "session-reader",
+            "password": "password123",
+            "device_name": "Reader phone",
+        })
+        self.assertEqual(reader_status, HTTPStatus.OK)
+        self.assertEqual(reader_login["data"]["scopes"], ["read", "account"])
+        reader_token = reader_login["data"]["access_token"]
+        self.assertEqual(dispatch("GET", "/api/v1/account", token=reader_token)[1], HTTPStatus.OK)
+        self.assertEqual(dispatch("POST", "/api/v1/auth/logout", token=reader_token)[1], HTTPStatus.OK)
 
     def test_api_token_post_handlers_keep_integrations_section_active(self):
         class FakeRequest:
