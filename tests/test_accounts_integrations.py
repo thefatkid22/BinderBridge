@@ -426,6 +426,138 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(dispatch("GET", "/api/v1/account", token=reader_token)[1], HTTPStatus.OK)
         self.assertEqual(dispatch("POST", "/api/v1/auth/logout", token=reader_token)[1], HTTPStatus.OK)
 
+    def test_android_account_center_updates_profile_and_notification_preferences(self):
+        user_id = app.create_user("account-center", "password123", "Account Center")
+
+        class DummyApiRequest:
+            def __init__(self, method, path, payload=None, token=""):
+                self.command = method
+                self._request_path = path
+                self.payload = payload or {}
+                self.headers = {"User-Agent": "BinderBridgeAndroid/test"}
+                if token:
+                    self.headers["Authorization"] = "Bearer " + token
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "198.51.100.27"
+
+        def dispatch(method, path, payload=None, token=""):
+            request = DummyApiRequest(method, path, payload, token)
+            app.api_dispatch(request, method, path, {})
+            return request.response
+
+        login, login_status = dispatch("POST", "/api/v1/auth/login", {
+            "username": "account-center",
+            "password": "password123",
+            "device_name": "Preference phone",
+        })
+        self.assertEqual(login_status, HTTPStatus.OK)
+        token = login["data"]["access_token"]
+
+        summary, summary_status = dispatch("GET", "/api/v1/account", token=token)
+        self.assertEqual(summary_status, HTTPStatus.OK)
+        self.assertTrue(summary["data"]["notification_preferences"]["in_app"]["trade_offer"])
+        self.assertEqual(
+            [item["value"] for item in summary["data"]["options"]["collection_value_visibility"]],
+            ["members", "trusted", "private"],
+        )
+
+        rejected, rejected_status = dispatch("PATCH", "/api/v1/account/profile", {
+            "current_password": "wrong-password",
+            "display_name": "Should Not Save",
+        }, token)
+        self.assertEqual(rejected_status, HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(rejected["error"], "Current password is incorrect.")
+        self.assertEqual(app.row("SELECT display_name FROM users WHERE id = ?", (user_id,))["display_name"], "Account Center")
+
+        malformed_password, malformed_status = dispatch("PATCH", "/api/v1/account/profile", {
+            "current_password": {"unexpected": "object"},
+            "display_name": "Should Still Not Save",
+        }, token)
+        self.assertEqual(malformed_status, HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(malformed_password["error"], "Current password is incorrect.")
+
+        profile, profile_status = dispatch("PATCH", "/api/v1/account/profile", {
+            "current_password": "password123",
+            "username": "account-center-updated",
+            "display_name": "Native Account",
+            "email": "native@example.test",
+            "bio": "Updated from Android.",
+            "public_email": True,
+            "collection_value_visibility": "trusted",
+        }, token)
+        self.assertEqual(profile_status, HTTPStatus.OK)
+        self.assertEqual(profile["data"]["profile"]["username"], "account-center-updated")
+        self.assertEqual(profile["data"]["profile"]["display_name"], "Native Account")
+        self.assertEqual(profile["data"]["profile"]["collection_value_visibility"], "trusted")
+        self.assertTrue(profile["data"]["notification_preferences"]["in_app"]["trade_offer"])
+
+        original_email_delivery_configured = app._api.email_delivery_configured
+        app._api.email_delivery_configured = lambda: True
+        try:
+            preferences, preferences_status = dispatch("PATCH", "/api/v1/account/notifications", {
+                "current_password": "password123",
+                "in_app": {
+                    "trade_offer": False,
+                    "trade_comment": True,
+                    "trade_counter": False,
+                    "trade_status": True,
+                    "price_alerts": False,
+                    "watchlist_alerts": True,
+                    "import_complete": False,
+                    "admin_notice": True,
+                },
+                "price_alert_threshold_percent": "7.5",
+                "stale_trade_reminder_days": 6,
+                "email": {
+                    "enabled": True,
+                    "categories": {
+                        "trade_offer": True,
+                        "trade_comment": False,
+                        "trade_counter": True,
+                        "trade_status": False,
+                        "price_alert": True,
+                        "import_complete": True,
+                        "admin_notice": False,
+                    },
+                    "digest_frequency": "weekly",
+                    "digest_time": "14:30",
+                    "digest_weekday": 4,
+                    "timezone": "America/Chicago",
+                    "quiet_hours": {"enabled": True, "start": "21:30", "end": "06:30"},
+                },
+            }, token)
+        finally:
+            app._api.email_delivery_configured = original_email_delivery_configured
+
+        self.assertEqual(preferences_status, HTTPStatus.OK)
+        saved = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        self.assertEqual(saved["notify_trade_offer_enabled"], 0)
+        self.assertEqual(saved["notify_trade_counter_enabled"], 0)
+        self.assertEqual(saved["price_alert_threshold_percent"], "7.5")
+        self.assertEqual(saved["stale_trade_reminder_days"], 6)
+        self.assertEqual(saved["email_trade_notifications_enabled"], 1)
+        self.assertEqual(saved["email_trade_comment_enabled"], 0)
+        self.assertEqual(saved["email_digest_frequency"], "weekly")
+        self.assertEqual(saved["notification_timezone"], "America/Chicago")
+        self.assertEqual(saved["quiet_hours_enabled"], 1)
+        self.assertFalse(preferences["data"]["notification_preferences"]["in_app"]["trade_offer"])
+
     def test_api_token_post_handlers_keep_integrations_section_active(self):
         class FakeRequest:
             headers = {}

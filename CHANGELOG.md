@@ -8,6 +8,7 @@ The project uses semantic versioning while releases are published. During the al
 
 ### Added
 
+- Added password-confirmed Android Account Center APIs for profile, privacy, in-app notification, email delivery, digest, timezone, and quiet-hours preferences
 - Added typed Android app sessions with account-summary, active-device listing, current-session logout, and remote session-revocation API endpoints
 - Added rate-limited Android username/password sign-in with authenticator and recovery-code support, issuing revocable, expiring bearer sessions without requiring users to create API tokens manually
 - Published API major-version and capability metadata from the health endpoint so native clients can reject incompatible servers before saving credentials
@@ -21,6 +22,7 @@ The project uses semantic versioning while releases are published. During the al
 
 ### Security
 
+- Required the current account password for Android profile and notification-preference changes without storing it in the app session
 - Separated password-created Android sessions from manually created integration tokens and restricted account/session management to an internal account scope
 - Kept Android account passwords out of issued-session storage and returned authentication responses with `Cache-Control: no-store`
 - Ignored client-supplied forwarding headers unless trusted-proxy mode is explicitly enabled

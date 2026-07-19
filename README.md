@@ -12,6 +12,7 @@ License: **GNU AGPL-3.0**
 - TOTP two-factor authentication with one-time recovery codes
 - Android username/password sign-in that exchanges credentials for a revocable, expiring app session without storing the password on the device
 - Account-scoped Android session inventory, current-device logout, and remote device-session revocation without affecting manually created integration tokens
+- Android Account Center APIs for viewing and updating profile, privacy, and notification preferences with password confirmation
 - Passkey/WebAuthn login as an optional passwordless sign-in method
 - CSRF protection for authenticated browser form actions
 - SQLite-backed rate limiting for sign-in, registration, API auth/read/write actions, API health checks, Scryfall lookups, and integration management
@@ -224,6 +225,8 @@ Initial API endpoints:
 - `POST /api/v1/auth/login/2fa`
 - `POST /api/v1/auth/logout`
 - `GET /api/v1/account`
+- `PATCH /api/v1/account/profile`
+- `PATCH /api/v1/account/notifications`
 - `GET /api/v1/account/sessions`
 - `DELETE /api/v1/account/sessions/{id}`
 - `GET /api/v1/me`
