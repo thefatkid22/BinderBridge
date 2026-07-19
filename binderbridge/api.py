@@ -57,6 +57,8 @@ API_TOKEN_SCOPES = ("read", "write", "account")
 API_CREDENTIAL_KINDS = ("api_token", "android_session")
 API_MAJOR_VERSION = 1
 API_CAPABILITIES = (
+    "account.notifications",
+    "account.profile",
     "account.sessions",
     "account.summary",
     "auth.password",
@@ -1403,6 +1405,62 @@ def api_android_session_dict(token_row, current_token_id=0):
     }
 
 
+def api_account_notification_preferences(user):
+    return {
+        "in_app": {
+            "trade_offer": bool(row_value(user, "notify_trade_offer_enabled", 1)),
+            "trade_comment": bool(row_value(user, "notify_trade_comment_enabled", 1)),
+            "trade_counter": bool(row_value(user, "notify_trade_counter_enabled", 1)),
+            "trade_status": bool(row_value(user, "notify_trade_status_enabled", 1)),
+            "price_alerts": bool(row_value(user, "price_alerts_enabled", 1)),
+            "watchlist_alerts": bool(row_value(user, "watchlist_alerts_enabled", 1)),
+            "import_complete": bool(row_value(user, "notify_import_complete_enabled", 1)),
+            "admin_notice": bool(row_value(user, "notify_admin_notice_enabled", 1)),
+        },
+        "price_alert_threshold_percent": row_value(user, "price_alert_threshold_percent", "0") or "0",
+        "stale_trade_reminder_days": int(row_value(user, "stale_trade_reminder_days", 3) or 0),
+        "email": {
+            "available": bool(email_delivery_configured()),
+            "enabled": bool(row_value(user, "email_trade_notifications_enabled", 0)),
+            "categories": {
+                "trade_offer": bool(row_value(user, "email_trade_offer_enabled", 1)),
+                "trade_comment": bool(row_value(user, "email_trade_comment_enabled", 1)),
+                "trade_counter": bool(row_value(user, "email_trade_counter_enabled", 1)),
+                "trade_status": bool(row_value(user, "email_trade_status_enabled", 1)),
+                "price_alert": bool(row_value(user, "email_price_alert_enabled", 0)),
+                "import_complete": bool(row_value(user, "email_import_complete_enabled", 0)),
+                "admin_notice": bool(row_value(user, "email_admin_notice_enabled", 0)),
+            },
+            "digest_frequency": row_value(user, "email_digest_frequency", "immediate") or "immediate",
+            "digest_time": row_value(user, "email_digest_time", "09:00") or "09:00",
+            "digest_weekday": int(row_value(user, "email_digest_weekday", 0) or 0),
+            "timezone": row_value(user, "notification_timezone", "UTC") or "UTC",
+            "quiet_hours": {
+                "enabled": bool(row_value(user, "quiet_hours_enabled", 0)),
+                "start": row_value(user, "quiet_hours_start", "22:00") or "22:00",
+                "end": row_value(user, "quiet_hours_end", "07:00") or "07:00",
+            },
+        },
+    }
+
+
+def api_account_options():
+    return {
+        "collection_value_visibility": [
+            {"value": value, "label": label}
+            for value, label in VALUE_VISIBILITY_OPTIONS
+        ],
+        "email_digest_frequency": [
+            {"value": value, "label": label}
+            for value, label in EMAIL_DIGEST_FREQUENCY_LABELS.items()
+        ],
+        "email_digest_weekday": [
+            {"value": index, "label": label}
+            for index, label in enumerate(EMAIL_DIGEST_WEEKDAY_LABELS)
+        ],
+    }
+
+
 def api_account_summary(self, user, token_row):
     sessions = android_session_rows(user["id"])
     current_token_id = int(row_value(token_row, "id", 0) or 0)
@@ -1428,9 +1486,161 @@ def api_account_summary(self, user, token_row):
                 "passkey_count": passkey_credential_count(user["id"]),
                 "active_android_session_count": len(sessions),
             },
+            "notification_preferences": api_account_notification_preferences(user),
+            "options": api_account_options(),
             "current_session": current_session,
         }
     })
+
+
+def api_account_update_values(user):
+    return {
+        "username": row_value(user, "username", ""),
+        "display_name": row_value(user, "display_name", ""),
+        "email": row_value(user, "email", ""),
+        "bio": row_value(user, "bio", ""),
+        "public_email": bool(row_value(user, "public_email", 0)),
+        "preferred_price_source": row_value(user, "preferred_price_source", ""),
+        "price_alerts_enabled": bool(row_value(user, "price_alerts_enabled", 1)),
+        "price_alert_threshold_percent": row_value(user, "price_alert_threshold_percent", "0") or "0",
+        "watchlist_alerts_enabled": bool(row_value(user, "watchlist_alerts_enabled", 1)),
+        "email_trade_notifications_enabled": bool(row_value(user, "email_trade_notifications_enabled", 0)),
+        "email_trade_offer_enabled": bool(row_value(user, "email_trade_offer_enabled", 1)),
+        "email_trade_comment_enabled": bool(row_value(user, "email_trade_comment_enabled", 1)),
+        "email_trade_counter_enabled": bool(row_value(user, "email_trade_counter_enabled", 1)),
+        "email_trade_status_enabled": bool(row_value(user, "email_trade_status_enabled", 1)),
+        "notify_trade_offer_enabled": bool(row_value(user, "notify_trade_offer_enabled", 1)),
+        "notify_trade_comment_enabled": bool(row_value(user, "notify_trade_comment_enabled", 1)),
+        "notify_trade_counter_enabled": bool(row_value(user, "notify_trade_counter_enabled", 1)),
+        "notify_trade_status_enabled": bool(row_value(user, "notify_trade_status_enabled", 1)),
+        "notify_import_complete_enabled": bool(row_value(user, "notify_import_complete_enabled", 1)),
+        "notify_admin_notice_enabled": bool(row_value(user, "notify_admin_notice_enabled", 1)),
+        "email_price_alert_enabled": bool(row_value(user, "email_price_alert_enabled", 0)),
+        "email_import_complete_enabled": bool(row_value(user, "email_import_complete_enabled", 0)),
+        "email_admin_notice_enabled": bool(row_value(user, "email_admin_notice_enabled", 0)),
+        "email_digest_frequency": row_value(user, "email_digest_frequency", "immediate") or "immediate",
+        "email_digest_time": row_value(user, "email_digest_time", "09:00") or "09:00",
+        "email_digest_weekday": int(row_value(user, "email_digest_weekday", 0) or 0),
+        "notification_timezone": row_value(user, "notification_timezone", "UTC") or "UTC",
+        "quiet_hours_enabled": bool(row_value(user, "quiet_hours_enabled", 0)),
+        "quiet_hours_start": row_value(user, "quiet_hours_start", "22:00") or "22:00",
+        "quiet_hours_end": row_value(user, "quiet_hours_end", "07:00") or "07:00",
+        "stale_trade_reminder_days": int(row_value(user, "stale_trade_reminder_days", 3) or 0),
+        "collection_value_visibility": row_value(user, "collection_value_visibility", VISIBILITY_MEMBERS),
+    }
+
+
+def api_account_confirm_password(self, user, payload):
+    rate_key = f"{integration_request_ip(self)}:account-confirm:{user['id']}"
+    if not rate_limit_allowed("login", rate_key):
+        self.api_error("Too many password confirmation attempts. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
+        return False
+    current_password = payload.get("current_password", "")
+    if not isinstance(current_password, str):
+        current_password = ""
+    if not verify_password(current_password, user["password_hash"]):
+        self.api_error("Current password is incorrect.", HTTPStatus.UNAUTHORIZED)
+        return False
+    return True
+
+
+def api_account_profile_update(self, user, token_row):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
+    values = api_account_update_values(user)
+    values.update({
+        "username": payload.get("username", values["username"]),
+        "display_name": payload.get("display_name", values["display_name"]),
+        "email": payload.get("email", values["email"]),
+        "bio": payload.get("bio", values["bio"]),
+        "public_email": api_bool_value(payload.get("public_email"), values["public_email"]),
+        "collection_value_visibility": payload.get(
+            "collection_value_visibility",
+            values["collection_value_visibility"],
+        ),
+    })
+    try:
+        update_user_profile(user["id"], **values)
+    except ValueError as exc:
+        return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    log_integration_action(
+        self,
+        user["id"],
+        "android_account_profile_updated",
+        updated["display_name"],
+        "Updated account profile from the Android Account Center.",
+        "account",
+    )
+    return self.api_account_summary(updated, token_row)
+
+
+def api_account_notifications_update(self, user, token_row):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
+    values = api_account_update_values(user)
+    in_app = payload.get("in_app", {})
+    if not isinstance(in_app, dict):
+        in_app = {}
+    values.update({
+        "notify_trade_offer_enabled": api_bool_value(in_app.get("trade_offer"), values["notify_trade_offer_enabled"]),
+        "notify_trade_comment_enabled": api_bool_value(in_app.get("trade_comment"), values["notify_trade_comment_enabled"]),
+        "notify_trade_counter_enabled": api_bool_value(in_app.get("trade_counter"), values["notify_trade_counter_enabled"]),
+        "notify_trade_status_enabled": api_bool_value(in_app.get("trade_status"), values["notify_trade_status_enabled"]),
+        "price_alerts_enabled": api_bool_value(in_app.get("price_alerts"), values["price_alerts_enabled"]),
+        "watchlist_alerts_enabled": api_bool_value(in_app.get("watchlist_alerts"), values["watchlist_alerts_enabled"]),
+        "notify_import_complete_enabled": api_bool_value(in_app.get("import_complete"), values["notify_import_complete_enabled"]),
+        "notify_admin_notice_enabled": api_bool_value(in_app.get("admin_notice"), values["notify_admin_notice_enabled"]),
+        "price_alert_threshold_percent": payload.get(
+            "price_alert_threshold_percent",
+            values["price_alert_threshold_percent"],
+        ),
+        "stale_trade_reminder_days": payload.get(
+            "stale_trade_reminder_days",
+            values["stale_trade_reminder_days"],
+        ),
+    })
+    email = payload.get("email", {})
+    if email_delivery_configured() and isinstance(email, dict):
+        categories = email.get("categories", {})
+        quiet_hours = email.get("quiet_hours", {})
+        if not isinstance(categories, dict):
+            categories = {}
+        if not isinstance(quiet_hours, dict):
+            quiet_hours = {}
+        values.update({
+            "email_trade_notifications_enabled": api_bool_value(email.get("enabled"), values["email_trade_notifications_enabled"]),
+            "email_trade_offer_enabled": api_bool_value(categories.get("trade_offer"), values["email_trade_offer_enabled"]),
+            "email_trade_comment_enabled": api_bool_value(categories.get("trade_comment"), values["email_trade_comment_enabled"]),
+            "email_trade_counter_enabled": api_bool_value(categories.get("trade_counter"), values["email_trade_counter_enabled"]),
+            "email_trade_status_enabled": api_bool_value(categories.get("trade_status"), values["email_trade_status_enabled"]),
+            "email_price_alert_enabled": api_bool_value(categories.get("price_alert"), values["email_price_alert_enabled"]),
+            "email_import_complete_enabled": api_bool_value(categories.get("import_complete"), values["email_import_complete_enabled"]),
+            "email_admin_notice_enabled": api_bool_value(categories.get("admin_notice"), values["email_admin_notice_enabled"]),
+            "email_digest_frequency": email.get("digest_frequency", values["email_digest_frequency"]),
+            "email_digest_time": email.get("digest_time", values["email_digest_time"]),
+            "email_digest_weekday": email.get("digest_weekday", values["email_digest_weekday"]),
+            "notification_timezone": email.get("timezone", values["notification_timezone"]),
+            "quiet_hours_enabled": api_bool_value(quiet_hours.get("enabled"), values["quiet_hours_enabled"]),
+            "quiet_hours_start": quiet_hours.get("start", values["quiet_hours_start"]),
+            "quiet_hours_end": quiet_hours.get("end", values["quiet_hours_end"]),
+        })
+    try:
+        update_user_profile(user["id"], **values)
+    except ValueError as exc:
+        return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    log_integration_action(
+        self,
+        user["id"],
+        "android_notification_preferences_updated",
+        updated["display_name"],
+        "Updated notification preferences from the Android Account Center.",
+        "account",
+    )
+    return self.api_account_summary(updated, token_row)
 
 
 def api_android_sessions_list(self, user, token_row):
@@ -2476,6 +2686,14 @@ def api_dispatch(self, method, path, query):
             if method != "GET":
                 return self.api_error("Account summary is read-only.", HTTPStatus.METHOD_NOT_ALLOWED)
             return self.api_account_summary(user, token_row)
+        if path == "/api/v1/account/profile":
+            if method != "PATCH":
+                return self.api_error("Account profiles are updated with PATCH.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_account_profile_update(user, token_row)
+        if path == "/api/v1/account/notifications":
+            if method != "PATCH":
+                return self.api_error("Notification preferences are updated with PATCH.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_account_notifications_update(user, token_row)
         if path == "/api/v1/account/sessions":
             if method != "GET":
                 return self.api_error("Android sessions are listed with GET.", HTTPStatus.METHOD_NOT_ALLOWED)
@@ -2649,6 +2867,8 @@ API_ROUTE_METHODS = (
     "api_android_password_login",
     "api_android_two_factor_login",
     "api_account_summary",
+    "api_account_profile_update",
+    "api_account_notifications_update",
     "api_android_sessions_list",
     "api_android_session_revoke",
     "api_android_logout",
