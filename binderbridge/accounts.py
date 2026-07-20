@@ -150,7 +150,14 @@ def update_user_profile(
         raise ValueError("That username is already taken.") from exc
 
 
-def change_user_password(user_id, current_password, new_password, confirm_password, keep_session_token=None):
+def change_user_password(
+    user_id,
+    current_password,
+    new_password,
+    confirm_password,
+    keep_session_token=None,
+    keep_api_token_id=None,
+):
     found = row("SELECT * FROM users WHERE id = ?", (user_id,))
     if not found or not verify_password(current_password, found["password_hash"]):
         raise ValueError("Current password is incorrect.")
@@ -158,15 +165,50 @@ def change_user_password(user_id, current_password, new_password, confirm_passwo
         raise ValueError("New password must be at least 8 characters.")
     if new_password != confirm_password:
         raise ValueError("New password and confirmation do not match.")
+    if verify_password(new_password, found["password_hash"]):
+        raise ValueError("New password must be different from the current password.")
+    timestamp = now_iso()
     with db() as conn:
         conn.execute(
             "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (hash_password(new_password), now_iso(), user_id),
+            (hash_password(new_password), timestamp, user_id),
         )
         if keep_session_token:
-            conn.execute("DELETE FROM sessions WHERE user_id = ? AND token != ?", (user_id, keep_session_token))
+            browser_sessions = conn.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token != ?",
+                (user_id, keep_session_token),
+            ).rowcount
         else:
-            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            browser_sessions = conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,)).rowcount
+        if keep_api_token_id:
+            android_sessions = conn.execute(
+                """
+                UPDATE api_tokens
+                SET revoked_at = ?
+                WHERE user_id = ?
+                  AND credential_kind = 'android_session'
+                  AND revoked_at = ''
+                  AND id != ?
+                """,
+                (timestamp, user_id, keep_api_token_id),
+            ).rowcount
+        else:
+            android_sessions = conn.execute(
+                """
+                UPDATE api_tokens
+                SET revoked_at = ?
+                WHERE user_id = ?
+                  AND credential_kind = 'android_session'
+                  AND revoked_at = ''
+                """,
+                (timestamp, user_id),
+            ).rowcount
+        conn.execute("DELETE FROM two_factor_challenges WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM passkey_challenges WHERE user_id = ?", (user_id,))
+    return {
+        "browser_sessions_revoked": browser_sessions,
+        "android_sessions_revoked": android_sessions,
+    }
 
 
 def password_reset_token_hash(token):
@@ -419,6 +461,14 @@ def complete_password_reset(token, new_password, confirm_password):
             (timestamp, reset["user_id"]),
         )
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (reset["user_id"],))
+        conn.execute(
+            """
+            UPDATE api_tokens
+            SET revoked_at = ?
+            WHERE user_id = ? AND credential_kind = 'android_session' AND revoked_at = ''
+            """,
+            (timestamp, reset["user_id"]),
+        )
         conn.execute("DELETE FROM two_factor_challenges WHERE user_id = ?", (reset["user_id"],))
         conn.execute("DELETE FROM passkey_challenges WHERE user_id = ?", (reset["user_id"],))
         if reset["created_by_user_id"]:

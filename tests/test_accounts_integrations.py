@@ -125,6 +125,13 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         setup = app.start_user_totp_setup(user_id)
         app.enable_user_totp(user_id, app.totp_code(setup["secret"]))
         session_token, _ = app.create_session(user_id)
+        android_session = app.create_api_token(
+            user_id,
+            "BinderBridge Android - Reset phone",
+            ["read", "write"],
+            credential_kind="android_session",
+        )
+        manual_token = app.create_api_token(user_id, "Backup export", ["read"])
         sent = []
         original_configured = app.email_delivery_configured
         original_sender = app.send_email_message
@@ -149,6 +156,8 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertTrue(app.verify_password("newpassword123", updated["password_hash"]))
         self.assertTrue(app.two_factor_enabled(updated))
         self.assertIsNone(app.get_user_by_session(session_token))
+        self.assertIsNone(app.get_user_by_api_token(android_session["token"])[0])
+        self.assertIsNotNone(app.get_user_by_api_token(manual_token["token"])[0])
         self.assertIsNone(app.password_reset_from_token(raw_token))
         with self.assertRaisesRegex(ValueError, "invalid, expired, or already used"):
             app.complete_password_reset(raw_token, "anotherpassword", "anotherpassword")
@@ -557,6 +566,230 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(saved["notification_timezone"], "America/Chicago")
         self.assertEqual(saved["quiet_hours_enabled"], 1)
         self.assertFalse(preferences["data"]["notification_preferences"]["in_app"]["trade_offer"])
+
+    def test_android_account_center_changes_password_and_revokes_other_sessions(self):
+        user_id = app.create_user("account-security", "password123", "Account Security")
+
+        class DummyApiRequest:
+            def __init__(self, method, path, payload=None, token=""):
+                self.command = method
+                self._request_path = path
+                self.payload = payload or {}
+                self.headers = {"User-Agent": "BinderBridgeAndroid/security-test"}
+                if token:
+                    self.headers["Authorization"] = "Bearer " + token
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "198.51.100.31"
+
+        def dispatch(method, path, payload=None, token=""):
+            request = DummyApiRequest(method, path, payload, token)
+            app.api_dispatch(request, method, path, {})
+            return request.response
+
+        first_login, _ = dispatch("POST", "/api/v1/auth/login", {
+            "username": "account-security",
+            "password": "password123",
+            "device_name": "Current phone",
+        })
+        second_login, _ = dispatch("POST", "/api/v1/auth/login", {
+            "username": "account-security",
+            "password": "password123",
+            "device_name": "Old tablet",
+        })
+        current_token = first_login["data"]["access_token"]
+        other_token = second_login["data"]["access_token"]
+        manual_token = app.create_api_token(user_id, "Local export", ["read"])
+        app.create_session(user_id)
+        challenge_token, _ = app.create_two_factor_challenge(user_id)
+
+        rejected, rejected_status = dispatch("PATCH", "/api/v1/account/password", {
+            "current_password": "wrong-password",
+            "new_password": "newpassword123",
+            "confirm_password": "newpassword123",
+        }, current_token)
+        self.assertEqual(rejected_status, HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(rejected["error"], "Current password is incorrect.")
+
+        same, same_status = dispatch("PATCH", "/api/v1/account/password", {
+            "current_password": "password123",
+            "new_password": "password123",
+            "confirm_password": "password123",
+        }, current_token)
+        self.assertEqual(same_status, HTTPStatus.BAD_REQUEST)
+        self.assertIn("different", same["error"])
+
+        changed, changed_status = dispatch("PATCH", "/api/v1/account/password", {
+            "current_password": "password123",
+            "new_password": "newpassword123",
+            "confirm_password": "newpassword123",
+        }, current_token)
+        self.assertEqual(changed_status, HTTPStatus.OK)
+        self.assertEqual(changed["data"]["security"]["active_android_session_count"], 1)
+        self.assertIn("Other signed-in", changed["data"]["message"])
+        self.assertEqual(dispatch("GET", "/api/v1/account", token=current_token)[1], HTTPStatus.OK)
+        self.assertEqual(dispatch("GET", "/api/v1/me", token=other_token)[1], HTTPStatus.UNAUTHORIZED)
+        self.assertIsNotNone(app.get_user_by_api_token(manual_token["token"])[0])
+        self.assertEqual(app.row("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?", (user_id,))["count"], 0)
+        self.assertIsNone(app.row("SELECT * FROM two_factor_challenges WHERE token = ?", (challenge_token,)))
+
+        old_login = dispatch("POST", "/api/v1/auth/login", {
+            "username": "account-security",
+            "password": "password123",
+        })
+        new_login = dispatch("POST", "/api/v1/auth/login", {
+            "username": "account-security",
+            "password": "newpassword123",
+        })
+        self.assertEqual(old_login[1], HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(new_login[1], HTTPStatus.OK)
+        self.assertTrue(app.rows("SELECT * FROM admin_audit_log WHERE action = 'android_password_changed'"))
+
+    def test_android_account_center_manages_authenticator_and_recovery_codes(self):
+        user_id = app.create_user("android-security-2fa", "password123", "Android Security 2FA")
+
+        class DummyApiRequest:
+            def __init__(self, method, path, payload=None, token=""):
+                self.command = method
+                self._request_path = path
+                self.payload = payload or {}
+                self.headers = {"User-Agent": "BinderBridgeAndroid/security-test"}
+                if token:
+                    self.headers["Authorization"] = "Bearer " + token
+                self.response = None
+
+            def __getattr__(self, name):
+                if name.startswith("api_"):
+                    return lambda *args, **kwargs: getattr(app, name)(self, *args, **kwargs)
+                raise AttributeError(name)
+
+            def api_read_json(self):
+                return self.payload
+
+            def api_json(self, payload, status=HTTPStatus.OK):
+                self.response = (payload, status)
+
+            def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
+                self.response = ({"error": message}, status)
+
+            def client_ip(self):
+                return "198.51.100.32"
+
+        def dispatch(method, path, payload=None, token=""):
+            request = DummyApiRequest(method, path, payload, token)
+            app.api_dispatch(request, method, path, {})
+            return request.response
+
+        login, _ = dispatch("POST", "/api/v1/auth/login", {
+            "username": "android-security-2fa",
+            "password": "password123",
+            "device_name": "Security phone",
+        })
+        token = login["data"]["access_token"]
+
+        summary, _ = dispatch("GET", "/api/v1/account", token=token)
+        initial = summary["data"]["security"]["two_factor"]
+        self.assertFalse(initial["enabled"])
+        self.assertFalse(initial["setup_pending"])
+        self.assertEqual(initial["recovery_code_count"], 0)
+
+        rejected, rejected_status = dispatch("POST", "/api/v1/account/2fa/setup", {
+            "current_password": "wrong-password",
+        }, token)
+        self.assertEqual(rejected_status, HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(rejected["error"], "Current password is incorrect.")
+
+        started, started_status = dispatch("POST", "/api/v1/account/2fa/setup", {
+            "current_password": "password123",
+        }, token)
+        self.assertEqual(started_status, HTTPStatus.OK)
+        pending = started["data"]["security"]["two_factor"]
+        self.assertTrue(pending["setup_pending"])
+        self.assertTrue(pending["setup"]["formatted_secret"])
+        self.assertTrue(pending["setup"]["otpauth_uri"].startswith("otpauth://totp/"))
+        self.assertNotIn("qr_svg", pending["setup"])
+        secret = pending["setup"]["formatted_secret"].replace(" ", "")
+
+        invalid_code, invalid_status = dispatch("POST", "/api/v1/account/2fa/enable", {
+            "current_password": "password123",
+            "two_factor_code": "000000",
+        }, token)
+        self.assertEqual(invalid_status, HTTPStatus.BAD_REQUEST)
+        self.assertIn("did not match", invalid_code["error"])
+
+        enabled, enabled_status = dispatch("POST", "/api/v1/account/2fa/enable", {
+            "current_password": "password123",
+            "two_factor_code": app.totp_code(secret),
+        }, token)
+        self.assertEqual(enabled_status, HTTPStatus.OK)
+        recovery_codes = enabled["data"]["recovery_codes"]
+        self.assertEqual(len(recovery_codes), 10)
+        enabled_state = enabled["data"]["security"]["two_factor"]
+        self.assertTrue(enabled_state["enabled"])
+        self.assertFalse(enabled_state["setup_pending"])
+        self.assertEqual(enabled_state["recovery_code_count"], 10)
+        self.assertNotIn("setup", enabled_state)
+        stored_user = app.row("SELECT * FROM users WHERE id = ?", (user_id,))
+        self.assertNotIn(recovery_codes[0], stored_user["totp_recovery_codes"])
+
+        regenerated, regenerated_status = dispatch("POST", "/api/v1/account/2fa/recovery-codes", {
+            "current_password": "password123",
+        }, token)
+        self.assertEqual(regenerated_status, HTTPStatus.OK)
+        new_codes = regenerated["data"]["recovery_codes"]
+        self.assertEqual(len(new_codes), 10)
+        self.assertNotEqual(set(recovery_codes), set(new_codes))
+        self.assertEqual(app.verify_user_two_factor(user_id, new_codes[0]), (True, "recovery"))
+        after_recovery, _ = dispatch("GET", "/api/v1/account", token=token)
+        self.assertEqual(after_recovery["data"]["security"]["two_factor"]["recovery_code_count"], 9)
+        self.assertEqual(app.verify_user_two_factor(user_id, new_codes[0]), (False, ""))
+
+        wrong_disable, wrong_disable_status = dispatch("POST", "/api/v1/account/2fa/disable", {
+            "current_password": "wrong-password",
+        }, token)
+        self.assertEqual(wrong_disable_status, HTTPStatus.UNAUTHORIZED)
+        self.assertTrue(app.two_factor_enabled(app.row("SELECT * FROM users WHERE id = ?", (user_id,))))
+
+        disabled, disabled_status = dispatch("POST", "/api/v1/account/2fa/disable", {
+            "current_password": "password123",
+        }, token)
+        self.assertEqual(disabled_status, HTTPStatus.OK)
+        self.assertFalse(disabled["data"]["security"]["two_factor"]["enabled"])
+        self.assertFalse(app.two_factor_enabled(app.row("SELECT * FROM users WHERE id = ?", (user_id,))))
+
+        restarted, restarted_status = dispatch("POST", "/api/v1/account/2fa/setup", {
+            "current_password": "password123",
+        }, token)
+        self.assertEqual(restarted_status, HTTPStatus.OK)
+        self.assertTrue(restarted["data"]["security"]["two_factor"]["setup_pending"])
+        cancelled, cancelled_status = dispatch("POST", "/api/v1/account/2fa/disable", {
+            "current_password": "password123",
+        }, token)
+        self.assertEqual(cancelled_status, HTTPStatus.OK)
+        self.assertFalse(cancelled["data"]["security"]["two_factor"]["setup_pending"])
+        actions = {item["action"] for item in app.rows("SELECT * FROM admin_audit_log WHERE target_user_id = ?", (user_id,))}
+        self.assertTrue({
+            "android_two_factor_setup_started",
+            "android_two_factor_enabled",
+            "android_recovery_codes_regenerated",
+            "android_two_factor_disabled",
+            "android_two_factor_setup_cancelled",
+        }.issubset(actions))
 
     def test_api_token_post_handlers_keep_integrations_section_active(self):
         class FakeRequest:

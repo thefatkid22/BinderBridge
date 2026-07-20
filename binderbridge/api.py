@@ -58,9 +58,11 @@ API_CREDENTIAL_KINDS = ("api_token", "android_session")
 API_MAJOR_VERSION = 1
 API_CAPABILITIES = (
     "account.notifications",
+    "account.password",
     "account.profile",
     "account.sessions",
     "account.summary",
+    "account.two_factor",
     "auth.password",
     "collection",
     "collection.import",
@@ -1461,36 +1463,62 @@ def api_account_options():
     }
 
 
-def api_account_summary(self, user, token_row):
+def api_account_summary_data(user, token_row):
     sessions = android_session_rows(user["id"])
     current_token_id = int(row_value(token_row, "id", 0) or 0)
     current_session = next(
         (api_android_session_dict(session, current_token_id) for session in sessions if int(session["id"]) == current_token_id),
         None,
     )
-    return self.api_json({
-        "data": {
-            "profile": {
-                "id": int(user["id"]),
-                "username": user["username"],
-                "display_name": user["display_name"],
-                "email": row_value(user, "email", ""),
-                "bio": row_value(user, "bio", ""),
-                "public_email": bool(row_value(user, "public_email", 0)),
-                "collection_value_visibility": row_value(user, "collection_value_visibility", "members"),
-                "role": user_role(user),
-                "is_admin": bool(row_value(user, "is_admin", 0)),
-            },
-            "security": {
-                "two_factor_enabled": two_factor_enabled(user),
-                "passkey_count": passkey_credential_count(user["id"]),
-                "active_android_session_count": len(sessions),
-            },
-            "notification_preferences": api_account_notification_preferences(user),
-            "options": api_account_options(),
-            "current_session": current_session,
+    enabled = two_factor_enabled(user)
+    setup_pending = bool(row_value(user, "totp_secret", "")) and not enabled
+    two_factor = {
+        "enabled": enabled,
+        "setup_pending": setup_pending,
+        "enabled_at": row_value(user, "totp_enabled_at", "") if enabled else "",
+        "recovery_code_count": len(load_recovery_code_hashes(user)) if enabled else 0,
+    }
+    if setup_pending:
+        setup = user_totp_setup_details(user) or {}
+        two_factor["setup"] = {
+            "formatted_secret": setup.get("formatted_secret", ""),
+            "otpauth_uri": setup.get("otpauth_uri", ""),
         }
-    })
+    return {
+        "profile": {
+            "id": int(user["id"]),
+            "username": user["username"],
+            "display_name": user["display_name"],
+            "email": row_value(user, "email", ""),
+            "bio": row_value(user, "bio", ""),
+            "public_email": bool(row_value(user, "public_email", 0)),
+            "collection_value_visibility": row_value(user, "collection_value_visibility", "members"),
+            "role": user_role(user),
+            "is_admin": bool(row_value(user, "is_admin", 0)),
+        },
+        "security": {
+            "two_factor_enabled": enabled,
+            "two_factor": two_factor,
+            "passkey_count": passkey_credential_count(user["id"]),
+            "active_android_session_count": len(sessions),
+        },
+        "notification_preferences": api_account_notification_preferences(user),
+        "options": api_account_options(),
+        "current_session": current_session,
+    }
+
+
+def api_account_summary(self, user, token_row):
+    return self.api_json({"data": api_account_summary_data(user, token_row)})
+
+
+def api_account_security_response(self, user, token_row, message="", recovery_codes=None):
+    data = api_account_summary_data(user, token_row)
+    if message:
+        data["message"] = message
+    if recovery_codes is not None:
+        data["recovery_codes"] = recovery_codes
+    return self.api_json({"data": data})
 
 
 def api_account_update_values(user):
@@ -1542,6 +1570,145 @@ def api_account_confirm_password(self, user, payload):
         self.api_error("Current password is incorrect.", HTTPStatus.UNAUTHORIZED)
         return False
     return True
+
+
+def api_account_password_update(self, user, token_row):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
+    new_password = payload.get("new_password", "")
+    confirm_password = payload.get("confirm_password", "")
+    if not isinstance(new_password, str) or not isinstance(confirm_password, str):
+        return self.api_error("New password and confirmation must be text.", HTTPStatus.BAD_REQUEST)
+    current_token_id = None
+    if normalize_api_credential_kind(row_value(token_row, "credential_kind", "api_token")) == "android_session":
+        current_token_id = int(row_value(token_row, "id", 0) or 0) or None
+    try:
+        revoked = change_user_password(
+            user["id"],
+            payload.get("current_password", ""),
+            new_password,
+            confirm_password,
+            keep_api_token_id=current_token_id,
+        )
+    except ValueError as exc:
+        return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    log_integration_action(
+        self,
+        user["id"],
+        "android_password_changed",
+        updated["display_name"],
+        (
+            "Changed the account password from Android; "
+            f"revoked {revoked['browser_sessions_revoked']} browser sessions and "
+            f"{revoked['android_sessions_revoked']} other Android sessions."
+        ),
+        "account",
+    )
+    return self.api_account_security_response(
+        updated,
+        token_row,
+        "Password changed. Other signed-in app and browser sessions were revoked.",
+    )
+
+
+def api_account_two_factor_setup(self, user, token_row):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
+    if two_factor_enabled(user):
+        return self.api_error("Disable two-factor authentication before starting a new setup.", HTTPStatus.CONFLICT)
+    start_user_totp_setup(user["id"])
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    log_integration_action(
+        self,
+        user["id"],
+        "android_two_factor_setup_started",
+        updated["display_name"],
+        "Started authenticator setup from the Android Account Center.",
+        "account",
+    )
+    return self.api_account_security_response(
+        updated,
+        token_row,
+        "Authenticator setup started. Add the setup key, then verify a code.",
+    )
+
+
+def api_account_two_factor_enable(self, user, token_row):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
+    if two_factor_enabled(user):
+        return self.api_error("Two-factor authentication is already enabled.", HTTPStatus.CONFLICT)
+    try:
+        recovery_codes = enable_user_totp(user["id"], payload.get("two_factor_code", ""))
+    except ValueError as exc:
+        return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    log_integration_action(
+        self,
+        user["id"],
+        "android_two_factor_enabled",
+        updated["display_name"],
+        "Enabled authenticator two-factor authentication from Android.",
+        "account",
+    )
+    return self.api_account_security_response(
+        updated,
+        token_row,
+        "Two-factor authentication enabled. Save these recovery codes now.",
+        recovery_codes,
+    )
+
+
+def api_account_two_factor_disable(self, user, token_row):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
+    was_enabled = two_factor_enabled(user)
+    setup_pending = bool(row_value(user, "totp_secret", "")) and not was_enabled
+    if not was_enabled and not setup_pending:
+        return self.api_error("Two-factor authentication is not configured.", HTTPStatus.CONFLICT)
+    disable_user_totp(user["id"])
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    action = "android_two_factor_disabled" if was_enabled else "android_two_factor_setup_cancelled"
+    message = "Two-factor authentication disabled." if was_enabled else "Authenticator setup cancelled."
+    log_integration_action(
+        self,
+        user["id"],
+        action,
+        updated["display_name"],
+        message + " Changed from the Android Account Center.",
+        "account",
+    )
+    return self.api_account_security_response(updated, token_row, message)
+
+
+def api_account_two_factor_recovery_codes(self, user, token_row):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
+    try:
+        recovery_codes = regenerate_user_totp_recovery_codes(user["id"])
+    except ValueError as exc:
+        return self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],))
+    log_integration_action(
+        self,
+        user["id"],
+        "android_recovery_codes_regenerated",
+        updated["display_name"],
+        "Regenerated two-factor recovery codes from the Android Account Center.",
+        "account",
+    )
+    return self.api_account_security_response(
+        updated,
+        token_row,
+        "New recovery codes generated. Save them now; the previous codes no longer work.",
+        recovery_codes,
+    )
 
 
 def api_account_profile_update(self, user, token_row):
@@ -2694,6 +2861,26 @@ def api_dispatch(self, method, path, query):
             if method != "PATCH":
                 return self.api_error("Notification preferences are updated with PATCH.", HTTPStatus.METHOD_NOT_ALLOWED)
             return self.api_account_notifications_update(user, token_row)
+        if path == "/api/v1/account/password":
+            if method != "PATCH":
+                return self.api_error("Passwords are changed with PATCH.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_account_password_update(user, token_row)
+        if path == "/api/v1/account/2fa/setup":
+            if method != "POST":
+                return self.api_error("Authenticator setup is started with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_account_two_factor_setup(user, token_row)
+        if path == "/api/v1/account/2fa/enable":
+            if method != "POST":
+                return self.api_error("Two-factor authentication is enabled with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_account_two_factor_enable(user, token_row)
+        if path == "/api/v1/account/2fa/disable":
+            if method != "POST":
+                return self.api_error("Two-factor authentication is disabled with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_account_two_factor_disable(user, token_row)
+        if path == "/api/v1/account/2fa/recovery-codes":
+            if method != "POST":
+                return self.api_error("Recovery codes are regenerated with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_account_two_factor_recovery_codes(user, token_row)
         if path == "/api/v1/account/sessions":
             if method != "GET":
                 return self.api_error("Android sessions are listed with GET.", HTTPStatus.METHOD_NOT_ALLOWED)
@@ -2867,8 +3054,14 @@ API_ROUTE_METHODS = (
     "api_android_password_login",
     "api_android_two_factor_login",
     "api_account_summary",
+    "api_account_security_response",
     "api_account_profile_update",
     "api_account_notifications_update",
+    "api_account_password_update",
+    "api_account_two_factor_setup",
+    "api_account_two_factor_enable",
+    "api_account_two_factor_disable",
+    "api_account_two_factor_recovery_codes",
     "api_android_sessions_list",
     "api_android_session_revoke",
     "api_android_logout",
