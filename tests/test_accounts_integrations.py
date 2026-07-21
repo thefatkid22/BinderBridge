@@ -376,10 +376,17 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
             "password": "password123",
             "device_name": "Tablet",
         })
+        third_login, third_status = dispatch("POST", "/api/v1/auth/login", {
+            "username": "session-user",
+            "password": "password123",
+            "device_name": "Spare phone",
+        })
         self.assertEqual(first_status, HTTPStatus.OK)
         self.assertEqual(second_status, HTTPStatus.OK)
+        self.assertEqual(third_status, HTTPStatus.OK)
         first_token = first_login["data"]["access_token"]
         second_token = second_login["data"]["access_token"]
+        third_token = third_login["data"]["access_token"]
         manual = app.create_api_token(user_id, "Collection export", ["read"])
 
         summary, summary_status = dispatch("GET", "/api/v1/account", token=first_token)
@@ -387,26 +394,62 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertEqual(summary["data"]["profile"]["username"], "session-user")
         self.assertFalse(summary["data"]["security"]["two_factor_enabled"])
         self.assertEqual(summary["data"]["security"]["passkey_count"], 0)
-        self.assertEqual(summary["data"]["security"]["active_android_session_count"], 2)
+        self.assertEqual(summary["data"]["security"]["active_android_session_count"], 3)
         self.assertTrue(summary["data"]["current_session"]["current"])
         self.assertEqual(summary["data"]["current_session"]["device_name"], "First phone")
 
         sessions, sessions_status = dispatch("GET", "/api/v1/account/sessions", token=first_token)
         self.assertEqual(sessions_status, HTTPStatus.OK)
-        self.assertEqual(sessions["total"], 2)
-        self.assertEqual({item["device_name"] for item in sessions["data"]}, {"First phone", "Tablet"})
+        self.assertEqual(sessions["total"], 3)
+        self.assertEqual(
+            {item["device_name"] for item in sessions["data"]},
+            {"First phone", "Tablet", "Spare phone"},
+        )
         self.assertEqual(sum(1 for item in sessions["data"] if item["current"]), 1)
         second_session_id = next(item["id"] for item in sessions["data"] if item["device_name"] == "Tablet")
+
+        rejected_revoke, rejected_revoke_status = dispatch(
+            "DELETE",
+            f"/api/v1/account/sessions/{second_session_id}",
+            {"current_password": "wrong-password"},
+            token=first_token,
+        )
+        self.assertEqual(rejected_revoke_status, HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(rejected_revoke["error"], "Current password is incorrect.")
+        self.assertEqual(dispatch("GET", "/api/v1/me", token=second_token)[1], HTTPStatus.OK)
 
         revoked, revoked_status = dispatch(
             "DELETE",
             f"/api/v1/account/sessions/{second_session_id}",
+            {"current_password": "password123"},
             token=first_token,
         )
         self.assertEqual(revoked_status, HTTPStatus.OK)
         self.assertTrue(revoked["data"]["revoked"])
         rejected = dispatch("GET", "/api/v1/me", token=second_token)
         self.assertEqual(rejected[1], HTTPStatus.UNAUTHORIZED)
+
+        rejected_bulk, rejected_bulk_status = dispatch(
+            "POST",
+            "/api/v1/account/sessions/revoke-others",
+            {"current_password": "wrong-password"},
+            first_token,
+        )
+        self.assertEqual(rejected_bulk_status, HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(dispatch("GET", "/api/v1/me", token=third_token)[1], HTTPStatus.OK)
+
+        bulk, bulk_status = dispatch(
+            "POST",
+            "/api/v1/account/sessions/revoke-others",
+            {"current_password": "password123"},
+            first_token,
+        )
+        self.assertEqual(bulk_status, HTTPStatus.OK)
+        self.assertEqual(bulk["revoked_count"], 1)
+        self.assertEqual(bulk["total"], 1)
+        self.assertTrue(bulk["data"][0]["current"])
+        self.assertEqual(dispatch("GET", "/api/v1/me", token=third_token)[1], HTTPStatus.UNAUTHORIZED)
+        self.assertEqual(dispatch("GET", "/api/v1/me", token=first_token)[1], HTTPStatus.OK)
 
         manual_summary = dispatch("GET", "/api/v1/account", token=manual["token"])
         self.assertEqual(manual_summary[1], HTTPStatus.FORBIDDEN)
@@ -415,6 +458,9 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
         self.assertFalse(manual_logout["data"]["revoked"])
         self.assertEqual(manual_logout["data"]["credential_kind"], "api_token")
         self.assertIsNotNone(app.get_user_by_api_token(manual["token"])[0])
+        actions = {item["action"] for item in app.rows("SELECT * FROM admin_audit_log WHERE target_user_id = ?", (user_id,))}
+        self.assertIn("android_session_revoked", actions)
+        self.assertIn("android_other_sessions_revoked", actions)
 
         logout, logout_status = dispatch("POST", "/api/v1/auth/logout", token=first_token)
         self.assertEqual(logout_status, HTTPStatus.OK)

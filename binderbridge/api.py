@@ -61,6 +61,7 @@ API_CAPABILITIES = (
     "account.password",
     "account.profile",
     "account.sessions",
+    "account.sessions.manage",
     "account.summary",
     "account.two_factor",
     "auth.password",
@@ -1820,6 +1821,9 @@ def api_android_sessions_list(self, user, token_row):
 
 
 def api_android_session_revoke(self, user, token_row, session_id):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
     session = row(
         """
         SELECT * FROM api_tokens
@@ -1839,6 +1843,41 @@ def api_android_session_revoke(self, user, token_row, session_id):
         "api_token",
     )
     return self.api_json({"data": {"id": int(session_id), "revoked": True, "current": is_current}})
+
+
+def api_android_sessions_revoke_others(self, user, token_row):
+    payload = self.api_read_json()
+    if not api_account_confirm_password(self, user, payload):
+        return None
+    current_token_id = int(row_value(token_row, "id", 0) or 0)
+    timestamp = now_iso()
+    with db() as conn:
+        revoked_count = conn.execute(
+            """
+            UPDATE api_tokens
+            SET revoked_at = ?
+            WHERE user_id = ?
+              AND credential_kind = 'android_session'
+              AND revoked_at = ''
+              AND id != ?
+              AND (expires_at = '' OR expires_at > ?)
+            """,
+            (timestamp, user["id"], current_token_id, timestamp),
+        ).rowcount
+    log_integration_action(
+        self,
+        user["id"],
+        "android_other_sessions_revoked",
+        user["display_name"],
+        f"Revoked {revoked_count} other Android app session(s) from account session management.",
+        "api_token",
+    )
+    sessions = android_session_rows(user["id"])
+    return self.api_json({
+        "data": [api_android_session_dict(session, current_token_id) for session in sessions],
+        "total": len(sessions),
+        "revoked_count": revoked_count,
+    })
 
 
 def api_android_logout(self, user, token_row):
@@ -2885,6 +2924,10 @@ def api_dispatch(self, method, path, query):
             if method != "GET":
                 return self.api_error("Android sessions are listed with GET.", HTTPStatus.METHOD_NOT_ALLOWED)
             return self.api_android_sessions_list(user, token_row)
+        if path == "/api/v1/account/sessions/revoke-others":
+            if method != "POST":
+                return self.api_error("Other Android sessions are revoked with POST.", HTTPStatus.METHOD_NOT_ALLOWED)
+            return self.api_android_sessions_revoke_others(user, token_row)
         if path.startswith("/api/v1/account/sessions/"):
             if method != "DELETE":
                 return self.api_error("Android sessions are revoked with DELETE.", HTTPStatus.METHOD_NOT_ALLOWED)
@@ -3064,6 +3107,7 @@ API_ROUTE_METHODS = (
     "api_account_two_factor_recovery_codes",
     "api_android_sessions_list",
     "api_android_session_revoke",
+    "api_android_sessions_revoke_others",
     "api_android_logout",
     "api_collection_list",
     "api_collection_create",
