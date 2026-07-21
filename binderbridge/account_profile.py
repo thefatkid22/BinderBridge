@@ -157,9 +157,10 @@ def change_user_password(
             (hash_password(new_password), timestamp, user_id),
         )
         if keep_session_token:
+            keep_session_hash = session_token_hash(keep_session_token)
             browser_sessions = conn.execute(
-                "DELETE FROM sessions WHERE user_id = ? AND token != ?",
-                (user_id, keep_session_token),
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                (user_id, keep_session_hash),
             ).rowcount
         else:
             browser_sessions = conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,)).rowcount

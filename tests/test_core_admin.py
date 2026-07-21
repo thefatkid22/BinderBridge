@@ -242,8 +242,144 @@ class CoreAdminTests(BinderBridgeTestCase):
         token, _ = app.create_session(user_id)
 
         found = app.get_user_by_session(token)
+        session_columns = {item["name"] for item in app.rows("PRAGMA table_info(sessions)")}
+        stored = app.row("SELECT token_hash FROM sessions WHERE user_id = ?", (user_id,))
 
         self.assertEqual(found["username"], "jace")
+        self.assertIn("token_hash", session_columns)
+        self.assertNotIn("token", session_columns)
+        self.assertEqual(stored["token_hash"], app.session_token_hash(token))
+        self.assertNotEqual(stored["token_hash"], token)
+
+    def test_browser_session_migration_hashes_tokens_without_signing_users_out(self):
+        user_id = factory.create_user("legacy-session", display_name="Legacy Session")
+        legacy_token = "legacy-browser-session-token"
+        with app.db() as conn:
+            conn.execute("DROP TABLE sessions")
+            conn.executescript(
+                """
+                CREATE TABLE sessions (
+                    token TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    expires_at INTEGER NOT NULL,
+                    flash_notice TEXT NOT NULL DEFAULT '',
+                    flash_status TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions
+                    (token, user_id, expires_at, flash_notice, flash_status, created_at)
+                VALUES (?, ?, ?, 'Migration preserved this notice.', 'success', ?)
+                """,
+                (legacy_token, user_id, int(time.time()) + 3600, app.now_iso()),
+            )
+            app.set_db_schema_version(conn, 14)
+
+        app.init_db()
+
+        session_columns = {item["name"] for item in app.rows("PRAGMA table_info(sessions)")}
+        stored = app.row("SELECT * FROM sessions WHERE user_id = ?", (user_id,))
+        found = app.get_user_by_session(legacy_token)
+        notice, status = app.consume_session_flash(legacy_token)
+
+        self.assertEqual(app.get_setting(app.SCHEMA_VERSION_KEY), str(app.CURRENT_SCHEMA_VERSION))
+        self.assertIn("token_hash", session_columns)
+        self.assertNotIn("token", session_columns)
+        self.assertEqual(stored["token_hash"], app.session_token_hash(legacy_token))
+        self.assertNotEqual(stored["token_hash"], legacy_token)
+        self.assertEqual(found["username"], "legacy-session")
+        self.assertEqual((notice, status), ("Migration preserved this notice.", "success"))
+
+    def test_session_cookie_policy_supports_local_http_and_hardens_https(self):
+        class DummyRequest:
+            def __init__(self, base_url):
+                self.base_url = base_url
+
+            def public_base_url(self):
+                return self.base_url
+
+        original = app.SESSION_COOKIE_SECURE
+        try:
+            app.SESSION_COOKIE_SECURE = False
+            local_cookie = app.App.session_cookie_header(
+                DummyRequest("http://192.168.1.50:8000"), "local-token"
+            )
+            https_cookie = app.App.session_cookie_header(
+                DummyRequest("https://cards.example.com"), "https-token"
+            )
+            expired_cookie = app.App.session_cookie_header(
+                DummyRequest("https://cards.example.com"), max_age=0
+            )
+            app.SESSION_COOKIE_SECURE = True
+            forced_cookie = app.App.session_cookie_header(
+                DummyRequest("http://localhost:8000"), "forced-token"
+            )
+        finally:
+            app.SESSION_COOKIE_SECURE = original
+
+        for cookie in (local_cookie, https_cookie, expired_cookie, forced_cookie):
+            self.assertIn("HttpOnly", cookie)
+            self.assertIn("Path=/", cookie)
+            self.assertIn("SameSite=Lax", cookie)
+        self.assertNotIn("Secure", local_cookie)
+        self.assertIn("Secure", https_cookie)
+        self.assertIn("Secure", forced_cookie)
+        self.assertIn("Max-Age=0", expired_cookie)
+        self.assertIn("expires=Thu, 01 Jan 1970 00:00:00 GMT", expired_cookie)
+
+    def test_forwarded_protocol_requires_proxy_trust(self):
+        class DummyRequest:
+            headers = {
+                "Host": "cards.internal:8000",
+                "X-Forwarded-Proto": "https",
+            }
+
+        original = app.TRUST_PROXY_HEADERS
+        try:
+            app.TRUST_PROXY_HEADERS = False
+            untrusted_url = app.App.public_base_url(DummyRequest())
+            app.TRUST_PROXY_HEADERS = True
+            trusted_url = app.App.public_base_url(DummyRequest())
+        finally:
+            app.TRUST_PROXY_HEADERS = original
+
+        self.assertEqual(untrusted_url, "http://cards.internal:8000")
+        self.assertEqual(trusted_url, "https://cards.internal:8000")
+
+    def test_sensitive_browser_responses_disable_caching(self):
+        class DummyRequest:
+            headers = {}
+
+            def __init__(self, path, token=""):
+                self._request_path = path
+                self.token = token
+                self.response_headers = []
+
+            def current_session_token(self):
+                return self.token
+
+            browser_response_requires_no_store = app.App.browser_response_requires_no_store
+
+            def send_header(self, name, value):
+                self.response_headers.append((name, value))
+
+        account = DummyRequest("/account")
+        authenticated = DummyRequest("/collection", "session-token")
+        public_share = DummyRequest("/share/collection/example")
+        static = DummyRequest("/static/app.css", "session-token")
+
+        app.App.send_security_headers(account)
+        app.App.send_security_headers(authenticated)
+        app.App.send_security_headers(public_share)
+        app.App.send_security_headers(static)
+
+        self.assertIn(("Cache-Control", "no-store"), account.response_headers)
+        self.assertIn(("Cache-Control", "no-store"), authenticated.response_headers)
+        self.assertNotIn(("Cache-Control", "no-store"), public_share.response_headers)
+        self.assertNotIn(("Cache-Control", "no-store"), static.response_headers)
 
     def test_csrf_tokens_are_injected_and_validated_for_session_forms(self):
         _, token, _ = factory.create_session_user("csrfuser", display_name="CSRF User")

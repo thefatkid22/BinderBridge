@@ -28,6 +28,7 @@ from binderbridge.migrations import (
     db_schema_version,
     migrate_hot_path_indexes,
     migrate_api_session_credentials,
+    migrate_browser_session_storage,
     run_schema_migrations,
     set_db_schema_version,
 )
@@ -129,7 +130,7 @@ def init_db():
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
-                token TEXT PRIMARY KEY,
+                token_hash TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 expires_at INTEGER NOT NULL,
                 flash_notice TEXT NOT NULL DEFAULT '',
@@ -1395,6 +1396,7 @@ def migrate_db(conn):
     )
     conn.execute("DELETE FROM card_price_sources WHERE provider != 'scryfall'")
     migrate_api_session_credentials(conn)
+    migrate_browser_session_storage(conn)
     run_schema_migrations(conn)
     conn.execute("PRAGMA optimize")
 
