@@ -4,9 +4,30 @@ import json
 from http import HTTPStatus
 
 from tests.base import *  # noqa: F401,F403
+from binderbridge import account_auth_routes
+from binderbridge import account_profile as account_profile_services
+from binderbridge import account_routes
+from binderbridge import account_settings_routes
+from binderbridge import accounts as account_services
+from binderbridge import password_recovery as password_recovery_services
+from binderbridge import registration_invites
+from binderbridge import trade_validation
 
 
 class AccountsIntegrationsTests(BinderBridgeTestCase):
+    def test_split_account_facades_preserve_public_contracts(self):
+        self.assertIs(account_services.update_user_profile, account_profile_services.update_user_profile)
+        self.assertIs(account_services.request_password_recovery, password_recovery_services.request_password_recovery)
+        self.assertIs(account_services.registration_invite_rows, registration_invites.registration_invite_rows)
+        self.assertIs(account_services.validate_trade_sides, trade_validation.validate_trade_sides)
+        self.assertEqual(
+            account_routes.ACCOUNT_ROUTE_METHODS,
+            account_auth_routes.ACCOUNT_AUTH_ROUTE_METHODS
+            + account_settings_routes.ACCOUNT_SETTINGS_ROUTE_METHODS,
+        )
+        self.assertIs(app.account_profile, account_settings_routes.account_profile)
+        self.assertIs(app.login, account_auth_routes.login)
+
     def test_update_user_profile_changes_account_fields(self):
         user_id = app.create_user("chandra", "password123", "Chandra")
 

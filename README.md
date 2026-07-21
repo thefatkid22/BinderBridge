@@ -311,7 +311,10 @@ generated visual smoke screenshots outside the temporary run directory.
 
 `app.py` remains the public entrypoint and HTTP router so existing scripts can still run `python app.py` or `import app`. Feature code is split into focused modules under `binderbridge/`:
 
-- `accounts.py`: account profile, password, admin, invites, registration mode, and trusted-user controls
+- `accounts.py`: compatibility facade for focused account-domain services
+- `account_profile.py`, `password_recovery.py`: profile/password changes and password-recovery workflows
+- `account_admin.py`, `registration_invites.py`: administrative account controls and registration-invite lifecycle
+- `trade_validation.py`: trade-side policy validation formerly mixed into the account service
 - `registration_moderation.py`: pending account review, approval settings, and privacy-safe registration risk signals
 - `groups.py`: deck, binder, and wishlist group management
 - `collection_service.py`: collection CRUD, bulk updates, and watchlist alerts
@@ -334,7 +337,8 @@ generated visual smoke screenshots outside the temporary run directory.
 - `collection_health.py`: site-wide collection quality, price freshness, Scryfall coverage, and privacy coverage metrics
 - `import_profiles.py`: built-in collection/deck CSV source profiles, mappings, and header-based auto detection
 - `api.py`: API tokens, JSON API endpoints, webhooks, and webhook delivery helpers
-- `account_routes.py`, `collection_routes.py`, `group_routes.py`, `trade_routes.py`, `admin_routes.py`: feature-specific HTTP route handlers
+- `account_routes.py`: compatibility facade for `account_auth_routes.py` and `account_settings_routes.py`
+- `collection_routes.py`, `group_routes.py`, `trade_routes.py`, `admin_routes.py`: feature-specific HTTP route handlers
 - `db.py`: SQLite connection helpers, schema bootstrapping, migrations, and settings
 - `security.py`: password hashing, sessions, TOTP two-factor, and passkey/WebAuthn helpers
 - `notifications.py`: in-app notifications, optional email delivery, and import completion notices
