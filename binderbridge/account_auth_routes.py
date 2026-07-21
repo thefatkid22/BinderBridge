@@ -2,6 +2,33 @@
 
 from http import HTTPStatus
 
+
+def session_cookie_is_secure(self):
+    if SESSION_COOKIE_SECURE:
+        return True
+    try:
+        return urlparse(self.public_base_url()).scheme.lower() == "https"
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def session_cookie_header(self, token="", max_age=None):
+    cookie = SimpleCookie()
+    cookie[SESSION_COOKIE] = str(token or "")
+    morsel = cookie[SESSION_COOKIE]
+    morsel["path"] = "/"
+    morsel["httponly"] = True
+    morsel["samesite"] = "Lax"
+    morsel["max-age"] = str(
+        SESSION_TTL_SECONDS if max_age is None else max(0, int(max_age))
+    )
+    if not token:
+        morsel["expires"] = "Thu, 01 Jan 1970 00:00:00 GMT"
+    if session_cookie_is_secure(self):
+        morsel["secure"] = True
+    return morsel.OutputString()
+
+
 def login(self, method, user):
     if user:
         return self.redirect("/")
@@ -60,10 +87,7 @@ def passkey_json(self, payload, status=HTTPStatus.OK, session=None):
     self.send_header("Content-Length", str(len(data)))
     if session:
         token, expires_at = session
-        self.send_header(
-            "Set-Cookie",
-            f"{SESSION_COOKIE}={token}; Max-Age={SESSION_TTL_SECONDS}; Path=/; HttpOnly; SameSite=Lax",
-        )
+        self.send_header("Set-Cookie", self.session_cookie_header(token))
     self.send_security_headers()
     self.end_headers()
     self.wfile.write(data)
@@ -248,10 +272,7 @@ def password_reset(self, method, user, query=None):
 def redirect_with_session(self, location, token, expires_at):
     self.send_response(HTTPStatus.SEE_OTHER)
     self.send_header("Location", safe_local_redirect_path(location, default="/"))
-    self.send_header(
-        "Set-Cookie",
-        f"{SESSION_COOKIE}={token}; Max-Age={SESSION_TTL_SECONDS}; Path=/; HttpOnly; SameSite=Lax",
-    )
+    self.send_header("Set-Cookie", self.session_cookie_header(token))
     self.send_security_headers()
     self.end_headers()
 
@@ -261,7 +282,7 @@ def logout(self):
     delete_session(token.value if token else None)
     self.send_response(HTTPStatus.SEE_OTHER)
     self.send_header("Location", "/login")
-    self.send_header("Set-Cookie", f"{SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax")
+    self.send_header("Set-Cookie", self.session_cookie_header(max_age=0))
     self.send_security_headers()
     self.end_headers()
 
@@ -272,12 +293,16 @@ def public_base_url(self):
     host = sanitize_text_input(self.headers.get("Host", ""), max_length=120).strip()
     if not re.match(r"^[A-Za-z0-9.\-:\[\]]+$", host):
         host = f"{HOST}:{PORT}"
-    proto = sanitize_text_input(self.headers.get("X-Forwarded-Proto", ""), max_length=20).strip().lower()
+    proto = ""
+    if TRUST_PROXY_HEADERS:
+        proto = sanitize_text_input(self.headers.get("X-Forwarded-Proto", ""), max_length=20).strip().lower()
     if proto not in ("http", "https"):
         proto = "http"
     return f"{proto}://{host}"
 
 ACCOUNT_AUTH_ROUTE_METHODS = (
+    "session_cookie_is_secure",
+    "session_cookie_header",
     "login",
     "login_two_factor",
     "passkey_request_context",

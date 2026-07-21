@@ -21,6 +21,7 @@ from email.message import EmailMessage
 from urllib.parse import quote
 
 from binderbridge.config import config_bool, config_float, config_int, config_str
+from binderbridge.session_tokens import session_token_hash
 from binderbridge.migrations import (
     CURRENT_SCHEMA_VERSION,
     SCHEMA_MIGRATIONS,
@@ -1023,19 +1024,21 @@ def create_session(user_id):
     expires_at = int(datetime.now(timezone.utc).timestamp()) + SESSION_TTL_SECONDS
     with db() as conn:
         conn.execute(
-            "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
-            (token, user_id, expires_at, now_iso()),
+            "INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            (session_token_hash(token), user_id, expires_at, now_iso()),
         )
     return token, expires_at
 
 def delete_session(token):
-    if not token:
+    token_hash = session_token_hash(token)
+    if not token_hash:
         return
     with db() as conn:
-        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
 
 def get_user_by_session(token):
-    if not token:
+    token_hash = session_token_hash(token)
+    if not token_hash:
         return None
     now_ts = int(datetime.now(timezone.utc).timestamp())
     with db() as conn:
@@ -1045,12 +1048,12 @@ def get_user_by_session(token):
             SELECT users.*
             FROM sessions
             JOIN users ON users.id = sessions.user_id
-            WHERE sessions.token = ?
+            WHERE sessions.token_hash = ?
                 AND sessions.expires_at >= ?
                 AND users.is_banned = 0
                 AND users.registration_status = 'active'
             """,
-            (token, now_ts),
+            (token_hash, now_ts),
         ).fetchone()
 
 def get_user_by_username(username):
@@ -1175,6 +1178,7 @@ __all__ = [
     'complete_passkey_registration',
     'complete_passkey_authentication',
     'delete_passkey_credential',
+    'session_token_hash',
     'create_session',
     'delete_session',
     'get_user_by_session',

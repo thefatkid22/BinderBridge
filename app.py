@@ -47,6 +47,12 @@ TRUST_PROXY_HEADERS = config_bool(
 SOURCE_URL = config_str("BINDERBRIDGE_SOURCE_URL", default=DEFAULT_SOURCE_URL, section="app", key="source_url")
 SESSION_COOKIE = "binderbridge_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
+SESSION_COOKIE_SECURE = config_bool(
+    "BINDERBRIDGE_SESSION_COOKIE_SECURE",
+    default=False,
+    section="security",
+    key="session_cookie_secure",
+)
 PBKDF2_ITERATIONS = 310_000
 CSRF_FIELD_NAME = "_csrf_token"
 CSRF_FORM_RE = re.compile(r"(<form\b(?=[^>]*\bmethod\s*=\s*['\"]?post['\"]?)[^>]*>)", re.IGNORECASE)
@@ -274,31 +280,33 @@ def clean_flash_notice(notice, status="success"):
 
 def set_session_flash(token, notice, status="success"):
     notice, status = clean_flash_notice(notice, status)
-    if not token or not notice:
+    token_hash = session_token_hash(token)
+    if not token_hash or not notice:
         return 0
     with db() as conn:
         cursor = conn.execute(
-            "UPDATE sessions SET flash_notice = ?, flash_status = ? WHERE token = ?",
-            (notice, status, token),
+            "UPDATE sessions SET flash_notice = ?, flash_status = ? WHERE token_hash = ?",
+            (notice, status, token_hash),
         )
         return cursor.rowcount
 
 
 def consume_session_flash(token):
-    if not token:
+    token_hash = session_token_hash(token)
+    if not token_hash:
         return "", "info"
     with db() as conn:
         found = conn.execute(
-            "SELECT flash_notice, flash_status FROM sessions WHERE token = ?",
-            (token,),
+            "SELECT flash_notice, flash_status FROM sessions WHERE token_hash = ?",
+            (token_hash,),
         ).fetchone()
         if not found:
             return "", "info"
         notice, status = clean_flash_notice(found["flash_notice"], found["flash_status"])
         if notice:
             conn.execute(
-                "UPDATE sessions SET flash_notice = '', flash_status = '' WHERE token = ?",
-                (token,),
+                "UPDATE sessions SET flash_notice = '', flash_status = '' WHERE token_hash = ?",
+                (token_hash,),
             )
         return notice, status
 
@@ -945,6 +953,8 @@ class App(BaseHTTPRequestHandler):
         self.end_headers()
 
     def send_security_headers(self):
+        if self.browser_response_requires_no_store():
+            self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "same-origin")
@@ -959,6 +969,22 @@ class App(BaseHTTPRequestHandler):
             "style-src 'self' 'unsafe-inline'; "
             "connect-src 'self'",
         )
+
+    def browser_response_requires_no_store(self):
+        path = str(getattr(self, "_request_path", "") or "")
+        if path.startswith("/api/") or path.startswith("/static/"):
+            return False
+        if (
+            path == "/login"
+            or path.startswith("/login/")
+            or path == "/logout"
+            or path == "/register"
+            or path.startswith("/password/")
+            or path == "/account"
+            or path.startswith("/account/")
+        ):
+            return True
+        return bool(self.current_session_token())
 
     def static_file(self, path):
         safe_name = unquote(path.removeprefix("/static/")).replace("/", os.sep).replace("\\", os.sep)

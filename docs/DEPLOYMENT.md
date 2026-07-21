@@ -106,7 +106,7 @@ location / {
 }
 ```
 
-Set `BINDERBRIDGE_PUBLIC_BASE_URL` to the HTTPS URL served by the proxy. This is especially important for invite links, password recovery, passkeys, and webhook payload URLs.
+Set `BINDERBRIDGE_PUBLIC_BASE_URL` to the HTTPS URL served by the proxy. This is especially important for invite links, password recovery, passkeys, webhook payload URLs, and the browser session cookie: an HTTPS public URL automatically enables its `Secure` attribute. `BINDERBRIDGE_SESSION_COOKIE_SECURE=true` can force that attribute for an HTTPS deployment whose public URL is supplied another way. Do not force it for direct local HTTP testing, because browsers will correctly refuse to send a Secure cookie over HTTP.
 
 ## Backups And Restore Drills
 

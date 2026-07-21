@@ -995,6 +995,7 @@ __all__ = [
     "complete_passkey_registration",
     "complete_passkey_authentication",
     "delete_passkey_credential",
+    "session_token_hash",
     "create_session",
     "delete_session",
     "get_user_by_session",

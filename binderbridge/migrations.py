@@ -2,9 +2,11 @@
 
 from datetime import datetime, timezone
 
+from binderbridge.session_tokens import is_session_token_hash, session_token_hash
+
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 
 def db_schema_version(conn):
@@ -576,6 +578,64 @@ def migrate_api_session_credentials(conn):
     )
 
 
+def migrate_browser_session_storage(conn):
+    """Replace recoverable browser-session tokens with one-way hashes."""
+    columns = {
+        column["name"] for column in conn.execute("PRAGMA table_info(sessions)").fetchall()
+    }
+    if "token_hash" in columns and "token" not in columns:
+        return
+    if "token" not in columns and "token_hash" not in columns:
+        return
+
+    source_column = "token_hash" if "token_hash" in columns else "token"
+    legacy_rows = conn.execute(
+        f"""
+        SELECT {source_column} AS stored_token, user_id, expires_at,
+               flash_notice, flash_status, created_at
+        FROM sessions
+        """
+    ).fetchall()
+    conn.execute("ALTER TABLE sessions RENAME TO sessions_before_token_hashing")
+    conn.execute(
+        """
+        CREATE TABLE sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at INTEGER NOT NULL,
+            flash_notice TEXT NOT NULL DEFAULT '',
+            flash_status TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    for legacy in legacy_rows:
+        stored_token = str(legacy["stored_token"] or "").strip()
+        token_hash = (
+            stored_token
+            if source_column == "token_hash" and is_session_token_hash(stored_token)
+            else session_token_hash(stored_token)
+        )
+        if not token_hash:
+            continue
+        conn.execute(
+            """
+            INSERT INTO sessions
+                (token_hash, user_id, expires_at, flash_notice, flash_status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                token_hash,
+                legacy["user_id"],
+                legacy["expires_at"],
+                legacy["flash_notice"],
+                legacy["flash_status"],
+                legacy["created_at"],
+            ),
+        )
+    conn.execute("DROP TABLE sessions_before_token_hashing")
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
@@ -591,6 +651,7 @@ SCHEMA_MIGRATIONS = (
     (12, "persistent API rate limiting", migrate_rate_limit_events),
     (13, "registration moderation and ban-evasion signals", migrate_registration_moderation),
     (14, "typed Android app sessions and account scope", migrate_api_session_credentials),
+    (15, "one-way browser session token storage", migrate_browser_session_storage),
 )
 
 
@@ -644,6 +705,7 @@ __all__ = [
     "migrate_rate_limit_events",
     "migrate_registration_moderation",
     "migrate_api_session_credentials",
+    "migrate_browser_session_storage",
     "SCHEMA_MIGRATIONS",
     "migration_timestamp",
     "record_schema_migration_history",
