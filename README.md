@@ -234,6 +234,7 @@ Initial API endpoints:
 - `POST /api/v1/account/2fa/recovery-codes`
 - `GET /api/v1/account/sessions`
 - `DELETE /api/v1/account/sessions/{id}`
+- `POST /api/v1/account/sessions/revoke-others`
 - `GET /api/v1/me`
 - `GET /api/v1/dashboard`
 - `GET /api/v1/collection`
