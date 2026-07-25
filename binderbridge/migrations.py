@@ -6,7 +6,7 @@ from binderbridge.session_tokens import is_session_token_hash, session_token_has
 
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 
 def db_schema_version(conn):
@@ -636,6 +636,31 @@ def migrate_browser_session_storage(conn):
     conn.execute("DROP TABLE sessions_before_token_hashing")
 
 
+def migrate_api_idempotency(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            key_hash TEXT NOT NULL,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'processing',
+            response_status INTEGER NOT NULL DEFAULT 0,
+            response_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, key_hash),
+            CHECK (state IN ('processing', 'completed'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_api_idempotency_expiry
+            ON api_idempotency_keys(expires_at);
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
@@ -652,6 +677,7 @@ SCHEMA_MIGRATIONS = (
     (13, "registration moderation and ban-evasion signals", migrate_registration_moderation),
     (14, "typed Android app sessions and account scope", migrate_api_session_credentials),
     (15, "one-way browser session token storage", migrate_browser_session_storage),
+    (16, "persistent API idempotency responses", migrate_api_idempotency),
 )
 
 
@@ -706,6 +732,7 @@ __all__ = [
     "migrate_registration_moderation",
     "migrate_api_session_credentials",
     "migrate_browser_session_storage",
+    "migrate_api_idempotency",
     "SCHEMA_MIGRATIONS",
     "migration_timestamp",
     "record_schema_migration_history",

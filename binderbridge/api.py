@@ -17,6 +17,12 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from binderbridge.collection_queries import browse_filter_users, trade_picker_count, trade_picker_rows, trade_picker_where
 from binderbridge.collection_service import collection_item_photo_count
 from binderbridge.config import config_bool, config_float, config_int
+from binderbridge.api_idempotency import (
+    IDEMPOTENCY_KEY_TTL_HOURS,
+    begin_idempotent_request,
+    finalize_idempotent_request,
+    idempotency_key_from_headers,
+)
 from binderbridge.formatting import TRADE_STATUS_LABELS
 from binderbridge.groups import (
     add_collection_item_to_group,
@@ -70,6 +76,7 @@ API_CAPABILITIES = (
     "dashboard",
     "groups",
     "notifications",
+    "sync.idempotency",
     "trade.alerts",
     "trade.conversations",
     "trade.matches",
@@ -1239,20 +1246,31 @@ def account_webhook_test(self, user, path):
 
 
 def api_json(self, payload, status=HTTPStatus.OK):
+    context = getattr(self, "_api_idempotency_context", None)
+    if context:
+        self._api_idempotency_context = None
+        finalize_idempotent_request(context, payload, status)
     data = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     self.send_response(status)
     self.send_header("Content-Type", "application/json; charset=utf-8")
     self.send_header("Content-Length", str(len(data)))
     self.send_header("Cache-Control", "no-store")
+    if getattr(self, "_api_idempotency_replayed", False):
+        self.send_header("Idempotency-Replayed", "true")
+        self._api_idempotency_replayed = False
     self.send_security_headers()
     self.end_headers()
     self.wfile.write(data)
 
 
 def api_read_json(self):
+    cached = getattr(self, "_api_cached_json_body", None)
+    if cached is not None:
+        return cached
     length = request_content_length(self.headers)
     if not length:
-        return {}
+        self._api_cached_json_body = {}
+        return self._api_cached_json_body
     raw = self.rfile.read(length).decode("utf-8", errors="replace")
     try:
         payload = json.loads(raw)
@@ -1260,7 +1278,8 @@ def api_read_json(self):
         raise ValueError("Request body must be valid JSON.") from exc
     if not isinstance(payload, dict):
         raise ValueError("JSON request body must be an object.")
-    return payload
+    self._api_cached_json_body = payload
+    return self._api_cached_json_body
 
 
 def api_error(self, message, status=HTTPStatus.BAD_REQUEST):
@@ -1291,6 +1310,37 @@ def api_authenticate(self, required_scope="read"):
         self.api_error(f"This token does not include the {required_scope} scope.", HTTPStatus.FORBIDDEN)
         return None, None, True
     return user, token_row, None
+
+
+def api_prepare_idempotency(self, user, method, path):
+    try:
+        key = idempotency_key_from_headers(self.headers)
+        if not key:
+            return False
+        payload = self.api_read_json()
+        decision = begin_idempotent_request(user["id"], key, method, path, payload)
+    except ValueError as exc:
+        self.api_error(str(exc), HTTPStatus.BAD_REQUEST)
+        return True
+    state = decision["state"]
+    if state == "mismatch":
+        self.api_error(
+            "This Idempotency-Key was already used for a different request.",
+            HTTPStatus.CONFLICT,
+        )
+        return True
+    if state == "processing":
+        self.api_error(
+            "A request with this Idempotency-Key is still processing. Retry shortly.",
+            HTTPStatus.SERVICE_UNAVAILABLE,
+        )
+        return True
+    if state == "replay":
+        self._api_idempotency_replayed = True
+        self.api_json(decision["response"], decision["status"])
+        return True
+    self._api_idempotency_context = decision["context"]
+    return False
 
 
 def android_login_token_expiry():
@@ -2945,6 +2995,8 @@ def api_dispatch(self, method, path, query):
         return self.api_error("This account is read-only.", HTTPStatus.FORBIDDEN)
     if required_scope == "read" and not rate_limit_allowed("api_read", f"user:{user['id']}"):
         return self.api_error("Too many API read requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
+    if required_scope == "write" and self.api_prepare_idempotency(user, method, path):
+        return None
     if required_scope == "write" and not rate_limit_allowed("api_write", f"user:{user['id']}"):
         return self.api_error("Too many API write requests. Try again shortly.", HTTPStatus.TOO_MANY_REQUESTS)
     try:
@@ -3093,6 +3145,7 @@ API_ROUTE_METHODS = (
     "api_read_json",
     "api_error",
     "api_authenticate",
+    "api_prepare_idempotency",
     "api_android_login_token",
     "api_android_password_login",
     "api_android_two_factor_login",
@@ -3166,6 +3219,7 @@ __all__ = [
     "API_MAJOR_VERSION",
     "API_CAPABILITIES",
     "ANDROID_LOGIN_TOKEN_TTL_DAYS",
+    "IDEMPOTENCY_KEY_TTL_HOURS",
     "ALLOW_PRIVATE_WEBHOOKS",
     "API_ACCESS_POLICY_KEY",
     "WEBHOOK_ACCESS_POLICY_KEY",
