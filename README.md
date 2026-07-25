@@ -16,6 +16,7 @@ License: **GNU AGPL-3.0**
 - Passkey/WebAuthn login as an optional passwordless sign-in method
 - CSRF protection for authenticated browser form actions
 - SQLite-backed rate limiting for sign-in, registration, API auth/read/write actions, API health checks, Scryfall lookups, and integration management
+- Account-scoped API idempotency for safe Android offline-write replay after timeouts or lost responses
 - Dark interface enabled by default with a persistent light-mode toggle
 - Account control panel for username, email, profile, and password changes
 - Owner, admin, moderator, organizer, member, and read-only roles with protected hierarchy and capability-based staff tools
@@ -215,6 +216,8 @@ Users can create scoped API bearer tokens from `Account -> API access`. Tokens a
 The Android app can instead submit the user's normal account credentials to `POST /api/v1/auth/login`. Accounts with two-factor authentication receive a short-lived challenge completed through `POST /api/v1/auth/login/2fa` with either an authenticator or recovery code. A successful sign-in returns a revocable bearer session with read/write scope according to the account role; read-only accounts remain read-only. The password is used only for verification and is never stored in the bearer-session record.
 
 Android bearer sessions expire after 90 days by default. Set `[api] android_token_ttl_days` or `BINDERBRIDGE_ANDROID_TOKEN_TTL_DAYS` from 1 to 365 days to change that lifetime. Password and two-factor attempts use the existing persistent login rate-limit bucket.
+
+Authenticated content-write endpoints accept an `Idempotency-Key` header. BinderBridge hashes the key, scopes it to the authenticated account, and stores the resulting status and JSON response before sending it to the client. Repeating the same method, path, body, and key returns the original response without applying the mutation again; reusing a key for different input returns HTTP 409. Records expire after 24 hours by default. Configure `[api] idempotency_ttl_hours` or `BINDERBRIDGE_API_IDEMPOTENCY_TTL_HOURS` from 1 to 168 hours. In-progress records become retryable after five minutes by default; `[api] idempotency_processing_stale_seconds` or `BINDERBRIDGE_API_IDEMPOTENCY_PROCESSING_STALE_SECONDS` accepts 30 to 3600 seconds.
 
 Password-created Android sessions are classified separately from manually created API tokens and receive an internal `account` scope. The Android app can read its account/security summary, change the account password, manage authenticator two-factor authentication and one-time recovery codes, list active Android devices, revoke another device, or revoke its current session during sign-out. A password change keeps the current Android session, revokes other Android and browser sessions, and clears pending sign-in challenges. These operations never revoke a manually supplied integration token. Authenticator setup keys and newly generated recovery codes are returned only by password-confirmed account endpoints with `Cache-Control: no-store`; recovery codes are stored only as salted hashes.
 
