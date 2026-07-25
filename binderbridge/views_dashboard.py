@@ -207,13 +207,15 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
                 tag="li",
             )
 
-    recent_changes = price_history_summary(user["id"])
+    recent_changes = price_history_summary(
+        user["id"], price_basis=user_price_preference(user)
+    )
     if recent_changes:
         change_items = "".join(
             f"""
             <li>
                 <strong>{e(card_price_history_label(change["card_name"], change["set_name"], change["collector_number"]))}</strong>
-                <span>{e(change["observed_at"][:10])} - ${e(change["previous_price_usd"])} to ${e(change["price_usd"])} ({e(signed_price_text(change["change_amount"]))})</span>
+                <span>{e(change["observed_at"][:10])} - {e(price_source_label(change["price_source"]))} - ${e(change["previous_price_usd"])} to ${e(change["price_usd"])} ({e(signed_price_text(change["change_amount"]))})</span>
             </li>
             """
             for change in recent_changes
@@ -221,7 +223,7 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
     else:
         change_items = render_empty_action_state(
             "No value changes yet.",
-            "Price changes will appear after a Scryfall refresh finds a new value.",
+            "Price changes will appear after your selected source refreshes with a new value.",
             actions=(("/collection/stats", "Collection stats", "ghost"),),
             tag="li",
         )
@@ -283,7 +285,7 @@ def render_notifications(user, query=None, notice=None, status="info", active_se
     pagination = render_pagination("/notifications", query, total_count, page, per_page, page_count, "notification-items")
     workspace_items = [
         ("#notification-inbox", "Inbox", "Search and review activity"),
-        ("#notification-values", "Value changes", "Recent Scryfall price movement"),
+        ("#notification-values", "Value changes", "Recent selected-source price movement"),
         ("#notification-cleanup", "Cleanup", "Delete notification history"),
     ]
     active_attr = workspace_active_attr(active_section, [href.lstrip("#") for href, _text, _detail in workspace_items])

@@ -179,20 +179,37 @@ def trade_selected_quantities_from_form(form):
 
 
 def trade_price_basis_for(user, data=None):
-    return "scryfall"
+    data = data or {}
+    raw_counter = data.get("counter_trade_id", ["0"])
+    if isinstance(raw_counter, (list, tuple)):
+        raw_counter = raw_counter[0] if raw_counter else "0"
+    try:
+        counter_trade_id = int(raw_counter or 0)
+    except (TypeError, ValueError):
+        counter_trade_id = 0
+    if counter_trade_id:
+        source_trade = row(
+            """
+            SELECT *
+            FROM trades
+            WHERE id = ? AND (proposer_id = ? OR recipient_id = ?)
+            """,
+            (counter_trade_id, user["id"], user["id"]),
+        )
+        if source_trade:
+            return normalize_price_basis(
+                row_value(source_trade, "price_source_preference", "scryfall")
+            )
+    return user_price_preference(user)
 
 
 def price_for_item_basis(item, price_basis):
-    price = normalize_price_usd(row_value(item, "price_usd", ""))
-    return price, "scryfall" if price else ""
+    price, source, _basis, _fallback = resolve_card_price(item, price_basis)
+    return price, source
 
 
 def apply_trade_price_basis(item, price_basis):
-    priced = dict(item)
-    price, source = price_for_item_basis(item, price_basis)
-    priced["display_price_usd"] = price
-    priced["display_price_source"] = source
-    return priced
+    return apply_price_basis(item, price_basis)
 
 
 def trade_selected_items(owner_id, selected_quantities, price_basis="", viewer_id=None):
@@ -215,7 +232,11 @@ def trade_item_price_usd(item):
 
 
 def trade_item_price_source(item):
-    return "scryfall" if trade_item_price_usd(item) else ""
+    if not trade_item_price_usd(item):
+        return ""
+    return normalize_price_source(
+        row_value(item, "display_price_source", row_value(item, "price_source", ""))
+    ) or "scryfall"
 
 
 def trade_entry_value_cents(item, quantity):
@@ -250,7 +271,7 @@ def trade_balance_details(offered, requested):
     unpriced = trade_entries_unpriced_count(offered) + trade_entries_unpriced_count(requested)
     if offer_value == 0 and request_value == 0:
         label = "No price data yet"
-        detail = "Add Scryfall data to compare trade value."
+        detail = "Price data is not available yet for this trade."
         tone = "muted"
     elif abs(difference) <= max(100, round(total * 0.05)):
         label = "Value looks balanced"
@@ -285,7 +306,7 @@ def trade_fairness_assessment(offered, requested):
         return {
             "severity": "unknown",
             "requires_acknowledgement": False,
-            "message": "Scryfall price data is not available yet for this trade.",
+            "message": "Price data is not available yet for this trade.",
             "balance": balance,
             "settings": settings,
         }
@@ -295,13 +316,13 @@ def trade_fairness_assessment(offered, requested):
     if settings["block_enabled"] and percent >= block_percent:
         severity = "blocked"
         message = (
-            f"This trade is {balance['difference_percent']}% apart by Scryfall value, "
+            f"This trade is {balance['difference_percent']}% apart by its locked price basis, "
             f"which meets the admin block threshold of {settings['block_percent']}%."
         )
     elif settings["warn_enabled"] and percent >= warn_percent:
         severity = "warning"
         message = (
-            f"This trade is {balance['difference_percent']}% apart by Scryfall value, "
+            f"This trade is {balance['difference_percent']}% apart by its locked price basis, "
             f"which meets the admin warning threshold of {settings['warn_percent']}%."
         )
     else:
@@ -328,7 +349,7 @@ def render_trade_fairness_notice(offered, requested, include_acknowledgement=Fal
         extra = """
         <label class="checkbox-line trade-fairness-ack">
             <input type="checkbox" name="fairness_ack" value="1">
-            I understand the Scryfall value difference and want to continue.
+            I understand the displayed value difference and want to continue.
         </label>
         """
     return f"""
@@ -832,7 +853,7 @@ def render_trade_recommendations_panel(recommendations):
         <div class="panel-heading">
             <div>
                 <h2>Trade recommendations</h2>
-                <p class="muted compact">Quick suggestions based on wishlists and current Scryfall value balance.</p>
+                <p class="muted compact">Quick suggestions based on wishlists and the locked {e(price_basis_label(row_value(recommendations, "price_basis", "scryfall")))} value balance.</p>
             </div>
             <span class="pill">Suggestions</span>
         </div>
@@ -951,7 +972,7 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
     </div>
     <form id="trade-submit-form" method="post" action="/trades/new">
         <input type="hidden" name="recipient_id" value="{recipient["id"]}">
-        <input type="hidden" name="price_source_preference" value="scryfall">
+        <input type="hidden" name="price_source_preference" value="{e(price_basis)}">
         {counter_hidden}
         {trade_picker_query_inputs(query)}
     </form>
@@ -1012,7 +1033,8 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
             function priceSource(input) {{
                 var source = input.dataset.priceSource || "";
                 var labels = {{
-                    scryfall: "Scryfall"
+                    scryfall: "Scryfall",
+                    manapool: "Mana Pool"
                 }};
                 return labels[source] || "Unknown";
             }}
@@ -1082,7 +1104,7 @@ def render_new_trade(user, recipient_id, query=None, selected_quantities=None, p
                 var threshold = Math.max(100, Math.round(maxValue * 0.05));
                 var unpriced = offerValue.unpriced + requestValue.unpriced;
                 var label = "No price data yet";
-                var detail = "Add Scryfall data to compare trade value.";
+                var detail = "Price data is not available yet for this trade.";
                 if (offerValue.value || requestValue.value) {{
                     if (Math.abs(diff) <= threshold) {{
                         label = "Value looks balanced";

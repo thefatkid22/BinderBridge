@@ -134,7 +134,11 @@ def can_view_collection_values(viewer, owner, group=None, share_link=None):
 
 
 def visible_price_pill(viewer, owner, item, group=None, share_link=None):
-    return price_pill(item) if can_view_collection_values(viewer, owner, group=group, share_link=share_link) else ""
+    if not can_view_collection_values(
+        viewer, owner, group=group, share_link=share_link
+    ):
+        return ""
+    return price_pill(apply_viewer_price(item, viewer))
 
 
 def share_token_hash(token):

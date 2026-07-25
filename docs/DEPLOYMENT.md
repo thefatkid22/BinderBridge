@@ -7,7 +7,7 @@ This guide covers the recommended self-hosted Docker Compose setup, first-run ch
 The default Compose stack runs two containers:
 
 - `binderbridge`: the web app on port `8000`
-- `binderbridge-worker`: the durable background worker for imports, Scryfall refreshes, automatic backups, email digests, stale-trade reminders, and webhook delivery
+- `binderbridge-worker`: the durable background worker for imports, Scryfall and Mana Pool refreshes, automatic backups, email digests, stale-trade reminders, and webhook delivery
 
 Both containers share the same `binderbridge-data` volume mounted at `/data`. The production config template at `deploy/binderbridge.production.ini` is mounted read-only at `/config/binderbridge.ini`, and environment values from `.env` override it.
 
@@ -48,6 +48,7 @@ After creating the owner account:
 - Configure SMTP if you want email invites, password recovery email, or notification email
 - Create a first backup and confirm automatic backup retention
 - Run or confirm Scryfall bulk sync before large imports
+- Confirm the Scryfall and Mana Pool daily price jobs are healthy
 - Create an invite or import a first collection
 - Open `Admin -> Maintenance Health` to confirm the database and background jobs are healthy
 
@@ -70,9 +71,13 @@ BINDERBRIDGE_SMTP_HOST=
 BINDERBRIDGE_SMTP_USERNAME=
 BINDERBRIDGE_SMTP_PASSWORD=
 BINDERBRIDGE_JOB_RUNNER_MODE=external
+SCRYFALL_PRICE_REFRESH_INTERVAL_HOURS=24
+MANAPOOL_PRICE_REFRESH_INTERVAL_HOURS=24
+MANAPOOL_PRICE_TIMEOUT_SECONDS=60
 ```
 
 Use `external` when running the Compose worker service. Use `embedded` only when intentionally running the web container without the separate worker.
+Mana Pool's public singles price feed does not require an API token; do not add one to the deployment environment.
 
 ## Single-Container Mode
 
@@ -145,7 +150,7 @@ After upgrading:
 - Open `Admin -> Maintenance Health`
 - Confirm schema/migration status
 - Confirm the worker is running
-- Confirm automatic backup and Scryfall refresh status
+- Confirm automatic backup plus Scryfall and Mana Pool refresh status
 - Run a quick login and collection page smoke test
 
 ## Background Worker Operations
@@ -194,6 +199,7 @@ Common issues:
 - Email options are hidden: SMTP host is blank or not loaded
 - Imports are queued but not finishing: check the worker container and `Admin -> Import and job dashboard`
 - Scryfall lookups are slow after first install: run the Scryfall bulk sync and let the worker populate the local cache
+- Mana Pool prices are stale: inspect the durable `Mana Pool price sync` job and retry it from the admin job dashboard; a failed refresh keeps the previous cache
 - Passkeys fail on public installs: use HTTPS and a stable public origin
 
 ## AGPL Source Notice

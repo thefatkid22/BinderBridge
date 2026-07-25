@@ -134,6 +134,7 @@ class BackgroundJobRunnerTests(BinderBridgeTestCase):
 
         self.assertTrue({
             "system:scryfall-price-refresh",
+            "system:manapool-price-sync",
             "system:automatic-backup",
             "system:data-retention",
             "system:notification-delivery",

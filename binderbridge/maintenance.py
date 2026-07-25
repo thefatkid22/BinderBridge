@@ -796,6 +796,7 @@ def maintenance_health_status(limit=6):
     smtp_settings = smtp_email_settings()
     bulk_status_func = globals().get("scryfall_bulk_status")
     price_status_func = globals().get("scryfall_price_refresh_status")
+    manapool_status_func = globals().get("manapool_price_refresh_status")
     import_counts = status_count_rows("import_batches")
     scryfall_counts = status_count_rows("scryfall_enrichment_jobs")
     price_counts = status_count_rows("price_refresh_jobs")
@@ -845,6 +846,7 @@ def maintenance_health_status(limit=6):
             "bulk": bulk_status_func() if bulk_status_func else {},
             "prices": price_status_func() if price_status_func else {},
         },
+        "manapool": manapool_status_func() if manapool_status_func else {},
         "jobs": [
             {
                 "label": "Scryfall import jobs",
@@ -1019,6 +1021,7 @@ def maintenance_job_dashboard(limit=12):
         "WHERE email_status != ''",
     )
     price_status_func = globals().get("scryfall_price_refresh_status")
+    manapool_status_func = globals().get("manapool_price_refresh_status")
     runner_status_func = globals().get("background_job_runner_status")
     runner_rows_func = globals().get("background_job_rows")
     runner_status = runner_status_func() if runner_status_func else {}
@@ -1032,6 +1035,7 @@ def maintenance_job_dashboard(limit=12):
         "background_jobs": runner_rows_func(limit) if runner_rows_func else [],
         "job_runner": runner_status,
         "scryfall_price_refresh": price_status_func() if price_status_func else {},
+        "manapool_price_refresh": manapool_status_func() if manapool_status_func else {},
         "imports": maintenance_import_batch_rows(limit),
         "scryfall_jobs": maintenance_scryfall_job_rows(limit),
         "price_jobs": maintenance_price_job_rows(limit),
@@ -1233,6 +1237,7 @@ def maintenance_setup_warnings(health):
     scryfall = health.get("scryfall", {})
     scryfall_bulk = scryfall.get("bulk", {})
     scryfall_prices = scryfall.get("prices", {})
+    manapool_prices = health.get("manapool", {})
     notifications = health.get("notifications", {})
     counts = health.get("job_counts", {})
     database = health.get("database", {})
@@ -1265,6 +1270,15 @@ def maintenance_setup_warnings(health):
         add("error", "Scryfall bulk data needs attention", scryfall_bulk.get("error") or "The local Scryfall bulk cache is not healthy.", "Open jobs", "/admin/jobs")
     if scryfall_prices.get("status") in ("error", "failed") or scryfall_prices.get("error"):
         add("error", "Scryfall price refresh needs attention", scryfall_prices.get("error") or "The automatic price refresh is not healthy.", "Open jobs", "/admin/jobs")
+    if manapool_prices.get("status") in ("error", "failed") or manapool_prices.get("error"):
+        add(
+            "error",
+            "Mana Pool price refresh needs attention",
+            manapool_prices.get("error")
+            or "The Mana Pool market-price feed is not healthy.",
+            "Open jobs",
+            "/admin/jobs",
+        )
     if float(database.get("reusable_percent", 0) or 0) >= 20:
         add(
             "info",
@@ -1450,6 +1464,29 @@ def retry_scryfall_price_refresh_async():
         "started": created,
         "job_id": job_id,
         "message": "Scryfall price refresh queued." if created else "Scryfall price refresh is already queued or running.",
+    }
+
+
+def retry_manapool_price_refresh_async():
+    enqueue = globals().get("enqueue_background_job")
+    if not enqueue:
+        return {"started": False, "message": "The background job runner is unavailable."}
+    status_key = globals().get("MANAPOOL_PRICE_REFRESH_STATUS_KEY")
+    if status_key:
+        set_setting(status_key, "queued")
+    job_id, created = enqueue(
+        "manapool_price_sync",
+        {"force": True},
+        unique_key="manual:manapool-price-sync",
+        priority=20,
+        max_attempts=3,
+    )
+    return {
+        "started": created,
+        "job_id": job_id,
+        "message": "Mana Pool price refresh queued."
+        if created
+        else "Mana Pool price refresh is already queued or running.",
     }
 
 
@@ -1971,6 +2008,7 @@ __all__ = [
     "retry_price_refresh_job",
     "retry_failed_notification_email",
     "retry_scryfall_price_refresh_async",
+    "retry_manapool_price_refresh_async",
     "admin_undo_import_batch",
     "create_backup_archive",
     "parse_backup_bool",

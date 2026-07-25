@@ -854,7 +854,22 @@ def render_collection(user, query, notice=None, status="info"):
     )
     total_count = collection_count(where, params)
     page, per_page, page_count, offset = pagination_state(query, total_count)
-    items = collection_page_rows(where, params, order_clause, per_page, offset)
+    if current_sort == "value":
+        items = collection_page_rows(
+            where, params, order_clause, max(total_count, 1), 0
+        )
+        items = apply_viewer_prices(items, user)
+        items.sort(
+            key=lambda item: price_to_cents(
+                row_value(item, "display_price_usd", "")
+            )
+            * int(row_value(item, "quantity", 0) or 0),
+            reverse=current_dir == "desc",
+        )
+        items = items[offset : offset + per_page]
+    else:
+        items = collection_page_rows(where, params, order_clause, per_page, offset)
+        items = apply_viewer_prices(items, user)
     item_rows = "".join(render_collection_row(item, owner_view=True, bulk_select=True) for item in items)
     pagination = render_pagination("/collection", query, total_count, page, per_page, page_count, "collection-items")
     redirect_to = current_collection_url("/collection", query, page, per_page)
@@ -1210,7 +1225,7 @@ def render_group_count_summary(group_counts):
 
 
 def render_collection_statistics(user, notice=None, status="info"):
-    stats = collection_statistics(user["id"])
+    stats = collection_statistics(user["id"], user_price_preference(user))
     content = f"""
     {render_cards_subnav("stats")}
     <section class="section-heading">
@@ -1430,7 +1445,22 @@ def render_browse(user, query, notice=None, status="info"):
     )
     total_count = browse_count(where, params)
     page, per_page, page_count, offset = pagination_state(query, total_count)
-    items = browse_page_rows(where, params, order_clause, per_page, offset)
+    if current_sort == "value":
+        items = browse_page_rows(
+            where, params, order_clause, max(total_count, 1), 0
+        )
+        items = apply_viewer_prices(items, user)
+        items.sort(
+            key=lambda item: price_to_cents(
+                row_value(item, "display_price_usd", "")
+            )
+            * int(row_value(item, "quantity_for_trade", 0) or 0),
+            reverse=current_dir == "desc",
+        )
+        items = items[offset : offset + per_page]
+    else:
+        items = browse_page_rows(where, params, order_clause, per_page, offset)
+        items = apply_viewer_prices(items, user)
     filter_users = browse_filter_users(user["id"])
     owner_labels = {
         owner["id"]: f'{owner["display_name"]} (@{owner["username"]})'
@@ -1759,6 +1789,8 @@ def render_price_history_panel(user_id, item_id):
             f"""
             <tr>
                 <td data-label="Observed">{e(entry["observed_at"][:16].replace("T", " "))}</td>
+                <td data-label="Basis">{e(price_basis_label(row_value(entry, "price_basis", "scryfall")))}</td>
+                <td data-label="Source">{e(price_source_label(entry["price_source"]))}</td>
                 <td data-label="Price">${e(entry["price_usd"])}</td>
                 <td data-label="Previous">{e("$" + entry["previous_price_usd"] if entry["previous_price_usd"] else "-")}</td>
                 <td data-label="Change">{e(signed_price_text(entry["change_amount"]) if entry["change_amount"] else "-")}</td>
@@ -1771,19 +1803,19 @@ def render_price_history_panel(user_id, item_id):
         <div class="table-wrap compact-table-wrap">
             <table class="responsive-card-table price-history-table">
                 <thead>
-                    <tr><th>Observed</th><th>Price</th><th>Previous</th><th>Change</th><th>%</th></tr>
+                    <tr><th>Observed</th><th>Basis</th><th>Source</th><th>Price</th><th>Previous</th><th>Change</th><th>%</th></tr>
                 </thead>
                 <tbody>{rows_html}</tbody>
             </table>
         </div>
         """
     else:
-        history_body = '<div class="empty-state compact-empty">No Scryfall price observations yet.</div>'
+        history_body = '<div class="empty-state compact-empty">No price observations yet.</div>'
     return f"""
     <section class="panel price-history-panel">
         <div class="panel-heading">
             <h2>Price history</h2>
-            <span class="pill">Scryfall</span>
+            <span class="pill">By source</span>
         </div>
         {history_body}
     </section>
@@ -1892,7 +1924,7 @@ def render_collection_share_panel(user_id, item, share_result=None):
             </div>
             <label>Label<input name="label" maxlength="80" placeholder="Card condition review"></label>
             <label>Expires<select name="expires_days"><option value="7">In 7 days</option><option value="30" selected>In 30 days</option><option value="90">In 90 days</option><option value="0">Never</option></select></label>
-            <label class="checkbox-line"><input type="checkbox" name="show_values" value="1"> Show Scryfall value</label>
+            <label class="checkbox-line"><input type="checkbox" name="show_values" value="1"> Show price</label>
             <label class="checkbox-line"><input type="checkbox" name="show_photos" value="1" checked> Show condition photos</label>
             {result_panel}
             <div class="form-actions span-2"><button class="button primary" type="submit">Create private link</button></div>
@@ -1936,7 +1968,7 @@ def render_shared_collection_card(link, token):
                 <span>{e(item["condition"] or "Condition n/a")} - {e(item["finish"] or "Finish n/a")} - {e(item["language"] or "Language n/a")}</span>
                 <span>{e(availability)}</span>
                 {f'<span class="condition-detail"><strong>Condition details:</strong> {e(item["condition_notes"])}</span>' if item.get("condition_notes") else ""}
-                {price_pill(item) if show_values else ""}
+                {price_pill(apply_price_basis(item, "scryfall")) if show_values else ""}
                 {scryfall_link}
             </div>
         </div>
@@ -2308,7 +2340,7 @@ def render_import(user, result=None, preview=None, notice=None, status="info"):
             </div>
             {bulk_error}
             {price_refresh_error}
-            <p class="muted compact">Scryfall card data and prices update automatically in the background.</p>
+            <p class="muted compact">Card data and configured price feeds update automatically in the background.</p>
             <div class="panel-heading with-gap">
                 <h2>Columns</h2>
             </div>

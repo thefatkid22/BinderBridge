@@ -11,8 +11,9 @@ def want_trade_matches(user_id, want, limit=3):
     finish_preference = row_value(want, "finish", "")
     language_preference = row_value(want, "language", "")
     budget_cap_usd = normalize_price_usd(row_value(want, "budget_cap_usd", ""))
-    base_params = [
+    params = [
         user_id,
+        *privacy_params,
         want["game"],
         want["scryfall_id"],
         want["scryfall_id"],
@@ -28,23 +29,13 @@ def want_trade_matches(user_id, want, limit=3):
         language_preference,
         language_preference,
     ]
-    params = [budget_cap_usd, budget_cap_usd, user_id, *privacy_params, *base_params[1:]]
-    matches = rows(
+    candidates = rows(
         f"""
         SELECT
             users.id AS owner_id,
             users.display_name,
             users.username,
-            COALESCE(SUM(collection_items.quantity_for_trade), 0) AS total_quantity,
-            COALESCE(SUM(
-                CASE
-                    WHEN ? != '' AND collection_items.price_usd != ''
-                        AND CAST(collection_items.price_usd AS REAL) <= CAST(? AS REAL)
-                    THEN collection_items.quantity_for_trade
-                    ELSE 0
-                END
-            ), 0) AS within_budget_quantity,
-            COUNT(collection_items.id) AS entry_count
+            collection_items.*
         FROM collection_items
         JOIN users ON users.id = collection_items.user_id
         WHERE collection_items.user_id != ?
@@ -63,51 +54,58 @@ def want_trade_matches(user_id, want, limit=3):
             AND (? = '' OR instr(',' || ? || ',', ',' || COALESCE(collection_items.condition, '') || ',') > 0)
             AND (? = '' OR instr(',' || ? || ',', ',' || COALESCE(collection_items.finish, '') || ',') > 0)
             AND (? = '' OR instr(',' || ? || ',', ',' || COALESCE(collection_items.language, '') || ',') > 0)
-        GROUP BY users.id
-        ORDER BY within_budget_quantity DESC, total_quantity DESC, users.display_name COLLATE NOCASE
-        LIMIT {int(limit)}
+        ORDER BY users.display_name COLLATE NOCASE, collection_items.card_name COLLATE NOCASE
         """,
         params,
     )
-    totals = row(
-        f"""
-        SELECT
-            COUNT(DISTINCT users.id) AS user_count,
-            COALESCE(SUM(collection_items.quantity_for_trade), 0) AS total_quantity,
-            COALESCE(SUM(
-                CASE
-                    WHEN ? != '' AND collection_items.price_usd != ''
-                        AND CAST(collection_items.price_usd AS REAL) <= CAST(? AS REAL)
-                    THEN collection_items.quantity_for_trade
-                    ELSE 0
-                END
-            ), 0) AS within_budget_quantity
-        FROM collection_items
-        JOIN users ON users.id = collection_items.user_id
-        WHERE collection_items.user_id != ?
-            AND users.is_banned = 0
-            AND collection_items.quantity_for_trade > 0
-            AND {privacy_clause}
-            AND collection_items.game = ?
-            AND (
-                (? != '' AND collection_items.scryfall_id = ?)
-                OR (
-                    collection_items.card_name = ? COLLATE NOCASE
-                    AND (? = '' OR collection_items.set_code = '' OR collection_items.set_code = ?)
-                    AND (? = '' OR collection_items.collector_number = '' OR collection_items.collector_number = ?)
-                )
+    viewer = row(
+        "SELECT preferred_price_source FROM users WHERE id = ?", (user_id,)
+    )
+    basis = row_value(viewer, "preferred_price_source", "scryfall")
+    grouped = {}
+    with db() as conn:
+        for candidate in candidates:
+            owner_id = int(candidate["owner_id"])
+            match = grouped.setdefault(
+                owner_id,
+                {
+                    "owner_id": owner_id,
+                    "display_name": candidate["display_name"],
+                    "username": candidate["username"],
+                    "total_quantity": 0,
+                    "within_budget_quantity": 0,
+                    "entry_count": 0,
+                },
             )
-            AND (? = '' OR instr(',' || ? || ',', ',' || COALESCE(collection_items.condition, '') || ',') > 0)
-            AND (? = '' OR instr(',' || ? || ',', ',' || COALESCE(collection_items.finish, '') || ',') > 0)
-            AND (? = '' OR instr(',' || ? || ',', ',' || COALESCE(collection_items.language, '') || ',') > 0)
-        """,
-        params,
+            quantity = int(row_value(candidate, "quantity_for_trade", 0) or 0)
+            price, _source, _basis, _fallback = resolve_card_price(
+                candidate, basis, conn=conn
+            )
+            match["total_quantity"] += quantity
+            match["entry_count"] += 1
+            if (
+                budget_cap_usd
+                and price
+                and price_to_cents(price) <= price_to_cents(budget_cap_usd)
+            ):
+                match["within_budget_quantity"] += quantity
+    matches = sorted(
+        grouped.values(),
+        key=lambda item: (
+            -item["within_budget_quantity"],
+            -item["total_quantity"],
+            item["display_name"].lower(),
+        ),
+    )
+    total_quantity = sum(item["total_quantity"] for item in matches)
+    within_budget_quantity = sum(
+        item["within_budget_quantity"] for item in matches
     )
     return {
-        "matches": matches,
-        "user_count": totals["user_count"],
-        "total_quantity": totals["total_quantity"],
-        "within_budget_quantity": totals["within_budget_quantity"],
+        "matches": matches[: max(1, int(limit))],
+        "user_count": len(matches),
+        "total_quantity": total_quantity,
+        "within_budget_quantity": within_budget_quantity,
     }
 
 

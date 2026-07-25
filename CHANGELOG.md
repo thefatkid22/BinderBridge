@@ -8,6 +8,8 @@ The project uses semantic versioning while releases are published. During the al
 
 ### Added
 
+- Added viewer-selectable Scryfall or Mana Pool market pricing across web, Android, APIs, exports, wishlists, matching, and trade calculations
+- Added an atomic global Mana Pool price cache, durable daily sync job, admin health/status controls, and source-aware price history and alerts
 - Added password-confirmed Android Account Center APIs for profile, privacy, in-app notification, email delivery, digest, timezone, and quiet-hours preferences
 - Added typed Android app sessions with account-summary, active-device listing, current-session logout, and remote session-revocation API endpoints
 - Added rate-limited Android username/password sign-in with authenticator and recovery-code support, issuing revocable, expiring bearer sessions without requiring users to create API tokens manually
@@ -16,6 +18,7 @@ The project uses semantic versioning while releases are published. During the al
 
 ### Changed
 
+- Locked trade valuations to the initiator's selected source, retained that basis in counters, and preserved per-card fallback labels in immutable snapshots
 - Made wanted-card API writes honor Scryfall enrichment requests so native clients can populate artwork and print metadata consistently with collection cards
 
 - Made the test harness isolate local INI and environment configuration so developer settings cannot change test expectations

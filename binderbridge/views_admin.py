@@ -1279,6 +1279,7 @@ def render_admin_health(user, notice=None, status="info"):
     backup_integrity = backups["integrity"]
     scryfall_bulk = health["scryfall"]["bulk"]
     scryfall_prices = health["scryfall"]["prices"]
+    manapool_prices = health.get("manapool", {})
     email = health["email"]
     notifications = health["notifications"]
     setup_warnings = health.get("setup_warnings", [])
@@ -1296,6 +1297,14 @@ def render_admin_health(user, notice=None, status="info"):
         if scryfall_bulk.get("status") in ("error", "failed") or scryfall_bulk.get("error") or scryfall_prices.get("status") in ("error", "failed") or scryfall_prices.get("error")
         else "warning"
         if int(dashboard["metrics"].get("scryfall_attention", 0) or 0)
+        else "ok"
+    )
+    manapool_severity = (
+        "error"
+        if manapool_prices.get("status") in ("error", "failed")
+        or manapool_prices.get("error")
+        else "warning"
+        if not int(manapool_prices.get("cached_prices", 0) or 0)
         else "ok"
     )
     email_severity = "error" if failed_email_count else "warning" if pending_email_count else "info" if not email["configured"] else "ok"
@@ -1364,6 +1373,7 @@ def render_admin_health(user, notice=None, status="info"):
     backup_error = f'<p class="notice error compact">{e(auto_backup["last_error"])}</p>' if auto_backup["last_error"] else ""
     bulk_error = f'<p class="notice error compact">{e(scryfall_bulk.get("error", ""))}</p>' if scryfall_bulk.get("error") else ""
     price_error = f'<p class="notice error compact">{e(scryfall_prices.get("error", ""))}</p>' if scryfall_prices.get("error") else ""
+    manapool_error = f'<p class="notice error compact">{e(manapool_prices.get("error", ""))}</p>' if manapool_prices.get("error") else ""
     retention_last_run = health_time_label(retention["last_run"]) if retention["last_run"] else "Never"
     content = f"""
     <section class="section-heading">
@@ -1517,6 +1527,20 @@ def render_admin_health(user, notice=None, status="info"):
             </div>
             {bulk_error}
             {price_error}
+        </article>
+        <article class="{health_card_class('panel', manapool_severity)}">
+            <div class="panel-heading">
+                <h2>Mana Pool refresh</h2>
+                <span class="status {health_status_class(manapool_prices.get("status", ""))}">{e(manapool_prices.get("status", "unknown"))}</span>
+            </div>
+            <div class="detail-grid">
+                <span>Cached printings</span><strong>{e(manapool_prices.get("cached_prices", 0))}</strong>
+                <span>Last success</span><strong>{e(health_time_label(manapool_prices.get("updated_at", "")))}</strong>
+                <span>Feed timestamp</span><strong>{e(health_time_label(manapool_prices.get("source_updated_at", "")))}</strong>
+                <span>Automatic refresh</span><strong>{e("On" if manapool_prices.get("auto") else "Off")}</strong>
+                <span>Interval</span><strong>{e(manapool_prices.get("interval_hours", ""))} hours</strong>
+            </div>
+            {manapool_error}
         </article>
         <article class="{health_card_class('panel', email_severity)}">
             <div class="panel-heading">
@@ -1770,6 +1794,7 @@ def render_admin_jobs(user, notice=None, status="info"):
     dashboard = maintenance_job_dashboard()
     metrics = dashboard["metrics"]
     price_refresh = dashboard["scryfall_price_refresh"]
+    manapool_refresh = dashboard["manapool_price_refresh"]
     import_rows = "".join(admin_job_import_row(batch) for batch in dashboard["imports"])
     import_rows = import_rows or render_empty_action_state(
         "No import batches have been recorded yet.",
@@ -1797,12 +1822,14 @@ def render_admin_jobs(user, notice=None, status="info"):
     background_rows = "".join(admin_job_background_row(item) for item in dashboard["background_jobs"])
     background_rows = background_rows or render_empty_action_state(
         "No durable background jobs have been recorded.",
-        "Scheduled backups, webhook delivery, notifications, and Scryfall work will be listed here.",
+        "Scheduled backups, webhook delivery, notifications, and pricing work will be listed here.",
         tag="li",
     )
     runner = dashboard["job_runner"]
     price_error = f'<p class="notice error compact">{e(price_refresh.get("error", ""))}</p>' if price_refresh.get("error") else ""
     price_retry_disabled = " disabled" if price_refresh.get("status") in ("running", "queued") else ""
+    manapool_error = f'<p class="notice error compact">{e(manapool_refresh.get("error", ""))}</p>' if manapool_refresh.get("error") else ""
+    manapool_retry_disabled = " disabled" if manapool_refresh.get("status") in ("running", "queued") else ""
     content = f"""
     <section class="section-heading">
         <div>
@@ -1841,7 +1868,7 @@ def render_admin_jobs(user, notice=None, status="info"):
             <div class="panel-heading">
                 <div>
                     <h2>Durable background runner</h2>
-                    <p class="muted compact">Leased, retryable orchestration for Scryfall, backups, notifications, and webhooks.</p>
+                    <p class="muted compact">Leased, retryable orchestration for pricing, backups, notifications, and webhooks.</p>
                 </div>
                 <div class="status-row">
                     <span class="pill">{e(runner.get("mode", "unknown"))} mode</span>
@@ -1895,6 +1922,25 @@ def render_admin_jobs(user, notice=None, status="info"):
                 <div class="status-row">{render_health_status_counts(dashboard["price_counts"])}</div>
             </div>
             <ul class="stack-list job-list">{price_rows}</ul>
+        </article>
+        <article class="panel job-dashboard-card">
+            <div class="panel-heading">
+                <div>
+                    <h2>Mana Pool price refresh</h2>
+                    <p class="muted compact">Atomic market-price feed sync. Failed downloads preserve the last successful cache.</p>
+                </div>
+                <form method="post" action="/admin/jobs/manapool-prices/retry">
+                    <button class="button secondary small" type="submit"{manapool_retry_disabled}>Retry now</button>
+                </form>
+            </div>
+            <div class="detail-grid">
+                <span>Status</span><strong>{e(admin_job_status_label(manapool_refresh.get("status", "unknown")))}</strong>
+                <span>Last success</span><strong>{e(admin_job_time_label(manapool_refresh.get("updated_at", "")))}</strong>
+                <span>Feed timestamp</span><strong>{e(admin_job_time_label(manapool_refresh.get("source_updated_at", "")))}</strong>
+                <span>Cached printings</span><strong>{e(manapool_refresh.get("cached_prices", 0))}</strong>
+                <span>Schedule</span><strong>{e("On" if manapool_refresh.get("auto") else "Off")}, every {e(manapool_refresh.get("interval_hours", ""))} hours</strong>
+            </div>
+            {manapool_error}
         </article>
         <article class="panel job-dashboard-card">
             <div class="panel-heading">

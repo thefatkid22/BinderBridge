@@ -6,7 +6,7 @@ from binderbridge.session_tokens import is_session_token_hash, session_token_has
 
 
 SCHEMA_VERSION_KEY = "schema_version"
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 
 def db_schema_version(conn):
@@ -661,6 +661,72 @@ def migrate_api_idempotency(conn):
     )
 
 
+def migrate_provider_price_cache(conn):
+    """Add the global provider cache and isolate history by requested basis."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS provider_price_cache (
+            provider TEXT NOT NULL,
+            scryfall_id TEXT NOT NULL,
+            set_code TEXT NOT NULL DEFAULT '',
+            collector_number TEXT NOT NULL DEFAULT '',
+            regular_price_usd TEXT NOT NULL DEFAULT '',
+            foil_price_usd TEXT NOT NULL DEFAULT '',
+            source_url TEXT NOT NULL DEFAULT '',
+            available_quantity INTEGER NOT NULL DEFAULT 0,
+            source_updated_at TEXT NOT NULL DEFAULT '',
+            fetched_at TEXT NOT NULL,
+            PRIMARY KEY (provider, scryfall_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_provider_price_cache_printing
+            ON provider_price_cache(provider, set_code COLLATE NOCASE, collector_number COLLATE NOCASE);
+        """
+    )
+    history_columns = {
+        column["name"] for column in conn.execute("PRAGMA table_info(price_history)").fetchall()
+    }
+    added_price_basis = "price_basis" not in history_columns
+    if added_price_basis:
+        conn.execute(
+            "ALTER TABLE price_history ADD COLUMN price_basis TEXT NOT NULL DEFAULT 'scryfall'"
+        )
+        conn.execute(
+            """
+            UPDATE price_history
+            SET price_basis = 'scryfall', price_source = 'scryfall'
+            """
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE price_history
+            SET price_basis = 'scryfall'
+            WHERE price_basis NOT IN ('scryfall', 'manapool')
+            """
+        )
+    conn.execute(
+        """
+        UPDATE users
+        SET preferred_price_source = 'scryfall'
+        WHERE preferred_price_source NOT IN ('scryfall', 'manapool')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE trades
+        SET price_source_preference = 'scryfall'
+        WHERE price_source_preference NOT IN ('scryfall', 'manapool')
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_price_history_item_basis_source
+            ON price_history(collection_item_id, price_basis, price_source, observed_at);
+        """
+    )
+
+
 SCHEMA_MIGRATIONS = (
     (1, "hot path indexes", migrate_hot_path_indexes),
     (2, "trade dispute evidence and trends", migrate_dispute_moderation),
@@ -678,6 +744,7 @@ SCHEMA_MIGRATIONS = (
     (14, "typed Android app sessions and account scope", migrate_api_session_credentials),
     (15, "one-way browser session token storage", migrate_browser_session_storage),
     (16, "persistent API idempotency responses", migrate_api_idempotency),
+    (17, "provider price cache and source-aware history", migrate_provider_price_cache),
 )
 
 
@@ -733,6 +800,7 @@ __all__ = [
     "migrate_api_session_credentials",
     "migrate_browser_session_storage",
     "migrate_api_idempotency",
+    "migrate_provider_price_cache",
     "SCHEMA_MIGRATIONS",
     "migration_timestamp",
     "record_schema_migration_history",

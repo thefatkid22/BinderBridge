@@ -22,6 +22,7 @@ def trade_matchmaking_candidate_rows(user_id):
             want_items.budget_cap_usd AS want_budget_cap_usd,
             want_items.preferred_printing_notes AS want_preferred_printing_notes,
             collection_items.id AS collection_item_id,
+            collection_items.game,
             collection_items.card_name,
             collection_items.set_name,
             collection_items.set_code,
@@ -30,6 +31,8 @@ def trade_matchmaking_candidate_rows(user_id):
             collection_items.finish,
             collection_items.language,
             collection_items.price_usd,
+            collection_items.price_source,
+            collection_items.scryfall_id,
             collection_items.image_url,
             collection_items.type_line,
             collection_items.quantity_for_trade
@@ -77,6 +80,7 @@ def trade_matchmaking_candidate_rows(user_id):
             want_items.budget_cap_usd AS want_budget_cap_usd,
             want_items.preferred_printing_notes AS want_preferred_printing_notes,
             collection_items.id AS collection_item_id,
+            collection_items.game,
             collection_items.card_name,
             collection_items.set_name,
             collection_items.set_code,
@@ -85,6 +89,8 @@ def trade_matchmaking_candidate_rows(user_id):
             collection_items.finish,
             collection_items.language,
             collection_items.price_usd,
+            collection_items.price_source,
+            collection_items.scryfall_id,
             collection_items.image_url,
             collection_items.type_line,
             collection_items.quantity_for_trade

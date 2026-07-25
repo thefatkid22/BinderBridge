@@ -1121,6 +1121,10 @@ def render_account(user, notice=None, status="info", recovery_codes=None, active
         f'<option value="{e(value)}"{selected(row_value(user, "collection_value_visibility", VISIBILITY_MEMBERS), value)}>{e(label)}</option>'
         for value, label in VALUE_VISIBILITY_OPTIONS
     )
+    price_source_options = "".join(
+        f'<option value="{e(value)}"{selected(normalize_price_basis(row_value(user, "preferred_price_source", "scryfall")), value)}>{e(label)}</option>'
+        for value, label in PRICE_BASIS_OPTIONS
+    )
     price_alert_checked = checked(bool(row_value(user, "price_alerts_enabled", 1)))
     price_alert_threshold = row_value(user, "price_alert_threshold_percent", "0") or "0"
     watchlist_alert_checked = checked(bool(row_value(user, "watchlist_alerts_enabled", 1)))
@@ -1299,6 +1303,10 @@ def render_account(user, notice=None, status="info", recovery_codes=None, active
                 </label>
                 <label class="span-2">Who can see collection values
                     <select name="collection_value_visibility">{value_visibility_options}</select>
+                </label>
+                <label class="span-2">Default price source
+                    <select name="preferred_price_source">{price_source_options}</select>
+                    <span class="muted compact">Mana Pool market prices fall back to Scryfall per card when unavailable or etched.</span>
                 </label>
                 <label class="span-2">Bio
                     <textarea name="bio" rows="5" maxlength="1000">{e(user["bio"])}</textarea>

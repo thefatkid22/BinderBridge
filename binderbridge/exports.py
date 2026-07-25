@@ -133,6 +133,25 @@ def record_dict(record):
     return dict(record) if record is not None else {}
 
 
+def resolved_export_record(record, price_basis):
+    data = record_dict(record)
+    priced = (
+        data
+        if row_value(data, "requested_price_basis", "")
+        == normalize_price_basis(price_basis)
+        else apply_price_basis(data, price_basis)
+    )
+    data["price_usd"] = row_value(priced, "display_price_usd", "")
+    data["price_source"] = row_value(priced, "display_price_source", "")
+    data["requested_price_basis"] = row_value(
+        priced, "requested_price_basis", normalize_price_basis(price_basis)
+    )
+    data["used_price_fallback"] = bool(
+        row_value(priced, "used_price_fallback", False)
+    )
+    return data
+
+
 def csv_export_bytes(fieldnames, records):
     output = io.StringIO(newline="")
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
@@ -150,7 +169,7 @@ def json_export_bytes(data):
 def export_collection_rows(user_id, query=None):
     filters = collection_filter_values(query or {})
     where, params = collection_where(user_id, filters)
-    return rows(
+    records = rows(
         f"""
         SELECT *
         FROM collection_items
@@ -159,6 +178,10 @@ def export_collection_rows(user_id, query=None):
         """,
         params,
     )
+    user = row("SELECT preferred_price_source FROM users WHERE id = ?", (user_id,))
+    basis = row_value(user, "preferred_price_source", "scryfall")
+    priced_records = apply_price_basis_rows(records, basis)
+    return [resolved_export_record(record, basis) for record in priced_records]
 
 
 def export_collection_csv(user_id, query=None):
@@ -167,7 +190,7 @@ def export_collection_csv(user_id, query=None):
 
 
 def export_wants_rows(user_id):
-    return rows(
+    records = rows(
         """
         SELECT *
         FROM want_items
@@ -176,6 +199,10 @@ def export_wants_rows(user_id):
         """,
         (user_id,),
     )
+    user = row("SELECT preferred_price_source FROM users WHERE id = ?", (user_id,))
+    basis = row_value(user, "preferred_price_source", "scryfall")
+    priced_records = apply_price_basis_rows(records, basis)
+    return [resolved_export_record(record, basis) for record in priced_records]
 
 
 def export_wants_csv(user_id):
@@ -185,9 +212,15 @@ def export_wants_csv(user_id):
 
 def export_group_collection_rows(group):
     items = collection_group_items(group["id"])
+    owner = row(
+        "SELECT preferred_price_source FROM users WHERE id = ?",
+        (group["user_id"],),
+    )
+    basis = row_value(owner, "preferred_price_source", "scryfall")
+    items = apply_price_basis_rows(items, basis)
     records = []
     for item in items:
-        data = record_dict(item)
+        data = resolved_export_record(item, basis)
         data["group_name"] = group["name"]
         data["group_type"] = group["group_type"]
         data["collection_item_id"] = item["id"]
@@ -197,9 +230,15 @@ def export_group_collection_rows(group):
 
 def export_group_want_rows(group):
     items = wishlist_group_items(group["id"])
+    owner = row(
+        "SELECT preferred_price_source FROM users WHERE id = ?",
+        (group["user_id"],),
+    )
+    basis = row_value(owner, "preferred_price_source", "scryfall")
+    items = apply_price_basis_rows(items, basis)
     records = []
     for item in items:
-        data = record_dict(item)
+        data = resolved_export_record(item, basis)
         data["group_name"] = group["name"]
         data["group_type"] = group["group_type"]
         data["want_item_id"] = item["id"]
