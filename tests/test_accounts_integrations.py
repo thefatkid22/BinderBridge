@@ -552,6 +552,11 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
             [item["value"] for item in summary["data"]["options"]["collection_value_visibility"]],
             ["members", "trusted", "private"],
         )
+        self.assertEqual(summary["data"]["profile"]["preferred_price_source"], "scryfall")
+        self.assertEqual(
+            [item["value"] for item in summary["data"]["options"]["price_sources"]],
+            ["scryfall", "manapool"],
+        )
 
         rejected, rejected_status = dispatch("PATCH", "/api/v1/account/profile", {
             "current_password": "wrong-password",
@@ -576,12 +581,21 @@ class AccountsIntegrationsTests(BinderBridgeTestCase):
             "bio": "Updated from Android.",
             "public_email": True,
             "collection_value_visibility": "trusted",
+            "preferred_price_source": "manapool",
         }, token)
         self.assertEqual(profile_status, HTTPStatus.OK)
         self.assertEqual(profile["data"]["profile"]["username"], "account-center-updated")
         self.assertEqual(profile["data"]["profile"]["display_name"], "Native Account")
         self.assertEqual(profile["data"]["profile"]["collection_value_visibility"], "trusted")
+        self.assertEqual(profile["data"]["profile"]["preferred_price_source"], "manapool")
         self.assertTrue(profile["data"]["notification_preferences"]["in_app"]["trade_offer"])
+
+        invalid_source, invalid_source_status = dispatch("PATCH", "/api/v1/account/profile", {
+            "current_password": "password123",
+            "preferred_price_source": "cardmarket",
+        }, token)
+        self.assertEqual(invalid_source_status, HTTPStatus.BAD_REQUEST)
+        self.assertIn("Scryfall or Mana Pool", invalid_source["error"])
 
         original_email_delivery_configured = app._api.email_delivery_configured
         app._api.email_delivery_configured = lambda: True

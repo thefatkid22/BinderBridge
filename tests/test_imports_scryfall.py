@@ -537,11 +537,12 @@ class ImportsScryfallTests(BinderBridgeTestCase):
         self.assertEqual(result, {"provider": "scryfall", "applied": 0, "queued": 0, "configured": True})
         self.assertEqual(card["price_source"], "scryfall")
 
-    def test_non_scryfall_price_inputs_normalize_to_scryfall(self):
+    def test_supported_price_inputs_normalize_and_unknowns_fall_back(self):
         self.assertEqual(app.normalize_price_basis("tcgplayer"), "scryfall")
-        self.assertEqual(app.normalize_price_source("TCGplayer"), "scryfall")
-        self.assertEqual(app.normalize_price_source("Manual"), "scryfall")
-        self.assertEqual(app.price_source_label("cardmarket"), "Scryfall")
+        self.assertEqual(app.normalize_price_source("TCGplayer"), "")
+        self.assertEqual(app.normalize_price_source("Manual"), "")
+        self.assertEqual(app.normalize_price_source("Mana Pool"), "manapool")
+        self.assertEqual(app.price_source_label("manapool"), "Mana Pool")
 
     def test_manual_card_lookup_can_enrich_before_save(self):
         user_id = app.create_user("manual", "password123", "Manual")

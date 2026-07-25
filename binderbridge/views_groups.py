@@ -848,7 +848,24 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         )
         filtered_count = wishlist_group_item_count(group_id, filters)
         page, per_page, page_count, offset = pagination_state(query, filtered_count)
-        group_items = wishlist_group_items(group_id, order_clause, filters, per_page, offset)
+        if current_sort == "value":
+            group_items = wishlist_group_items(
+                group_id, order_clause, filters, max(filtered_count, 1), 0
+            )
+            group_items = apply_viewer_prices(group_items, user)
+            group_items.sort(
+                key=lambda item: price_to_cents(
+                    row_value(item, "display_price_usd", "")
+                )
+                * int(row_value(item, "desired_quantity", 0) or 0),
+                reverse=current_dir == "desc",
+            )
+            group_items = group_items[offset : offset + per_page]
+        else:
+            group_items = wishlist_group_items(
+                group_id, order_clause, filters, per_page, offset
+            )
+            group_items = apply_viewer_prices(group_items, user)
         controls = render_group_item_controls(group, query, filters, current_sort, current_dir)
         pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count, "group-items")
         redirect_to = page_url(f"/groups/{group_id}", query, page, per_page) + "#group-cards"
@@ -869,7 +886,24 @@ def render_group_detail(user, group_id, notice=None, status="info", import_resul
         )
         filtered_count = collection_group_item_count(group_id, filters)
         page, per_page, page_count, offset = pagination_state(query, filtered_count)
-        group_items = collection_group_items(group_id, order_clause, filters, per_page, offset)
+        if current_sort == "value":
+            group_items = collection_group_items(
+                group_id, order_clause, filters, max(filtered_count, 1), 0
+            )
+            group_items = apply_viewer_prices(group_items, user)
+            group_items.sort(
+                key=lambda item: price_to_cents(
+                    row_value(item, "display_price_usd", "")
+                )
+                * int(row_value(item, "group_quantity", 0) or 0),
+                reverse=current_dir == "desc",
+            )
+            group_items = group_items[offset : offset + per_page]
+        else:
+            group_items = collection_group_items(
+                group_id, order_clause, filters, per_page, offset
+            )
+            group_items = apply_viewer_prices(group_items, user)
         controls = render_group_item_controls(group, query, filters, current_sort, current_dir)
         pagination = render_pagination(f"/groups/{group_id}", query, filtered_count, page, per_page, page_count, "group-items")
         redirect_to = page_url(f"/groups/{group_id}", query, page, per_page) + "#group-cards"
@@ -973,6 +1007,7 @@ def render_shared_group(link, token):
             """,
             (group_id,),
         )
+        items = [apply_price_basis(item, "scryfall") for item in items]
         body = "".join(
             f"""
             <li class="group-item"><div><strong>{e(item["card_name"])}</strong>
@@ -992,6 +1027,7 @@ def render_shared_group(link, token):
             """,
             (group_id,),
         )
+        items = [apply_price_basis(item, "scryfall") for item in items]
         body = "".join(
             f"""
             <li class="group-item"><div class="card-cell">
@@ -1126,6 +1162,15 @@ def render_public_group_detail(user, member_id, group_id, query=None, notice=Non
             """,
             [group_id, *want_params],
         )
+        items = apply_viewer_prices(items, user)
+        if current_sort == "value":
+            items.sort(
+                key=lambda item: price_to_cents(
+                    row_value(item, "display_price_usd", "")
+                )
+                * int(row_value(item, "desired_quantity", 0) or 0),
+                reverse=current_dir == "desc",
+            )
         items_html = render_public_group_want_items(user, member, group, items)
         sort_options = WANT_SORT_OPTIONS
     else:
@@ -1149,6 +1194,15 @@ def render_public_group_detail(user, member_id, group_id, query=None, notice=Non
             """,
             [group_id, *collection_params],
         )
+        items = apply_viewer_prices(items, user)
+        if current_sort == "value":
+            items.sort(
+                key=lambda item: price_to_cents(
+                    row_value(item, "display_price_usd", "")
+                )
+                * int(row_value(item, "group_quantity", 0) or 0),
+                reverse=current_dir == "desc",
+            )
         items_html = render_public_group_collection_items(user, member, group, items)
         sort_options = CARD_SORT_OPTIONS
     sort_bar = render_sort_bar(f"/members/{member_id}/groups/{group_id}", query, sort_options, current_sort, current_dir)

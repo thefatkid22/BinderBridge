@@ -423,7 +423,9 @@ def collection_stat_bucket(items, label_func, total_quantity, limit=8):
         label = str(label_func(item) or "").strip() or "Unspecified"
         quantity = max(0, int(row_value(item, "quantity", 0) or 0))
         trade_quantity = max(0, int(row_value(item, "quantity_for_trade", 0) or 0))
-        unit_cents = price_to_cents(row_value(item, "price_usd", ""))
+        unit_cents = price_to_cents(
+            row_value(item, "display_price_usd", row_value(item, "price_usd", ""))
+        )
         bucket = buckets.setdefault(
             label,
             {"label": label, "entries": 0, "quantity": 0, "trade_quantity": 0, "value_cents": 0},
@@ -440,7 +442,7 @@ def collection_stat_bucket(items, label_func, total_quantity, limit=8):
         bucket["percent"] = stat_percent(bucket["quantity"], total_quantity)
     return bucket_rows[:limit] if limit else bucket_rows
 
-def collection_statistics(user_id):
+def collection_statistics(user_id, price_basis="scryfall"):
     items = rows(
         """
         SELECT *
@@ -450,6 +452,9 @@ def collection_statistics(user_id):
         """,
         (user_id,),
     )
+    apply_basis_rows = globals().get("apply_price_basis_rows")
+    if apply_basis_rows:
+        items = apply_basis_rows(items, price_basis)
     group_counts = rows(
         """
         SELECT group_type, COUNT(*) AS count
@@ -483,7 +488,9 @@ def collection_statistics(user_id):
         total_cards += quantity
         trade_cards += trade_quantity
         unique_names.add(str(row_value(item, "card_name", "") or "").strip().lower())
-        normalized_price = normalize_price_usd(row_value(item, "price_usd", ""))
+        normalized_price = normalize_price_usd(
+            row_value(item, "display_price_usd", row_value(item, "price_usd", ""))
+        )
         unit_cents = price_to_cents(normalized_price)
         if row_value(item, "is_public", 1):
             public_entries += 1

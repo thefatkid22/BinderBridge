@@ -328,6 +328,8 @@ _install_feature_module(_deck_imports)
 
 from binderbridge import scryfall_client as _scryfall_client
 _install_feature_module(_scryfall_client)
+from binderbridge import manapool as _manapool
+_install_feature_module(_manapool)
 from binderbridge import scryfall_jobs as _scryfall_jobs
 _install_feature_module(_scryfall_jobs)
 from binderbridge import background_jobs as _background_jobs
@@ -640,6 +642,8 @@ class App(BaseHTTPRequestHandler):
                 return self.admin_job_retry_price(user)
             if path == "/admin/jobs/scryfall-prices/retry" and method == "POST":
                 return self.admin_job_retry_scryfall_prices(user)
+            if path == "/admin/jobs/manapool-prices/retry" and method == "POST":
+                return self.admin_job_retry_manapool_prices(user)
             if path == "/admin/jobs/notifications/retry" and method == "POST":
                 return self.admin_job_retry_notification(user)
             if path == "/admin/jobs/background/retry" and method == "POST":

@@ -249,8 +249,11 @@ def match_entry_quantity(row_data):
     return max(0, min(desired, available))
 
 
-def trade_match_entry_from_row(row_data):
+def trade_match_entry_from_row(row_data, price_basis="scryfall"):
     quantity = match_entry_quantity(row_data)
+    resolved_price, actual_source, requested_basis, used_fallback = resolve_card_price(
+        row_data, price_basis
+    )
     entry = {
         "collection_item_id": row_data["collection_item_id"],
         "want_id": row_data["want_id"],
@@ -261,7 +264,10 @@ def trade_match_entry_from_row(row_data):
         "condition": row_value(row_data, "condition", ""),
         "finish": row_value(row_data, "finish", ""),
         "language": row_value(row_data, "language", ""),
-        "price_usd": normalize_price_usd(row_value(row_data, "price_usd", "")),
+        "price_usd": resolved_price,
+        "price_source": actual_source,
+        "requested_price_basis": requested_basis,
+        "used_price_fallback": used_fallback,
         "image_url": row_value(row_data, "image_url", ""),
         "type_line": row_value(row_data, "type_line", ""),
         "priority": row_value(row_data, "want_priority", "normal"),
@@ -280,7 +286,7 @@ def trade_match_entry_from_row(row_data):
     return entry
 
 
-def add_trade_match_entry(match, side, row_data):
+def add_trade_match_entry(match, side, row_data, price_basis="scryfall"):
     quantity = match_entry_quantity(row_data)
     if quantity <= 0:
         return
@@ -289,7 +295,7 @@ def add_trade_match_entry(match, side, row_data):
     current = entries.get(collection_item_id)
     if current and current["quantity"] >= quantity:
         return
-    entries[collection_item_id] = trade_match_entry_from_row(row_data)
+    entries[collection_item_id] = trade_match_entry_from_row(row_data, price_basis)
 
 
 def sorted_trade_match_entries(entries):
@@ -328,6 +334,8 @@ def finalize_trade_match(match):
 
 def trade_matchmaking_results(user_id):
     matches = {}
+    viewer = row("SELECT preferred_price_source FROM users WHERE id = ?", (user_id,))
+    price_basis = row_value(viewer, "preferred_price_source", "scryfall")
     they_have_rows, they_want_rows = trade_matchmaking_candidate_rows(user_id)
     for row_data in they_have_rows:
         member_id = row_data["member_id"]
@@ -341,7 +349,7 @@ def trade_matchmaking_results(user_id):
                 "they_want_entry_map": {},
             },
         )
-        add_trade_match_entry(match, "they_have", row_data)
+        add_trade_match_entry(match, "they_have", row_data, price_basis)
     for row_data in they_want_rows:
         member_id = row_data["member_id"]
         match = matches.setdefault(
@@ -354,7 +362,7 @@ def trade_matchmaking_results(user_id):
                 "they_want_entry_map": {},
             },
         )
-        add_trade_match_entry(match, "they_want", row_data)
+        add_trade_match_entry(match, "they_want", row_data, price_basis)
     finalized = [
         finalize_trade_match(match)
         for match in matches.values()
@@ -705,7 +713,7 @@ def render_want_share_panel(user_id, want, share_result=None):
             </div>
             <label>Label<input name="label" maxlength="80" placeholder="Local trade request"></label>
             <label>Expires<select name="expires_days"><option value="7">In 7 days</option><option value="30" selected>In 30 days</option><option value="90">In 90 days</option><option value="0">Never</option></select></label>
-            <label class="checkbox-line span-2"><input type="checkbox" name="show_values" value="1"> Show Scryfall value</label>
+            <label class="checkbox-line span-2"><input type="checkbox" name="show_values" value="1"> Show price</label>
             {result_panel}
             <div class="form-actions span-2"><button class="button primary" type="submit">Create private link</button></div>
         </form>
@@ -778,8 +786,8 @@ def render_shared_want_card(link, token):
         </div>
         <div class="want-side">
             <span class="pill">{e("Budget up to $" + budget_cap + " each" if budget_cap else "No budget cap")}</span>
-            {price_pill(want) if show_values else ""}
-            <span class="muted compact">{e("Scryfall value shown" if show_values else "Scryfall value hidden")}</span>
+            {price_pill(apply_price_basis(want, "scryfall")) if show_values else ""}
+            <span class="muted compact">{e("Price shown" if show_values else "Price hidden")}</span>
         </div>
     </article>
     """
@@ -966,9 +974,27 @@ def render_wants(
     if edit_want_id:
         wants = want_rows_for_user(user["id"], order_clause)
         pagination = ""
+    elif current_sort == "value":
+        wants = want_page_rows(
+            user["id"], filters, order_clause, max(total_count, 1), 0
+        )
+        pagination = render_pagination(
+            "/wants", query, total_count, page, per_page, page_count, "want-items"
+        )
     else:
         wants = want_page_rows(user["id"], filters, order_clause, per_page, offset)
         pagination = render_pagination("/wants", query, total_count, page, per_page, page_count, "want-items")
+    wants = apply_viewer_prices(wants, user)
+    if current_sort == "value":
+        wants.sort(
+            key=lambda want: price_to_cents(
+                row_value(want, "display_price_usd", "")
+            )
+            * int(row_value(want, "desired_quantity", 0) or 0),
+            reverse=current_dir == "desc",
+        )
+        if not edit_want_id:
+            wants = wants[offset : offset + per_page]
     bulk_form_id = "wants-bulk-form"
     want_cards = "".join(
         render_want_card(

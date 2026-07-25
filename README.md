@@ -28,11 +28,11 @@ License: **GNU AGPL-3.0**
 - Versioned SQLite schema migrations with hot-path indexes for collection, browse, wishlist, trade, and Scryfall lookup pages
 - Admin database maintenance tools with guarded ANALYZE/VACUUM actions, index-planner visibility, storage-growth snapshots, and migration history
 - Admin backup and restore tools with scheduled automatic backups, retention settings, and pre-restore safety snapshots
-- Admin maintenance health dashboard for database size, backup status, Scryfall refresh status, queued jobs, email configuration, failed notifications, setup warnings, and needs-attention grouping
+- Admin maintenance health dashboard for database size, backup status, Scryfall and Mana Pool refresh status, queued jobs, email configuration, failed notifications, setup warnings, and needs-attention grouping
 - Admin collection health dashboard for duplicate rows, missing Scryfall data, invalid finishes, stale prices, per-user issue concentration, and public/private coverage
 - Admin data retention controls for pruning read notifications, audit logs, completed webhook delivery records, and resolved dispute evidence
 - Admin first-run setup wizard and onboarding checklist with small-group recommended defaults, public URL/config documentation links, SMTP readiness, backups, Scryfall sync, copyable manual invite links, and first collection import
-- Admin import/job dashboard for CSV imports, Scryfall enrichment, Scryfall price refresh status, failed jobs, retries, and import undo
+- Admin import/job dashboard for CSV imports, Scryfall enrichment, Scryfall and Mana Pool price refresh status, failed jobs, retries, and import undo
 - Admin maintenance health actions for retrying recoverable jobs, replaying failed notification emails, checking backup integrity, and surfacing setup warnings
 - Personal collection tracking
 - Collection statistics for value totals, rarity mix, condition, finish, language, visibility, and card-data coverage
@@ -57,7 +57,7 @@ License: **GNU AGPL-3.0**
 - Trade matchmaking that highlights users with mutual want/trade overlap and preloads a balanced trade draft
 - Native API trade matches with privacy-filtered card selections for dashboard summaries and prefilled Android proposals
 - Scryfall-enriched wanted-card API writes for consistent artwork and printing metadata in native clients
-- Trade-builder recommendations for wishlist matches and Scryfall value-balance helpers
+- Trade-builder recommendations for wishlist matches and viewer-selected value-balance helpers
 - Trade issue reporting with evidence attachments, admin review queue, resolution notes, repeat-issue trend reporting, participant notifications, and audit logging
 - Per-user reputation summaries and feedback after completed trades
 - Notification center for trade offers, comments, counters, and status changes
@@ -68,11 +68,11 @@ License: **GNU AGPL-3.0**
 - Signed webhook endpoints for notifications, trade events, imports, price updates, and backup failures
 - Watchlist alerts when another user lists a card from your wishlist for trade
 - Trusted-user one-directional trades with confirmation warnings
-- Stored USD prices from Scryfall for trade value comparisons
-- Scryfall price history with value-change alerts
-- Local Scryfall bulk-data price refresh for collection prices
-- Automatic daily Scryfall price refresh with per-user alert thresholds
-- Per-trade Scryfall price snapshots
+- Viewer-selected Scryfall or Mana Pool USD prices for values, budgets, exports, API responses, and trade comparisons
+- Source-aware price history with value-change alerts that do not treat provider changes as market movement
+- Local Scryfall bulk-data price refresh plus an atomic Mana Pool market-price cache
+- Independent automatic daily Scryfall and Mana Pool refreshes with source-aware per-user alerts
+- Immutable per-trade price snapshots locked to the initiator's selected source
 - Trade value totals and balance indicators during trade building, review, and detail views
 - Admin-configurable trade fairness warnings and optional blocking thresholds for value gaps
 - CSV imports for ManaBox, Archidekt, and generic collection exports
@@ -123,7 +123,7 @@ Uploads default to a preview step that shows how many rows will be inserted, upd
 
 Users can save custom CSV mapping presets from the import page when a source uses unusual column names. Presets can target collection imports or deck CSV imports, override the selected built-in source profile, and admins can share presets with every user on the site.
 
-When `Scryfall lookup` is enabled, MTG imports are enriched with canonical card names, set data, type line, oracle text, image URL, Scryfall URL, rarity, colors, and current USD price when available. Imports first use the local Scryfall bulk-data cache and existing SQLite lookup cache so large CSV files do not make one live request per row. Rows that cannot be matched locally are imported immediately and queued for background Scryfall enrichment after the preview is confirmed. CSV price columns are ignored; BinderBridge uses Scryfall as the only pricing source.
+When `Scryfall lookup` is enabled, MTG imports are enriched with canonical card names, set data, type line, oracle text, image URL, Scryfall URL, rarity, colors, and current USD price when available. Imports first use the local Scryfall bulk-data cache and existing SQLite lookup cache so large CSV files do not make one live request per row. Rows that cannot be matched locally are imported immediately and queued for background Scryfall enrichment after the preview is confirmed. CSV price columns are ignored; BinderBridge resolves values from the member's selected Scryfall or Mana Pool source.
 
 BinderBridge refreshes Scryfall's `default_cards` bulk file automatically as part of the background price update process and stores the fields needed for collection enrichment locally.
 
@@ -159,9 +159,13 @@ Deck imports compare the parsed list against cards already in your collection an
 
 ## Pricing
 
-BinderBridge uses Scryfall as the only pricing source. Manual prices, CSV price columns, and external marketplace feeds are not selectable in the UI. Existing non-Scryfall price source labels are normalized to Scryfall during database migration, and sent trades snapshot the Scryfall price shown at proposal time so later collection updates do not rewrite old trade value comparisons.
+Each member can choose Scryfall or Mana Pool as their default price source in account settings on web or Android. The signed-in viewer's choice controls displayed values, totals, wishlist budget checks, sorting, exports, and API responses even when viewing another member's cards. Anonymous share links use Scryfall.
 
-BinderBridge refreshes Scryfall-backed collection prices automatically every 24 hours while the app is running. It uses Scryfall bulk data first, then refreshes each user's stored collection prices from the local cache. Price observations are stored per collection entry, and users receive a notification when the automatic refresh has completed for their collection.
+Scryfall and Mana Pool refresh independently every 24 hours by default. Mana Pool uses the public `/api/v1/prices/singles` market feed: regular, showcase, and other printings use `price_market`; foil uses `price_market_foil`. Etched cards and missing or invalid Mana Pool values fall back to Scryfall and retain a Scryfall label. Matching uses exact Scryfall ID first and then only an unambiguous exact set-code/collector-number pair; duplicate feed identifiers and ambiguous printing pairs fall back safely, and card names are never used for pricing.
+
+Mana Pool imports replace the global cache atomically, so a network or incompatible-schema failure preserves the last successful snapshot. The public feed does not require or store a Mana Pool API token. Admins can inspect both refreshes and request a manual run from `Admin -> Import and job dashboard`.
+
+New trades lock both sides to the initiator's source, store the actual per-card source after fallback, and keep those item prices immutable. Counteroffers retain the original trade basis.
 
 When a CSV import needs queued Scryfall enrichment, BinderBridge processes those lookups in the background and sends one notification when the queued lookup work completes.
 
@@ -345,7 +349,8 @@ generated visual smoke screenshots outside the temporary run directory.
 - `db.py`: SQLite connection helpers, schema bootstrapping, migrations, and settings
 - `security.py`: password hashing, sessions, TOTP two-factor, and passkey/WebAuthn helpers
 - `notifications.py`: in-app notifications, optional email delivery, and import completion notices
-- `pricing.py`: Scryfall pricing normalization, price history, and value-change alerts
+- `pricing.py`: provider/basis normalization, source-aware price history, and value-change alerts
+- `manapool.py`: public Mana Pool feed validation, atomic provider cache, scheduling status, and shared price resolver
 - `formatting.py`: shared option lists, labels, money formatting, HTML escaping, suggestions, and collection stats
 - `ui_helpers.py`: compatibility facade that re-exports the helper modules while older imports continue to work
 
@@ -382,6 +387,10 @@ Schema migrations run automatically during startup. Migration history introduced
 | 11 | Personal saved searches and filter presets |
 | 12 | Persistent API and integration rate-limit events |
 | 13 | Registration moderation, pending account review, and ban-evasion signals |
+| 14 | Typed Android app sessions and account scope |
+| 15 | One-way browser session token storage |
+| 16 | Persistent API idempotency responses |
+| 17 | Provider price cache and source-aware history |
 
 ## Demo Data
 
@@ -520,6 +529,10 @@ Supported environment variables:
 - `SCRYFALL_BULK_TYPE`: Scryfall bulk-data type, default `default_cards`
 - `SCRYFALL_PRICE_REFRESH_AUTO`: set to `0`, `false`, `no`, or `off` to disable automatic price refresh
 - `SCRYFALL_PRICE_REFRESH_INTERVAL_HOURS`: automatic Scryfall price refresh interval, default `24`
+- `MANAPOOL_PRICE_REFRESH_AUTO`: disable automatic Mana Pool refresh with `0`, `false`, `no`, or `off`
+- `MANAPOOL_PRICE_REFRESH_INTERVAL_HOURS`: automatic Mana Pool refresh interval, default `24`
+- `MANAPOOL_PRICE_TIMEOUT_SECONDS`: Mana Pool feed request timeout, default `60`
+- `MANAPOOL_PRICE_FEED_URL`: Mana Pool singles price feed URL; normally leave at the public default and do not configure a token
 - `BINDERBRIDGE_PUBLIC_BASE_URL`: public URL used in invite links, for example `https://cards.example.com`
 - `BINDERBRIDGE_SMTP_HOST`: SMTP host for invite and notification email delivery
 - `BINDERBRIDGE_SMTP_PORT`: SMTP port, default `587`

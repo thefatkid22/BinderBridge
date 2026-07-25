@@ -264,7 +264,15 @@ def submit_trade_feedback(trade_id, reviewer_id, rating, body=""):
     return feedback_id
 
 
-def trade_recommendation_match_rows(owner_id, want_user_id, viewer_id, selected_ids=None, public_wants=True, limit=8):
+def trade_recommendation_match_rows(
+    owner_id,
+    want_user_id,
+    viewer_id,
+    selected_ids=None,
+    public_wants=True,
+    limit=8,
+    price_basis="",
+):
     selected_ids = {int(item_id) for item_id in (selected_ids or set()) if str(item_id).strip().isdigit()}
     where = [
         "collection_items.user_id = ?",
@@ -298,34 +306,49 @@ def trade_recommendation_match_rows(owner_id, want_user_id, viewer_id, selected_
         placeholders = ",".join("?" for _ in selected_ids)
         where.append(f"collection_items.id NOT IN ({placeholders})")
         params.extend(sorted(selected_ids))
-    return rows(
+    matches = rows(
         f"""
         SELECT
             collection_items.*,
             COUNT(want_items.id) AS matched_want_count,
             MAX(want_items.desired_quantity) AS matched_desired_quantity,
             MAX(CASE want_items.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'normal' THEN 2 WHEN 'low' THEN 1 ELSE 2 END) AS matched_want_priority_rank,
-            MAX(
-                CASE
-                    WHEN want_items.budget_cap_usd != '' AND collection_items.price_usd != ''
-                        AND CAST(collection_items.price_usd AS REAL) <= CAST(want_items.budget_cap_usd AS REAL)
-                    THEN 1 ELSE 0
-                END
-            ) AS matched_within_budget
+            GROUP_CONCAT(DISTINCT NULLIF(want_items.budget_cap_usd, '')) AS matched_budget_caps
         FROM collection_items
         JOIN want_items ON {' AND '.join(where)}
         GROUP BY collection_items.id
         ORDER BY
             matched_want_priority_rank DESC,
-            matched_within_budget DESC,
             matched_want_count DESC,
-            COALESCE(CAST(NULLIF(collection_items.price_usd, '') AS REAL), 0) DESC,
             collection_items.card_name COLLATE NOCASE,
             collection_items.set_name COLLATE NOCASE
-        LIMIT ?
         """,
-        [*params, max(1, min(int(limit or 8), 20))],
+        params,
     )
+    priced_rows = []
+    for item in matches:
+        priced = apply_trade_price_basis(item, price_basis)
+        price_cents = price_to_cents(row_value(priced, "display_price_usd", ""))
+        budget_caps = [
+            price_to_cents(value)
+            for value in str(row_value(priced, "matched_budget_caps", "") or "").split(",")
+            if normalize_price_usd(value)
+        ]
+        priced["matched_within_budget"] = int(
+            bool(price_cents and any(price_cents <= cap for cap in budget_caps))
+        )
+        priced_rows.append(priced)
+    priced_rows.sort(
+        key=lambda item: (
+            -int(row_value(item, "matched_want_priority_rank", 0) or 0),
+            -int(row_value(item, "matched_within_budget", 0) or 0),
+            -int(row_value(item, "matched_want_count", 0) or 0),
+            -price_to_cents(row_value(item, "display_price_usd", "")),
+            str(row_value(item, "card_name", "")).lower(),
+            str(row_value(item, "set_name", "")).lower(),
+        )
+    )
+    return priced_rows[: max(1, min(int(limit or 8), 20))]
 
 
 def trade_recommendation_available_rows(owner_id, viewer_id, selected_ids=None, limit=50):
@@ -346,18 +369,20 @@ def trade_recommendation_available_rows(owner_id, viewer_id, selected_ids=None, 
         FROM collection_items
         WHERE {' AND '.join(where)}
         ORDER BY
-            COALESCE(CAST(NULLIF(price_usd, '') AS REAL), 0) DESC,
             card_name COLLATE NOCASE,
             set_name COLLATE NOCASE
-        LIMIT ?
         """,
-        [*params, max(1, min(int(limit or 50), 100))],
+        params,
     )
 
 
 def trade_recommendation_quantity(item, target_cents=None):
     available = max(1, int(row_value(item, "quantity_for_trade", 1) or 1))
-    unit_cents = price_to_cents(normalize_price_usd(row_value(item, "price_usd", "")))
+    unit_cents = price_to_cents(
+        normalize_price_usd(
+            row_value(item, "display_price_usd", row_value(item, "price_usd", ""))
+        )
+    )
     if not target_cents or not unit_cents:
         return 1
     needed = max(1, int((abs(int(target_cents)) + unit_cents - 1) // unit_cents))
@@ -367,7 +392,13 @@ def trade_recommendation_quantity(item, target_cents=None):
 def trade_recommendation_card(item, side, reason, quantity=1, target_cents=None):
     item = dict(item)
     item["display_price_usd"] = normalize_price_usd(row_value(item, "display_price_usd", row_value(item, "price_usd", "")))
-    item["display_price_source"] = "scryfall" if item["display_price_usd"] else ""
+    item["display_price_source"] = (
+        normalize_price_source(
+            row_value(item, "display_price_source", row_value(item, "price_source", ""))
+        )
+        if item["display_price_usd"]
+        else ""
+    )
     unit_cents = price_to_cents(item["display_price_usd"])
     quantity = max(1, min(int(quantity or 1), int(row_value(item, "quantity_for_trade", 1) or 1)))
     score = abs(abs(int(target_cents or 0)) - (unit_cents * quantity)) if target_cents else 0
@@ -425,6 +456,7 @@ def trade_recommendations_for_pair(user_id, recipient_id, selected_offer, select
             selected_offer_ids,
             public_wants=True,
             limit=limit,
+            price_basis=price_basis,
         )
     ]
     request_wishlist = [
@@ -441,6 +473,7 @@ def trade_recommendations_for_pair(user_id, recipient_id, selected_offer, select
             selected_request_ids,
             public_wants=False,
             limit=limit,
+            price_basis=price_basis,
         )
     ]
     balance = trade_value_balance_recommendations(
@@ -454,6 +487,7 @@ def trade_recommendations_for_pair(user_id, recipient_id, selected_offer, select
         limit=limit,
     )
     return {
+        "price_basis": normalize_price_basis(price_basis),
         "offer_wishlist": offer_wishlist,
         "request_wishlist": request_wishlist,
         "balance": balance,
@@ -889,6 +923,9 @@ def create_trade_offer(proposer_id, recipient_id, proposer_note, offered, reques
             ).fetchone()
             if not counter_source:
                 raise ValueError("The original trade is no longer available to counter.")
+            price_source_preference = normalize_price_basis(
+                row_value(counter_source, "price_source_preference", "scryfall")
+            )
             trade_id = counter_trade_id
             conn.execute("DELETE FROM trade_items WHERE trade_id = ?", (trade_id,))
             conn.execute(

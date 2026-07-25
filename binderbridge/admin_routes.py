@@ -799,6 +799,30 @@ def admin_job_retry_scryfall_prices(self, user):
     return self.html(render_admin_jobs(updated, notice=result["message"], status="info" if result["started"] else "warning"))
 
 
+def admin_job_retry_manapool_prices(self, user):
+    if not require_capability(user, CAP_MANAGE_MAINTENANCE):
+        return self.not_found(user)
+    result = retry_manapool_price_refresh_async()
+    log_admin_action(
+        user["id"],
+        "manapool_price_retry",
+        None,
+        "price_refresh",
+        "Mana Pool prices",
+        result["message"],
+        admin_request_ip(self),
+        admin_user_agent(self),
+    )
+    updated = row("SELECT * FROM users WHERE id = ?", (user["id"],)) or user
+    return self.html(
+        render_admin_jobs(
+            updated,
+            notice=result["message"],
+            status="info" if result["started"] else "warning",
+        )
+    )
+
+
 def admin_job_retry_notification(self, user):
     if not require_capability(user, CAP_MANAGE_MAINTENANCE):
         return self.not_found(user)
@@ -1015,6 +1039,7 @@ __all__ = [
     "admin_job_retry_scryfall",
     "admin_job_retry_price",
     "admin_job_retry_scryfall_prices",
+    "admin_job_retry_manapool_prices",
     "admin_job_retry_notification",
     "admin_job_retry_background",
     "admin_job_cancel_background",

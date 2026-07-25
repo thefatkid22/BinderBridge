@@ -134,17 +134,15 @@ def public_profile_stats(member_id, viewer=None):
     collection_clause, collection_params = visibility_sql_for_user(viewer, "visibility", "user_id")
     want_clause, want_params = visibility_sql_for_user(viewer, "visibility", "user_id")
     group_clause, group_params = visibility_sql_for_user(viewer, "visibility", "user_id")
-    trade = row(
+    trade_items = rows(
         f"""
-        SELECT
-            COUNT(*) AS unique_trade_cards,
-            COALESCE(SUM(quantity_for_trade), 0) AS available_trade_quantity,
-            COALESCE(SUM(CAST(COALESCE(NULLIF(price_usd, ''), '0') AS REAL) * quantity_for_trade), 0) AS trade_value
+        SELECT *
         FROM collection_items
         WHERE user_id = ? AND quantity_for_trade > 0 AND {collection_clause}
         """,
         [member_id, *collection_params],
     )
+    priced_trade_items = apply_viewer_prices(trade_items, viewer)
     wants = row(
         f"""
         SELECT COUNT(*) AS count, COALESCE(SUM(desired_quantity), 0) AS desired_quantity
@@ -162,9 +160,17 @@ def public_profile_stats(member_id, viewer=None):
         [member_id, *group_params],
     )
     return {
-        "unique_trade_cards": int(row_value(trade, "unique_trade_cards", 0) or 0),
-        "available_trade_quantity": int(row_value(trade, "available_trade_quantity", 0) or 0),
-        "trade_value": float(row_value(trade, "trade_value", 0) or 0),
+        "unique_trade_cards": len(trade_items),
+        "available_trade_quantity": sum(
+            int(row_value(item, "quantity_for_trade", 0) or 0)
+            for item in trade_items
+        ),
+        "trade_value": sum(
+            price_to_cents(row_value(item, "display_price_usd", ""))
+            * int(row_value(item, "quantity_for_trade", 0) or 0)
+            for item in priced_trade_items
+        )
+        / 100,
         "wants_count": int(row_value(wants, "count", 0) or 0),
         "desired_quantity": int(row_value(wants, "desired_quantity", 0) or 0),
         "groups_count": int(row_value(groups, "count", 0) or 0),
@@ -271,6 +277,7 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
         COLLECTION_SORT_SQL,
         fallback=("card_name COLLATE NOCASE", "set_name COLLATE NOCASE"),
     )
+    value_sort = current_sort == "value"
     collection = rows(
         f"""
         SELECT *
@@ -279,8 +286,23 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
         ORDER BY {order_clause}
         LIMIT ? OFFSET ?
         """,
-        [member_id, *collection_params, per_page, offset],
+        [
+            member_id,
+            *collection_params,
+            max(total_count, 1) if value_sort else per_page,
+            0 if value_sort else offset,
+        ],
     )
+    collection = apply_viewer_prices(collection, user)
+    if value_sort:
+        collection.sort(
+            key=lambda item: price_to_cents(
+                row_value(item, "display_price_usd", "")
+            )
+            * int(row_value(item, "quantity_for_trade", 0) or 0),
+            reverse=current_dir == "desc",
+        )
+        collection = collection[offset : offset + per_page]
     stats = public_profile_stats(member_id, user)
     wants = rows(
         f"""
@@ -291,6 +313,7 @@ def render_member_detail(user, member_id, query=None, notice=None, status="info"
         """,
         [member_id, *want_params],
     )
+    wants = apply_viewer_prices(wants, user)
     public_groups = public_member_group_rows(member_id, user)
     collection_rows = "".join(render_public_trade_card(user, member, item) for item in collection)
     collection_list = f'<div class="public-card-list" id="member-trade-items">{collection_rows}</div>' if collection else '<div class="empty-state">This member has no trade cards listed.</div>'

@@ -13,6 +13,7 @@ from binderbridge.api import (
 )
 from binderbridge.config import config_bool, config_float, config_int, config_str
 from binderbridge.maintenance import AUTOMATIC_BACKUP_WORKER_CHECK_SECONDS, DATA_RETENTION_WORKER_CHECK_SECONDS
+from binderbridge.manapool import MANAPOOL_PRICE_REFRESH_AUTO
 from binderbridge.notifications import NOTIFICATION_WORKER_INTERVAL_SECONDS
 from binderbridge.pricing import (
     SCRYFALL_BULK_ERROR_KEY,
@@ -64,6 +65,7 @@ JOB_TYPE_LABELS = {
     "scryfall_enrichment": "Scryfall enrichment",
     "scryfall_bulk_sync": "Scryfall bulk sync",
     "scryfall_price_refresh": "Scryfall price refresh",
+    "manapool_price_sync": "Mana Pool price sync",
     "legacy_price_refresh": "Legacy price queue",
 }
 BACKGROUND_JOB_TERMINAL_STATUSES = ("succeeded", "failed", "cancelled")
@@ -526,6 +528,21 @@ def job_handler_scryfall_price_refresh(job, payload, worker_id):
     return result
 
 
+def job_handler_manapool_price_sync(job, payload, worker_id):
+    if payload.get("force") or (
+        MANAPOOL_PRICE_REFRESH_AUTO and manapool_price_refresh_due()
+    ):
+        update_background_job_progress(
+            job["id"], worker_id, message="Refreshing Mana Pool market prices"
+        )
+        result = refresh_manapool_price_cache()
+    else:
+        result = {"due": False}
+    if job["unique_key"] == "system:manapool-price-sync":
+        result["repeat_seconds"] = 300
+    return result
+
+
 def job_handler_automatic_backup(job, payload, worker_id):
     update_background_job_progress(job["id"], worker_id, message="Checking automatic backup schedule")
     result = run_automatic_backup_once()
@@ -574,6 +591,7 @@ BACKGROUND_JOB_HANDLERS = {
     "scryfall_enrichment": job_handler_scryfall_enrichment,
     "scryfall_bulk_sync": job_handler_scryfall_bulk_sync,
     "scryfall_price_refresh": job_handler_scryfall_price_refresh,
+    "manapool_price_sync": job_handler_manapool_price_sync,
     "legacy_price_refresh": job_handler_legacy_price_refresh,
 }
 
@@ -605,6 +623,7 @@ def ensure_background_job_schedules():
     if pending_enrichment:
         enqueue_background_job("scryfall_enrichment", unique_key="system:scryfall-enrichment", max_attempts=100000, delay_seconds=1)
     enqueue_background_job("scryfall_price_refresh", unique_key="system:scryfall-price-refresh", max_attempts=10, delay_seconds=2)
+    enqueue_background_job("manapool_price_sync", unique_key="system:manapool-price-sync", max_attempts=10, delay_seconds=2)
     enqueue_background_job("automatic_backup", unique_key="system:automatic-backup", max_attempts=10, delay_seconds=3)
     enqueue_background_job("data_retention", unique_key="system:data-retention", max_attempts=10, delay_seconds=4)
     enqueue_background_job("notification_delivery", unique_key="system:notification-delivery", max_attempts=10, delay_seconds=1)

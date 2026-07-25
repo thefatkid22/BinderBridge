@@ -59,6 +59,7 @@ SCRYFALL_PRICE_REFRESH_AUTO = config_bool("SCRYFALL_PRICE_REFRESH_AUTO", default
 
 PRICE_SOURCE_OPTIONS = [
     ("scryfall", "Scryfall"),
+    ("manapool", "Mana Pool"),
 ]
 
 PRICE_PROVIDER_KEYS = ()
@@ -67,6 +68,7 @@ PRICE_PROVIDER_OPTIONS = []
 
 PRICE_BASIS_OPTIONS = [
     ("scryfall", "Scryfall"),
+    ("manapool", "Mana Pool"),
 ]
 
 PRICE_PROVIDER_ID_FIELDS = {}
@@ -99,20 +101,17 @@ def price_to_cents(value):
     return int((Decimal(normalized) * 100).to_integral_value(rounding=ROUND_HALF_UP))
 
 def normalize_price_source(value):
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    normalized = normalize_header(text)
-    return "scryfall" if normalized else ""
+    text = re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+    return {"scryfall": "scryfall", "manapool": "manapool"}.get(text, "")
 
 def price_source_label(value):
-    return "Scryfall" if str(value or "").strip() else "Unknown"
+    return dict(PRICE_SOURCE_OPTIONS).get(normalize_price_source(value), "Unknown")
 
 def normalize_price_basis(value):
-    return "scryfall"
+    return normalize_price_source(value) or "scryfall"
 
 def price_basis_label(value):
-    return "Scryfall"
+    return dict(PRICE_BASIS_OPTIONS).get(normalize_price_basis(value), "Scryfall")
 
 def user_price_preference(user):
     return normalize_price_basis(row_value(user, "preferred_price_source", ""))
@@ -185,16 +184,23 @@ def price_history_rows(collection_item_id, user_id, limit=8):
         (collection_item_id, user_id, int(limit)),
     )
 
-def price_history_summary(user_id, limit=6):
+def price_history_summary(user_id, limit=6, price_basis=None):
+    basis = normalize_price_basis(price_basis) if price_basis is not None else None
+    basis_clause = " AND price_basis = ?" if basis else ""
+    params = [user_id]
+    if basis:
+        params.append(basis)
+    params.append(int(limit))
     return rows(
-        """
+        f"""
         SELECT *
         FROM price_history
         WHERE user_id = ? AND previous_price_usd != '' AND price_usd != previous_price_usd
+            {basis_clause}
         ORDER BY observed_at DESC, id DESC
         LIMIT ?
         """,
-        (user_id, int(limit)),
+        params,
     )
 
 def card_price_history_label(card_name, set_name="", collector_number=""):
@@ -206,11 +212,25 @@ def card_price_history_label(card_name, set_name="", collector_number=""):
     suffix = f" ({', '.join(details)})" if details else ""
     return f"{card_name}{suffix}"
 
-def record_price_history_for_item(collection_item_id, user_id, item, previous_price_usd, price_usd, conn=None, observed_at=None):
+def record_price_history_for_item(
+    collection_item_id,
+    user_id,
+    item,
+    previous_price_usd,
+    price_usd,
+    conn=None,
+    observed_at=None,
+    price_source="scryfall",
+    price_basis="scryfall",
+    notify=True,
+    force_baseline=False,
+):
     current_price = normalize_price_usd(price_usd)
     if not current_price:
         return "missing"
     previous_price = normalize_price_usd(previous_price_usd)
+    actual_source = normalize_price_source(price_source) or "scryfall"
+    requested_basis = normalize_price_basis(price_basis)
     item_id = int(collection_item_id or row_value(item, "id", 0) or 0)
     timestamp = observed_at or now_iso()
 
@@ -219,13 +239,36 @@ def record_price_history_for_item(collection_item_id, user_id, item, previous_pr
             """
             SELECT price_usd
             FROM price_history
-            WHERE collection_item_id = ?
+            WHERE collection_item_id = ? AND price_basis = ? AND price_source = ?
             ORDER BY observed_at DESC, id DESC
             LIMIT 1
             """,
-            (item_id,),
+            (item_id, requested_basis, actual_source),
         ).fetchone()
         latest_price = normalize_price_usd(row_value(latest, "price_usd", ""))
+        if force_baseline:
+            active_conn.execute(
+                """
+                INSERT INTO price_history
+                    (collection_item_id, user_id, card_name, set_name, set_code,
+                     collector_number, price_usd, price_source, price_basis,
+                     previous_price_usd, change_amount, change_percent, observed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', ?)
+                """,
+                (
+                    item_id or None,
+                    user_id,
+                    row_value(item, "card_name", ""),
+                    row_value(item, "set_name", ""),
+                    row_value(item, "set_code", ""),
+                    row_value(item, "collector_number", ""),
+                    current_price,
+                    actual_source,
+                    requested_basis,
+                    timestamp,
+                ),
+            )
+            return "baseline"
         comparison_price = previous_price or latest_price
         current_cents = price_to_cents(current_price)
         comparison_cents = price_to_cents(comparison_price)
@@ -240,8 +283,9 @@ def record_price_history_for_item(collection_item_id, user_id, item, previous_pr
             """
             INSERT INTO price_history
                 (collection_item_id, user_id, card_name, set_name, set_code, collector_number,
-                 price_usd, price_source, previous_price_usd, change_amount, change_percent, observed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'scryfall', ?, ?, ?, ?)
+                 price_usd, price_source, price_basis, previous_price_usd, change_amount,
+                 change_percent, observed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id or None,
@@ -251,13 +295,29 @@ def record_price_history_for_item(collection_item_id, user_id, item, previous_pr
                 row_value(item, "set_code", ""),
                 row_value(item, "collector_number", ""),
                 current_price,
+                actual_source,
+                requested_basis,
                 comparison_price if changed else "",
                 change_amount,
                 change_percent,
                 timestamp,
             ),
         )
-        if changed and should_send_price_alert(user_id, change_percent, conn=active_conn):
+        owner = active_conn.execute(
+            "SELECT preferred_price_source FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        owner_uses_basis = (
+            normalize_price_basis(
+                row_value(owner, "preferred_price_source", "scryfall")
+            )
+            == requested_basis
+        )
+        if (
+            changed
+            and notify
+            and owner_uses_basis
+            and should_send_price_alert(user_id, change_percent, conn=active_conn)
+        ):
             label = card_price_history_label(
                 row_value(item, "card_name", "Card"),
                 row_value(item, "set_name", ""),
@@ -269,7 +329,8 @@ def record_price_history_for_item(collection_item_id, user_id, item, previous_pr
                 user_id,
                 "price_alert",
                 f"Price {direction}: {label}",
-                f"Scryfall moved from ${comparison_price} to ${current_price}: {signed_money(delta_cents)}{percent_text}.",
+                f"{price_source_label(actual_source)} moved from ${comparison_price} to ${current_price}: "
+                f"{signed_money(delta_cents)}{percent_text}.",
                 f"/collection/{item_id}/edit" if item_id else "/collection",
                 None,
                 conn=active_conn,

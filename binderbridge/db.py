@@ -94,7 +94,7 @@ def init_db():
                 ban_reason TEXT NOT NULL DEFAULT '',
                 admin_notes TEXT NOT NULL DEFAULT '',
                 banned_at TEXT NOT NULL DEFAULT '',
-                preferred_price_source TEXT NOT NULL DEFAULT '',
+                preferred_price_source TEXT NOT NULL DEFAULT 'scryfall',
                 price_alerts_enabled INTEGER NOT NULL DEFAULT 1,
                 price_alert_threshold_percent TEXT NOT NULL DEFAULT '0',
                 watchlist_alerts_enabled INTEGER NOT NULL DEFAULT 1,
@@ -335,7 +335,7 @@ def init_db():
                 status TEXT NOT NULL DEFAULT 'pending',
                 proposer_note TEXT NOT NULL DEFAULT '',
                 response_note TEXT NOT NULL DEFAULT '',
-                price_source_preference TEXT NOT NULL DEFAULT '',
+                price_source_preference TEXT NOT NULL DEFAULT 'scryfall',
                 countered_from_trade_id INTEGER REFERENCES trades(id) ON DELETE SET NULL,
                 counter_trade_id INTEGER REFERENCES trades(id) ON DELETE SET NULL,
                 stale_reminder_sent_at TEXT NOT NULL DEFAULT '',
@@ -489,6 +489,7 @@ def init_db():
                 collector_number TEXT NOT NULL DEFAULT '',
                 price_usd TEXT NOT NULL,
                 price_source TEXT NOT NULL DEFAULT 'scryfall',
+                price_basis TEXT NOT NULL DEFAULT 'scryfall',
                 previous_price_usd TEXT NOT NULL DEFAULT '',
                 change_amount TEXT NOT NULL DEFAULT '',
                 change_percent TEXT NOT NULL DEFAULT '',
@@ -786,7 +787,7 @@ def migrate_db(conn):
         "ban_reason": "TEXT NOT NULL DEFAULT ''",
         "admin_notes": "TEXT NOT NULL DEFAULT ''",
         "banned_at": "TEXT NOT NULL DEFAULT ''",
-        "preferred_price_source": "TEXT NOT NULL DEFAULT ''",
+        "preferred_price_source": "TEXT NOT NULL DEFAULT 'scryfall'",
         "price_alerts_enabled": "INTEGER NOT NULL DEFAULT 1",
         "price_alert_threshold_percent": "TEXT NOT NULL DEFAULT '0'",
         "watchlist_alerts_enabled": "INTEGER NOT NULL DEFAULT 1",
@@ -833,7 +834,11 @@ def migrate_db(conn):
     conn.execute("UPDATE users SET registration_status = 'active' WHERE registration_status NOT IN ('active', 'pending', 'denied')")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_registration_status ON users(registration_status, is_banned, created_at)")
     timestamp = now_iso()
-    conn.execute("UPDATE users SET preferred_price_source = 'scryfall', updated_at = ? WHERE preferred_price_source != 'scryfall'", (timestamp,))
+    conn.execute(
+        "UPDATE users SET preferred_price_source = 'scryfall', updated_at = ? "
+        "WHERE preferred_price_source NOT IN ('scryfall', 'manapool')",
+        (timestamp,),
+    )
 
     collection_columns = {column["name"] for column in conn.execute("PRAGMA table_info(collection_items)").fetchall()}
     missing_columns = {
@@ -966,8 +971,15 @@ def migrate_db(conn):
     for name, definition in trade_item_missing_columns.items():
         if name not in trade_item_columns:
             conn.execute(f"ALTER TABLE trade_items ADD COLUMN {name} {definition}")
-    conn.execute("UPDATE trades SET price_source_preference = 'scryfall', updated_at = ? WHERE price_source_preference != 'scryfall'", (timestamp,))
-    conn.execute("UPDATE trade_items SET price_source = 'scryfall' WHERE price_source != '' AND price_source != 'scryfall'")
+    conn.execute(
+        "UPDATE trades SET price_source_preference = 'scryfall', updated_at = ? "
+        "WHERE price_source_preference NOT IN ('scryfall', 'manapool')",
+        (timestamp,),
+    )
+    conn.execute(
+        "UPDATE trade_items SET price_source = 'scryfall' "
+        "WHERE price_source NOT IN ('', 'scryfall', 'manapool')"
+    )
 
     conn.executescript(
         """
@@ -1113,9 +1125,10 @@ def migrate_db(conn):
             set_name TEXT NOT NULL DEFAULT '',
             set_code TEXT NOT NULL DEFAULT '',
             collector_number TEXT NOT NULL DEFAULT '',
-            price_usd TEXT NOT NULL,
-            price_source TEXT NOT NULL DEFAULT 'scryfall',
-            previous_price_usd TEXT NOT NULL DEFAULT '',
+                price_usd TEXT NOT NULL,
+                price_source TEXT NOT NULL DEFAULT 'scryfall',
+                price_basis TEXT NOT NULL DEFAULT 'scryfall',
+                previous_price_usd TEXT NOT NULL DEFAULT '',
             change_amount TEXT NOT NULL DEFAULT '',
             change_percent TEXT NOT NULL DEFAULT '',
             observed_at TEXT NOT NULL
@@ -1387,7 +1400,7 @@ def migrate_db(conn):
         """
         UPDATE price_refresh_jobs
         SET status = 'disabled',
-            last_error = 'External price refresh has been removed. Scryfall is the only pricing source.',
+            last_error = 'Legacy per-card price refresh is disabled; use provider feed jobs.',
             available_at = '',
             updated_at = ?
         WHERE status IN ('pending', 'processing')

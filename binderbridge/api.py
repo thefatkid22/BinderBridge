@@ -949,16 +949,36 @@ GROUP_API_FIELDS = (
 )
 
 
-def api_collection_item_dict(item):
-    data = api_row_dict(item, COLLECTION_API_FIELDS)
+def api_collection_item_dict(item, viewer=None, price_basis=None):
+    basis = price_basis or row_value(viewer, "preferred_price_source", "scryfall")
+    priced = apply_price_basis(item, basis)
+    data = api_row_dict(priced, COLLECTION_API_FIELDS)
+    data["price_usd"] = row_value(priced, "display_price_usd", "")
+    data["price_source"] = row_value(priced, "display_price_source", "")
+    data["requested_price_basis"] = row_value(
+        priced, "requested_price_basis", normalize_price_basis(basis)
+    )
+    data["used_price_fallback"] = bool(
+        row_value(priced, "used_price_fallback", False)
+    )
     for key in ("id", "quantity", "quantity_for_trade", "is_public"):
         data[key] = int(data[key] or 0)
     data["photo_count"] = collection_item_photo_count(data["id"])
     return data
 
 
-def api_want_item_dict(item):
-    data = api_row_dict(item, WANT_API_FIELDS)
+def api_want_item_dict(item, viewer=None, price_basis=None):
+    basis = price_basis or row_value(viewer, "preferred_price_source", "scryfall")
+    priced = apply_price_basis(item, basis)
+    data = api_row_dict(priced, WANT_API_FIELDS)
+    data["price_usd"] = row_value(priced, "display_price_usd", "")
+    data["price_source"] = row_value(priced, "display_price_source", "")
+    data["requested_price_basis"] = row_value(
+        priced, "requested_price_basis", normalize_price_basis(basis)
+    )
+    data["used_price_fallback"] = bool(
+        row_value(priced, "used_price_fallback", False)
+    )
     for key in ("id", "desired_quantity", "is_public"):
         data[key] = int(data[key] or 0)
     return data
@@ -972,8 +992,8 @@ def api_group_dict(group):
     return data
 
 
-def api_group_collection_item_dict(item):
-    data = api_collection_item_dict(item)
+def api_group_collection_item_dict(item, viewer=None, price_basis=None):
+    data = api_collection_item_dict(item, viewer=viewer, price_basis=price_basis)
     data["group_item_id"] = int(row_value(item, "group_item_id", 0) or 0)
     data["group_quantity"] = int(row_value(item, "group_quantity", 0) or 0)
     return data
@@ -1511,6 +1531,10 @@ def api_account_options():
             {"value": index, "label": label}
             for index, label in enumerate(EMAIL_DIGEST_WEEKDAY_LABELS)
         ],
+        "price_sources": [
+            {"value": value, "label": label}
+            for value, label in PRICE_BASIS_OPTIONS
+        ],
     }
 
 
@@ -1544,6 +1568,9 @@ def api_account_summary_data(user, token_row):
             "bio": row_value(user, "bio", ""),
             "public_email": bool(row_value(user, "public_email", 0)),
             "collection_value_visibility": row_value(user, "collection_value_visibility", "members"),
+            "preferred_price_source": normalize_price_basis(
+                row_value(user, "preferred_price_source", "scryfall")
+            ),
             "role": user_role(user),
             "is_admin": bool(row_value(user, "is_admin", 0)),
         },
@@ -1777,7 +1804,16 @@ def api_account_profile_update(self, user, token_row):
             "collection_value_visibility",
             values["collection_value_visibility"],
         ),
+        "preferred_price_source": payload.get(
+            "preferred_price_source", values["preferred_price_source"]
+        ),
     })
+    requested_price_source = str(values["preferred_price_source"] or "").strip()
+    if requested_price_source and not normalize_price_source(requested_price_source):
+        return self.api_error(
+            "Price source must be Scryfall or Mana Pool.",
+            HTTPStatus.BAD_REQUEST,
+        )
     try:
         update_user_profile(user["id"], **values)
     except ValueError as exc:
@@ -1968,7 +2004,7 @@ def api_collection_list(self, user, query):
         [*params, per_page, offset],
     )
     return self.api_json({
-        "data": [api_collection_item_dict(item) for item in items],
+        "data": [api_collection_item_dict(item, viewer=user) for item in items],
         "pagination": api_pagination_meta(page, per_page, total),
     })
 
@@ -1996,7 +2032,7 @@ def api_collection_create(self, user):
         f"{action.title()} collection item via API: {item['card_name']}.",
         "api",
     )
-    return self.api_json({"status": action, "data": api_collection_item_dict(item)}, HTTPStatus.CREATED if action == "inserted" else HTTPStatus.OK)
+    return self.api_json({"status": action, "data": api_collection_item_dict(item, viewer=user)}, HTTPStatus.CREATED if action == "inserted" else HTTPStatus.OK)
 
 
 def api_collection_import(self, user):
@@ -2047,7 +2083,7 @@ def api_collection_import(self, user):
                 "ok": True,
                 "index": index,
                 "status": action,
-                "data": api_collection_item_dict(item),
+                "data": api_collection_item_dict(item, viewer=user),
             }
             if group_id:
                 try:
@@ -2074,7 +2110,7 @@ def api_collection_import(self, user):
                         (group_id, item_id, user["id"]),
                     )
                     row_result["group_status"] = "added"
-                    row_result["group"] = api_group_collection_item_dict(group_item)
+                    row_result["group"] = api_group_collection_item_dict(group_item, viewer=user)
                     row_result["group_trade_availability"] = group_add_result
                     summary["grouped"] += 1
                 except ValueError as exc:
@@ -2100,7 +2136,7 @@ def api_collection_detail(self, user, item_id):
     item = row("SELECT * FROM collection_items WHERE id = ? AND user_id = ?", (item_id, user["id"]))
     if not item:
         return self.api_error("Collection item not found.", HTTPStatus.NOT_FOUND)
-    return self.api_json({"data": api_collection_item_dict(item)})
+    return self.api_json({"data": api_collection_item_dict(item, viewer=user)})
 
 
 def api_collection_update(self, user, item_id):
@@ -2122,7 +2158,7 @@ def api_collection_update(self, user, item_id):
         f"Updated collection item via API: {item['card_name']}.",
         "api",
     )
-    return self.api_json({"data": api_collection_item_dict(item)})
+    return self.api_json({"data": api_collection_item_dict(item, viewer=user)})
 
 
 def api_collection_delete(self, user, item_id):
@@ -2219,7 +2255,7 @@ def api_group_detail(self, user, group_id, query=None):
     items = collection_group_items(group_id, filters=filters, limit=per_page, offset=offset)
     return self.api_json({
         "data": data,
-        "items": [api_group_collection_item_dict(item) for item in items],
+        "items": [api_group_collection_item_dict(item, viewer=user) for item in items],
         "pagination": api_pagination_meta(page, per_page, total),
     })
 
@@ -2308,7 +2344,7 @@ def api_group_add_collection_item(self, user, group_id):
         "api",
     )
     return self.api_json({
-        "data": api_group_collection_item_dict(group_item),
+        "data": api_group_collection_item_dict(group_item, viewer=user),
         "trade_availability": group_add_result,
     }, HTTPStatus.CREATED)
 
@@ -2330,7 +2366,7 @@ def api_group_update_collection_item(self, user, group_id, group_item_id):
         """,
         (group_id, group_item_id, user["id"]),
     )
-    return self.api_json({"data": api_group_collection_item_dict(group_item)})
+    return self.api_json({"data": api_group_collection_item_dict(group_item, viewer=user)})
 
 
 def api_group_transfer_collection_item(self, user, group_id, group_item_id):
@@ -2362,7 +2398,7 @@ def api_group_transfer_collection_item(self, user, group_id, group_item_id):
         "api",
     )
     return self.api_json({
-        "data": api_group_collection_item_dict(target_item),
+        "data": api_group_collection_item_dict(target_item, viewer=user),
         "mode": result["mode"],
         "quantity": result["quantity"],
         "source": {
@@ -2413,7 +2449,7 @@ def api_wants_list(self, user, query):
         [*params, per_page, offset],
     )
     return self.api_json({
-        "data": [api_want_item_dict(item) for item in items],
+        "data": [api_want_item_dict(item, viewer=user) for item in items],
         "pagination": api_pagination_meta(page, per_page, total),
     })
 
@@ -2440,14 +2476,14 @@ def api_want_create(self, user):
         f"Created wanted card via API: {item['card_name']}.",
         "api",
     )
-    return self.api_json({"data": api_want_item_dict(item)}, HTTPStatus.CREATED)
+    return self.api_json({"data": api_want_item_dict(item, viewer=user)}, HTTPStatus.CREATED)
 
 
 def api_want_detail(self, user, want_id):
     item = row("SELECT * FROM want_items WHERE id = ? AND user_id = ?", (want_id, user["id"]))
     if not item:
         return self.api_error("Want item not found.", HTTPStatus.NOT_FOUND)
-    return self.api_json({"data": api_want_item_dict(item)})
+    return self.api_json({"data": api_want_item_dict(item, viewer=user)})
 
 
 def api_want_update(self, user, want_id):
@@ -2479,7 +2515,7 @@ def api_want_update(self, user, want_id):
         f"Updated wanted card via API: {item['card_name']}.",
         "api",
     )
-    return self.api_json({"data": api_want_item_dict(item)})
+    return self.api_json({"data": api_want_item_dict(item, viewer=user)})
 
 
 def api_want_delete(self, user, want_id):
@@ -2636,7 +2672,7 @@ def api_trade_matches_list(self, user, query):
 
 
 def api_trade_card_dict(user, owner, item):
-    data = api_collection_item_dict(item)
+    data = api_collection_item_dict(item, viewer=user)
     data["owner"] = {
         "id": int(owner["id"]),
         "username": row_value(owner, "username", ""),
@@ -2719,9 +2755,19 @@ def api_trade_create(self, user):
     except (TypeError, ValueError):
         counter_trade_id = 0
     proposer_note = sanitize_text_input(str(payload.get("proposer_note", "")), max_length=1200).strip()
+    price_basis = user_price_preference(user)
+    if counter_trade_id:
+        source_trade = counter_source_trade_for(
+            user["id"], recipient_id, counter_trade_id
+        )
+        if not source_trade:
+            return self.api_error("Countered trade not found.", HTTPStatus.NOT_FOUND)
+        price_basis = normalize_price_basis(
+            row_value(source_trade, "price_source_preference", "scryfall")
+        )
     form = api_trade_selection_form(payload)
-    offered = parse_trade_quantities(form, "offer", user["id"], "scryfall", viewer_id=user["id"])
-    requested = parse_trade_quantities(form, "request", recipient_id, "scryfall", viewer_id=user["id"])
+    offered = parse_trade_quantities(form, "offer", user["id"], price_basis, viewer_id=user["id"])
+    requested = parse_trade_quantities(form, "request", recipient_id, price_basis, viewer_id=user["id"])
     trade_id = create_trade_offer(
         user["id"],
         recipient_id,
@@ -2729,7 +2775,7 @@ def api_trade_create(self, user):
         offered,
         requested,
         counter_trade_id,
-        "scryfall",
+        price_basis,
     )
     trade = trade_detail_for_user(trade_id, user["id"])
     status = HTTPStatus.OK if counter_trade_id else HTTPStatus.CREATED
@@ -2843,7 +2889,7 @@ def api_dashboard(self, user):
             "summary": {key: int(value or 0) for key, value in summary.items()},
             "pending_trades": [api_trade_dict(trade, viewer_id=user["id"]) for trade in pending_trades],
             "trade_matches": trade_matches[:3],
-            "recent_tradeable": [api_collection_item_dict(item) for item in recent_tradeable],
+            "recent_tradeable": [api_collection_item_dict(item, viewer=user) for item in recent_tradeable],
             "notifications": [api_notification_dict(item) for item in notifications],
         }
     })

@@ -39,6 +39,13 @@ def refresh_user_scryfall_prices(user_id):
     result = {"checked": 0, "priced": 0, "changed": 0, "missing": 0}
     timestamp = now_iso()
     with db() as conn:
+        user = conn.execute(
+            "SELECT preferred_price_source FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        alerts_use_scryfall = (
+            normalize_price_basis(row_value(user, "preferred_price_source", "scryfall"))
+            == "scryfall"
+        )
         items = conn.execute(
             """
             SELECT *
@@ -64,6 +71,9 @@ def refresh_user_scryfall_prices(user_id):
                 price,
                 conn=conn,
                 observed_at=timestamp,
+                price_source="scryfall",
+                price_basis="scryfall",
+                notify=alerts_use_scryfall,
             )
             if status == "changed":
                 result["changed"] += 1
@@ -111,12 +121,21 @@ def refresh_all_scryfall_prices(sync_bulk=True, notify_users=True):
             return result
         if sync_bulk and get_setting(SCRYFALL_BULK_STATUS_KEY, "idle") != "running":
             result["bulk_synced"] = run_scryfall_bulk_sync()
-        for user in rows("SELECT id FROM users WHERE is_banned = 0"):
+        for user in rows(
+            "SELECT id, preferred_price_source FROM users WHERE is_banned = 0"
+        ):
             user_result = refresh_user_scryfall_prices(user["id"])
             result["users"] += 1
             for key in ("checked", "priced", "changed", "missing"):
                 result[key] += user_result[key]
-            if notify_users and user_result["checked"]:
+            if (
+                notify_users
+                and user_result["checked"]
+                and normalize_price_basis(
+                    row_value(user, "preferred_price_source", "scryfall")
+                )
+                == "scryfall"
+            ):
                 body = (
                     f"Checked {user_result['checked']} MTG collection entr"
                     f"{'y' if user_result['checked'] == 1 else 'ies'} and refreshed "
@@ -300,7 +319,24 @@ def update_collection_item_from_scryfall(collection_item_id, card_data):
         history_item = dict(existing)
         history_item.update(card_data)
         history_item["price_usd"] = price
-        record_price_history_for_item(collection_item_id, existing["user_id"], history_item, row_value(existing, "price_usd", ""), price, conn=conn)
+        owner = conn.execute(
+            "SELECT preferred_price_source FROM users WHERE id = ?",
+            (existing["user_id"],),
+        ).fetchone()
+        record_price_history_for_item(
+            collection_item_id,
+            existing["user_id"],
+            history_item,
+            row_value(existing, "price_usd", ""),
+            price,
+            conn=conn,
+            price_source="scryfall",
+            price_basis="scryfall",
+            notify=normalize_price_basis(
+                row_value(owner, "preferred_price_source", "scryfall")
+            )
+            == "scryfall",
+        )
 
 
 def mark_scryfall_job(job_id, status, error="", attempts=None, retry_after=0):

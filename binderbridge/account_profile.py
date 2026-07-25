@@ -63,7 +63,8 @@ def update_user_profile(
         raise ValueError("Display name is required.")
     email = validate_email(email)
     bio = sanitize_text_input(bio, max_length=1000).strip()
-    preferred_price_source = normalize_price_basis(preferred_price_source)
+    requested_price_source = str(preferred_price_source or "").strip()
+    preferred_price_source = normalize_price_basis(requested_price_source)
     price_alert_threshold_percent = normalize_price_alert_threshold(price_alert_threshold_percent)
     email_digest_frequency = normalize_email_digest_frequency(email_digest_frequency)
     email_digest_time = normalize_notification_time(email_digest_time, "Digest delivery time")
@@ -73,6 +74,12 @@ def update_user_profile(
     quiet_hours_end = normalize_notification_time(quiet_hours_end, "Quiet hours end")
     stale_trade_reminder_days = normalize_stale_trade_reminder_days(stale_trade_reminder_days)
     collection_value_visibility = normalize_value_visibility(collection_value_visibility)
+    existing = row(
+        "SELECT preferred_price_source FROM users WHERE id = ?", (user_id,)
+    )
+    previous_price_source = normalize_price_basis(
+        row_value(existing, "preferred_price_source", "scryfall")
+    )
     try:
         execute(
             """
@@ -131,6 +138,30 @@ def update_user_profile(
         )
     except sqlite3.IntegrityError as exc:
         raise ValueError("That username is already taken.") from exc
+    if previous_price_source != preferred_price_source:
+        resolver = globals().get("resolve_card_price")
+        if resolver:
+            with db() as conn:
+                items = conn.execute(
+                    "SELECT * FROM collection_items WHERE user_id = ?", (user_id,)
+                ).fetchall()
+                for item in items:
+                    price, actual_source, basis, _fallback = resolver(
+                        item, preferred_price_source, conn=conn
+                    )
+                    if price:
+                        record_price_history_for_item(
+                            item["id"],
+                            user_id,
+                            item,
+                            "",
+                            price,
+                            conn=conn,
+                            price_source=actual_source,
+                            price_basis=basis,
+                            notify=False,
+                            force_baseline=True,
+                        )
 
 
 def change_user_password(

@@ -348,7 +348,9 @@ def record_price_refresh_success(conn, job, result):
 
 
 def fetch_price_batch_for_provider(provider, jobs):
-    raise PriceRefreshError("External price refresh has been removed. Scryfall is the only pricing source.")
+    raise PriceRefreshError(
+        "Legacy per-card price refresh is disabled; use the durable provider feed jobs."
+    )
 
 
 def process_price_refresh_once():
