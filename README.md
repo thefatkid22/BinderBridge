@@ -643,28 +643,9 @@ The native Android client is maintained as a separate `BinderBridge-Android` pro
 - Confirmed large collection imports can take several minutes while the applied rows are written.
 - Alpha upgrades should always begin with a verified backup.
 
-## Roadmap Ideas
+## Project Planning
 
-Product features:
-
-- Broader game support with per-game card metadata, source adapters, condition labels, finish labels, and pricing/display rules
-- Trade packages for bundling named groups of cards into reusable offers
-- Import source profile editor and community-shareable adapter packs
-- Collection/deck collaboration tools such as shared binders, shared wishlists, and group-curated trade boxes
-- Trade fulfillment checklist for accepted trades, such as packed, sent, received, and problem reported
-- Address or contact exchange controls for accepted trades with privacy safeguards
-
-Imports and integrations:
-
-- Advanced webhook controls including retry schedules, manual delivery replay, endpoint health summaries, and per-endpoint event history filters
-- In-app API documentation with endpoint examples, scope explanations, webhook signing examples, and sample payloads
-
-Security, operations, and maintenance:
-
-- Passkey policy controls, recovery guidance, and admin-facing enrollment visibility for self-hosted groups
-- Background job schedule controls, per-job run history, and richer progress reporting for long-running imports and Scryfall refreshes
-- Packaged release image publishing and signed release artifacts
-- Theme and accessibility polish such as high-contrast mode, reduced motion, and larger tap targets
+Planned product, platform, Android, and maintenance work is tracked in the [BinderBridge backlog](BACKLOG.md). The backlog keeps a short release-focused Now queue followed by Next and Later candidates; it is directional rather than a release commitment.
 
 ## Security Notes
 

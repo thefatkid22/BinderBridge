@@ -2,6 +2,8 @@
 
 Date: June 13, 2026
 
+> This is a point-in-time interface audit. Its unfinished actionable findings are tracked in the current [BinderBridge backlog](BACKLOG.md); use that backlog, rather than the priorities below, when selecting new work.
+
 ## Scope
 
 This inventory maps BinderBridge's current user-facing interface and identifies the best targets for a focused UI polish pass. It is based on the route map, rendered view modules, shared components, responsive CSS, and public-route smoke checks.
