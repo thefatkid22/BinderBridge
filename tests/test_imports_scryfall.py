@@ -1,9 +1,77 @@
 """CSV import, Scryfall, pricing, and card-photo tests."""
 
+import gzip
+import io
+
+from binderbridge import scryfall_client
 from tests.base import *  # noqa: F401,F403
 
 
 class ImportsScryfallTests(BinderBridgeTestCase):
+    def test_scryfall_jsonl_download_streams_gzipped_cards(self):
+        payload = gzip.compress(
+            b'{"object":"card","id":"one","name":"First Card"}\n'
+            b'\n'
+            b'{"object":"card","id":"two","name":"Second Card"}\n'
+        )
+        original_urlopen = scryfall_client.urlopen
+        request_details = {}
+
+        def fake_urlopen(request, timeout):
+            request_details["url"] = request.full_url
+            request_details["timeout"] = timeout
+            return io.BytesIO(payload)
+
+        try:
+            scryfall_client.urlopen = fake_urlopen
+            cards = list(scryfall_client.fetch_json_lines_url("https://data.example/default-cards.jsonl.gz"))
+        finally:
+            scryfall_client.urlopen = original_urlopen
+
+        self.assertEqual([card["id"] for card in cards], ["one", "two"])
+        self.assertEqual(request_details["url"], "https://data.example/default-cards.jsonl.gz")
+        self.assertEqual(request_details["timeout"], 120)
+
+    def test_scryfall_bulk_sync_accepts_jsonl_manifest_download(self):
+        original_get = app.scryfall_get
+        original_fetch = app.fetch_json_lines_url
+        original_store = app.store_scryfall_bulk_cards
+        captured = {}
+
+        def fake_get(path, params=None):
+            self.assertEqual(path, "/bulk-data")
+            return {
+                "data": [{
+                    "type": "default_cards",
+                    "updated_at": "2026-11-13T22:06:41+00:00",
+                    "jsonl_download_uri": "https://data.example/default-cards.jsonl.gz",
+                }]
+            }
+
+        def fake_fetch(url):
+            captured["url"] = url
+            return iter([{"object": "card", "id": "jsonl-card", "name": "JSONL Card"}])
+
+        def fake_store(cards, updated_at=""):
+            captured["cards"] = list(cards)
+            captured["updated_at"] = updated_at
+            return len(captured["cards"])
+
+        try:
+            app.scryfall_get = fake_get
+            app.fetch_json_lines_url = fake_fetch
+            app.store_scryfall_bulk_cards = fake_store
+            count = app.sync_scryfall_bulk_data()
+        finally:
+            app.scryfall_get = original_get
+            app.fetch_json_lines_url = original_fetch
+            app.store_scryfall_bulk_cards = original_store
+
+        self.assertEqual(count, 1)
+        self.assertEqual(captured["url"], "https://data.example/default-cards.jsonl.gz")
+        self.assertEqual(captured["cards"][0]["id"], "jsonl-card")
+        self.assertEqual(captured["updated_at"], "2026-11-13T22:06:41+00:00")
+
     def test_manabox_csv_import_normalizes_common_columns(self):
         user_id = app.create_user("collector", "password123", "Collector")
         csv_bytes = (

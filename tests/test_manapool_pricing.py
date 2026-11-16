@@ -76,6 +76,23 @@ class ManaPoolPricingTests(BinderBridgeTestCase):
         self.assertEqual(
             [entry["scryfall_id"] for entry in unambiguous], ["card-2"]
         )
+        missing_id_payload = self.feed()
+        missing_id_payload["data"].append(
+            {
+                "set_code": "TST",
+                "number": "9",
+                "price_market": 500,
+            }
+        )
+        parsed_without_missing_id = app.parse_manapool_price_feed(missing_id_payload)
+        self.assertEqual(
+            [entry["scryfall_id"] for entry in parsed_without_missing_id],
+            ["card-1", "card-2"],
+        )
+        with self.assertRaises(app.ManaPoolPriceFeedError):
+            app.parse_manapool_price_feed(
+                {"meta": {}, "data": [{"set_code": "TST", "number": "9"}]}
+            )
 
     def test_migration_17_backfills_legacy_history_as_scryfall(self):
         with sqlite3.connect(":memory:") as conn:
