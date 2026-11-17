@@ -222,15 +222,9 @@ summary:focus-visible,
 }
 
 .brand-mark {
-    display: grid;
-    place-items: center;
     width: 38px;
-    height: 38px;
-    border-radius: 8px;
-    background: var(--primary);
-    color: var(--primary-contrast);
-    font-size: 0.8rem;
-    font-weight: 900;
+    height: 35px;
+    object-fit: contain;
 }
 
 .app-nav {
@@ -631,6 +625,50 @@ summary:focus-visible,
     max-width: 780px;
     font-size: clamp(2.4rem, 6vw, 5.4rem);
     line-height: 0.96;
+}
+
+.auth-hero {
+    position: relative;
+    min-height: clamp(360px, 58vh, 620px);
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #082f2c;
+    box-shadow: var(--shadow);
+}
+
+.auth-hero::after {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(2, 22, 20, 0.92) 0%, rgba(2, 22, 20, 0.66) 48%, rgba(2, 22, 20, 0.08) 78%);
+    content: "";
+}
+
+.auth-hero-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.auth-hero-copy {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    align-content: center;
+    width: min(68%, 620px);
+    min-height: inherit;
+    padding: clamp(1.5rem, 4vw, 3.5rem);
+}
+
+.auth-hero-copy h1,
+.auth-hero-copy .lead {
+    color: #f2fffc;
+}
+
+.auth-hero-copy .eyebrow {
+    color: #78f3d4;
 }
 
 .lead {
@@ -4793,6 +4831,14 @@ summary:focus-visible,
     justify-content: center;
 }
 
+.empty-action-image {
+    width: min(420px, 78vw);
+    height: auto;
+    max-height: 280px;
+    border-radius: 10px;
+    object-fit: cover;
+}
+
 .stack-list .empty-action-state,
 .notification-list .empty-action-state {
     padding: 1rem;
@@ -4957,6 +5003,14 @@ summary:focus-visible,
     .trade-builder-steps,
     .trade-list-metrics {
         grid-template-columns: 1fr;
+    }
+
+    .auth-hero {
+        min-height: clamp(320px, 58vw, 440px);
+    }
+
+    .auth-hero-copy {
+        width: min(82%, 620px);
     }
 
     .account-section-grid,

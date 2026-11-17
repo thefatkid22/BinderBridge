@@ -421,6 +421,68 @@ class CoreAdminTests(BinderBridgeTestCase):
         self.assertIn("passkey-register-button", account_html)
         self.assertIn("/account/passkeys/register/options", account_html)
 
+    def test_brand_assets_render_on_primary_auth_surfaces(self):
+        login_html = app.render_login()
+        register_html = app.render_register()
+        recovery_html = app.render_password_recovery()
+        layout_html = app.render_layout(None, "Brand test", "<p>Body</p>")
+
+        self.assertIn('/static/brand/landing-hero.webp', login_html)
+        self.assertIn('/static/brand/landing-hero.webp', register_html)
+        self.assertNotIn('/static/brand/landing-hero.webp', recovery_html)
+        self.assertIn('/static/brand/logo-mark.png', layout_html)
+        self.assertIn('/static/brand/favicon-32.png', layout_html)
+        self.assertIn('/static/brand/apple-touch-icon.png', layout_html)
+
+    def test_static_assets_use_safe_content_types(self):
+        static_dir = Path(self.tmpdir.name) / "static-assets"
+        static_dir.mkdir()
+        (static_dir / "brand.png").write_bytes(b"png")
+        (static_dir / "hero.webp").write_bytes(b"webp")
+        (static_dir / "download.bin").write_bytes(b"binary")
+        (static_dir.parent / "secret.png").write_bytes(b"secret")
+        original_static_dir = app.STATIC_DIR
+
+        class Harness:
+            def __init__(self):
+                self.status = None
+                self.headers = {}
+                self.wfile = io.BytesIO()
+
+            def send_response(self, status):
+                self.status = status
+
+            def send_header(self, name, value):
+                self.headers[name] = value
+
+            def send_security_headers(self):
+                return None
+
+            def end_headers(self):
+                return None
+
+            def send_error(self, status):
+                self.status = status
+
+        try:
+            app.STATIC_DIR = static_dir
+            expected = {
+                "/static/brand.png": "image/png",
+                "/static/hero.webp": "image/webp",
+                "/static/download.bin": "application/octet-stream",
+            }
+            for path, content_type in expected.items():
+                with self.subTest(path=path):
+                    request = Harness()
+                    app.App.static_file(request, path)
+                    self.assertEqual(request.status, app.HTTPStatus.OK)
+                    self.assertEqual(request.headers["Content-Type"], content_type)
+            traversal = Harness()
+            app.App.static_file(traversal, "/static/../secret.png")
+            self.assertEqual(traversal.status, app.HTTPStatus.NOT_FOUND)
+        finally:
+            app.STATIC_DIR = original_static_dir
+
     def test_passkey_authentication_verifies_synthetic_es256_assertion(self):
         user = factory.user_row("passkeyauth", display_name="Passkey Auth")
         private_key = 123456789

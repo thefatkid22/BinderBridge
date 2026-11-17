@@ -41,6 +41,8 @@ def render_trades(user, query=None, notice=None, status="info"):
             "No trades yet.",
             "Find a match or browse public trade cards to start a proposal.",
             actions=(("/trades/matches", "Find matches", "secondary"), ("/browse", "Browse cards", "ghost")),
+            compact=False,
+            image_src="/static/brand/trade-onboarding.webp",
         )
     status_options = "".join(
         f'<option value="{e(value)}"{selected(filters["status"], value)}>{e(label)}</option>'
