@@ -174,6 +174,9 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{e(title)} - {APP_NAME}</title>
+    <meta name="theme-color" content="#082f2c">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/brand/favicon-32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/brand/apple-touch-icon.png">
     <script>
         (function () {{
             document.documentElement.classList.add("js");
@@ -190,7 +193,7 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
     <a class="skip-link" href="#main-content">Skip to main content</a>
     <header class="topbar">
         <a class="brand" href="/">
-            <span class="brand-mark">BB</span>
+            <img class="brand-mark" src="/static/brand/logo-mark.png" width="38" height="35" alt="">
             <span>{APP_NAME}</span>
         </a>
         {auth_links}
@@ -618,14 +621,28 @@ def render_layout(user, title, content, active="dashboard", notice=None, status=
 </html>"""
 
 
+def render_auth_hero(eyebrow, title, detail):
+    return f"""
+    <div class="auth-copy auth-hero">
+        <img class="auth-hero-image" src="/static/brand/landing-hero.webp" width="1200" height="675" alt="" decoding="async">
+        <div class="auth-hero-copy">
+            <p class="eyebrow">{e(eyebrow)}</p>
+            <h1>{e(title)}</h1>
+            <p class="lead">{e(detail)}</p>
+        </div>
+    </div>
+    """
+
+
 def render_login(user=None, notice=None, status="info"):
+    hero = render_auth_hero(
+        "Self-hosted collection trading",
+        "Trade from binders people can actually browse.",
+        "Track collections, publish trade stock, keep want lists, and negotiate trades with other users on your own server.",
+    )
     content = """
     <section class="auth-grid">
-        <div class="auth-copy">
-            <p class="eyebrow">Self-hosted collection trading</p>
-            <h1>Trade from binders people can actually browse.</h1>
-            <p class="lead">Track collections, publish trade stock, keep want lists, and negotiate trades with other users on your own server.</p>
-        </div>
+    """ + hero + """
         <form class="panel auth-panel" method="post" action="/login">
             <h2>Sign in</h2>
             <label>Username
@@ -860,11 +877,11 @@ def render_register(user=None, notice=None, status="info", invite_token="", invi
         """
     content = f"""
     <section class="auth-grid">
-        <div class="auth-copy">
-            <p class="eyebrow">BinderBridge</p>
-            <h1>Start a shared trade community.</h1>
-            <p class="lead">The MVP is tuned for Magic: The Gathering and leaves the door open for other card games later.</p>
-        </div>
+        {render_auth_hero(
+            "BinderBridge",
+            "Start a shared trade community.",
+            "The MVP is tuned for Magic: The Gathering and leaves the door open for other card games later.",
+        )}
         {form_panel}
     </section>
     """

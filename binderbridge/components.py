@@ -106,7 +106,16 @@ def render_sort_bar(path, query, options, current_sort, current_dir):
     """
 
 
-def render_empty_action_state(title, body="", actions=(), tag="div", compact=True, class_name=""):
+def render_empty_action_state(
+    title,
+    body="",
+    actions=(),
+    tag="div",
+    compact=True,
+    class_name="",
+    image_src="",
+    image_alt="",
+):
     tag = tag if tag in ("div", "li", "td") else "div"
     compact_class = " compact-empty" if compact else ""
     extra_class = f" {e(class_name)}" if class_name else ""
@@ -118,8 +127,14 @@ def render_empty_action_state(title, body="", actions=(), tag="div", compact=Tru
         action_links.append(f'<a class="button {e(variant or "secondary")} small" href="{e(href)}">{e(label)}</a>')
     action_html = "".join(action_links)
     action_block = f'<div class="actions">{action_html}</div>' if action_html else ""
+    image_html = (
+        f'<img class="empty-action-image" src="{e(image_src)}" alt="{e(image_alt)}" loading="lazy" decoding="async">'
+        if image_src
+        else ""
+    )
     return f"""
     <{tag} class="empty-state empty-action-state{compact_class}{extra_class}">
+        {image_html}
         <div class="empty-action-copy">
             <h3>{e(title)}</h3>
             {body_html}

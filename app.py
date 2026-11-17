@@ -35,6 +35,18 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(config_str("BINDERBRIDGE_DATA", default=str(BASE_DIR / "data"), section="app", key="data_dir"))
 DB_PATH = DATA_DIR / "binderbridge.sqlite3"
 STATIC_DIR = BASE_DIR / "static"
+STATIC_CONTENT_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".gif": "image/gif",
+    ".ico": "image/x-icon",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".js": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".png": "image/png",
+    ".svg": "image/svg+xml; charset=utf-8",
+    ".webp": "image/webp",
+}
 HOST = config_str("BINDERBRIDGE_HOST", "HOST", default="127.0.0.1", section="server", key="host")
 PORT = config_int("BINDERBRIDGE_PORT", "PORT", default=8000, section="server", key="port")
 TRUST_PROXY_HEADERS = config_bool(
@@ -1000,7 +1012,7 @@ class App(BaseHTTPRequestHandler):
             return self.send_error(HTTPStatus.NOT_FOUND)
         if not file_path.exists():
             return self.send_error(HTTPStatus.NOT_FOUND)
-        content_type = "text/css" if file_path.suffix == ".css" else "text/plain"
+        content_type = STATIC_CONTENT_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
         data = file_path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
