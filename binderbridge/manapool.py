@@ -112,8 +112,11 @@ def parse_manapool_price_feed(payload):
     for index, entry in enumerate(data):
         if not isinstance(entry, dict):
             raise ManaPoolPriceFeedError(f"Mana Pool feed entry {index} must be an object.")
+        raw_scryfall_id = entry.get("scryfall_id")
+        if not isinstance(raw_scryfall_id, str) or not raw_scryfall_id.strip():
+            continue
         scryfall_id = _feed_text(
-            entry.get("scryfall_id"), required=True, field=f"data[{index}].scryfall_id"
+            raw_scryfall_id, required=True, field=f"data[{index}].scryfall_id"
         ).lower()
         set_code = _feed_text(entry.get("set_code"), field=f"data[{index}].set_code").lower()
         collector_number = _feed_text(

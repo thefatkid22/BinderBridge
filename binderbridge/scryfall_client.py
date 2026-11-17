@@ -4,6 +4,8 @@ The app facade injects shared database, formatting, pricing, and validation
 helpers into this module so the legacy app.py API remains compatible.
 """
 
+import gzip
+import io
 import json
 import time
 from urllib.error import HTTPError, URLError
@@ -364,16 +366,32 @@ def fetch_json_url(url):
         return json.loads(response.read().decode("utf-8"))
 
 
+def fetch_json_lines_url(url):
+    request = Request(url, headers={"User-Agent": SCRYFALL_USER_AGENT, "Accept": SCRYFALL_ACCEPT})
+    with urlopen(request, timeout=120) as response:
+        raw_stream = gzip.GzipFile(fileobj=response, mode="rb") if url.lower().endswith(".gz") else response
+        with io.TextIOWrapper(raw_stream, encoding="utf-8") as text_stream:
+            for line in text_stream:
+                line = line.strip()
+                if line:
+                    yield json.loads(line)
+
+
 def sync_scryfall_bulk_data(bulk_type=SCRYFALL_BULK_TYPE):
     manifest = scryfall_get("/bulk-data")
     if not manifest or not manifest.get("data"):
         raise ScryfallError("Scryfall bulk data manifest could not be loaded.")
     bulk_item = next((item for item in manifest["data"] if item.get("type") == bulk_type), None)
-    if not bulk_item or not bulk_item.get("download_uri"):
+    if not bulk_item:
         raise ScryfallError(f"Scryfall bulk data type {bulk_type} was not found.")
-    cards = fetch_json_url(bulk_item["download_uri"])
-    if not isinstance(cards, list):
-        raise ScryfallError("Scryfall bulk data download was not a card list.")
+    if bulk_item.get("download_uri"):
+        cards = fetch_json_url(bulk_item["download_uri"])
+        if not isinstance(cards, list):
+            raise ScryfallError("Scryfall bulk data download was not a card list.")
+    elif bulk_item.get("jsonl_download_uri"):
+        cards = fetch_json_lines_url(bulk_item["jsonl_download_uri"])
+    else:
+        raise ScryfallError(f"Scryfall bulk data type {bulk_type} has no supported download URL.")
     return store_scryfall_bulk_cards(cards, bulk_item.get("updated_at", ""))
 
 
@@ -600,6 +618,7 @@ __all__ = [
     "lookup_scryfall_card",
     "store_scryfall_bulk_cards",
     "fetch_json_url",
+    "fetch_json_lines_url",
     "sync_scryfall_bulk_data",
     "scryfall_bulk_status",
     "local_scryfall_card_from_conn",
